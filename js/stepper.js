@@ -1,0 +1,2726 @@
+// U-Bahn step-by-step deduction engine (human-style rules).
+// State: per-border value (-1 unknown / 0 line impossible / 1 line certain) and,
+// per cell, a set of possible configurations. A configuration is a bitmask of
+// arms (1=Up, 2=Right, 4=Down, 8=Left); valid piece configs have 2-4 arms,
+// plus the empty config 0. Shape classes follow the guide's LITX notation:
+// L = turn, I = straight, T = branch, X = cross (clue arrays use 0=X,1=T,2=I,3=L).
+
+const UP = 1, RT = 2, DN = 4, LF = 8;
+const CFGS = [0, 3, 5, 9, 6, 12, 10, 7, 11, 13, 14, 15];
+const CFG_BIT = {}; CFGS.forEach((m, i) => CFG_BIT[m] = 1 << i);
+const ALL_CFG = (1 << CFGS.length) - 1;
+
+function popcnt(m) { let n = 0; while (m) { n += m & 1; m >>= 1; } return n; }
+// shape class of an arm mask: 0=X,1=T,2=I,3=L,4=empty
+function classOf(m) {
+  const p = popcnt(m);
+  if (p === 0) return 4;
+  if (p === 4) return 0;
+  if (p === 3) return 1;
+  return (m === (UP | DN) || m === (RT | LF)) ? 2 : 3;
+}
+const IS_VBRANCH = m => popcnt(m) === 3 && (m & UP) && (m & DN);   // arms up+down: ends a horizontal segment
+const IS_HBRANCH = m => popcnt(m) === 3 && (m & RT) && (m & LF);   // arms left+right: ends a vertical segment
+const CLASS_LETTER = ['X', 'T', 'I', 'L', '·'];
+const CLASS_NAME = ['cross', 'branch', 'straight', 'turn', 'blank cell'];
+const CLASS_PLURAL = ['crosses', 'branches', 'straights', 'turns', 'blank cells'];
+
+function makeStepState(R, C, blockedGrid) {
+  const N = R * C;
+  const st = {
+    R, C,
+    edgeR: new Int8Array(N).fill(-1),
+    edgeD: new Int8Array(N).fill(-1),
+    cellCfg: new Int32Array(N).fill(ALL_CFG),
+    blocked: new Uint8Array(N),
+    stepNo: 0
+  };
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    const i = r * C + c;
+    if (blockedGrid[r][c]) st.blocked[i] = 1;
+    // strip arms that would leave the board
+    let banned = 0;
+    if (r === 0) banned |= UP;
+    if (c === C - 1) banned |= RT;
+    if (r === R - 1) banned |= DN;
+    if (c === 0) banned |= LF;
+    let mask = 0;
+    for (let k = 0; k < CFGS.length; k++) if (!(CFGS[k] & banned)) mask |= 1 << k;
+    st.cellCfg[i] = mask;
+    if (st.blocked[i]) st.cellCfg[i] = CFG_BIT[0];
+  }
+  // borders of shaded cells carry no line
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    const i = r * C + c;
+    if (!st.blocked[i]) continue;
+    if (c < C - 1) setEdge(st, 0, i, 0);
+    if (c > 0) setEdge(st, 0, i - 1, 0);
+    if (r < R - 1) setEdge(st, 1, i, 0);
+    if (r > 0) setEdge(st, 1, i - C, 0);
+  }
+  return st;
+}
+
+// silent bookkeeping: setting a border filters the two adjacent cells' configs
+function setEdge(st, kind, i, val) {
+  const arr = kind ? st.edgeD : st.edgeR;
+  if (arr[i] === val) return false;
+  arr[i] = val;
+  const C = st.C;
+  const a = i, b = kind ? i + C : i + 1;
+  const armA = kind ? DN : RT, armB = kind ? UP : LF;
+  filterCfg(st, a, m => ((m & armA) ? 1 : 0) === val ? true : false);
+  filterCfg(st, b, m => ((m & armB) ? 1 : 0) === val ? true : false);
+  return true;
+}
+function filterCfg(st, i, keep) {
+  let m = st.cellCfg[i], out = 0;
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) { if (keep(CFGS[k])) out |= 1 << k; }
+  const changed = out !== m;
+  st.cellCfg[i] = out;
+  return changed;
+}
+function cellClasses(st, i) {
+  let cls = 0, m = st.cellCfg[i];
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) cls |= 1 << classOf(CFGS[k]);
+  return cls; // bitmask over classes 0..4
+}
+function edgeVal(st, kind, i) { return (kind ? st.edgeD : st.edgeR)[i]; }
+function rc(st, i) { return 'r' + (((i / st.C) | 0) + 1) + 'c' + ((i % st.C) + 1); }
+
+// ---------- rules; each returns a move {rule, text, apply(), cells, edges} or null ----------
+
+// rule 0: sanity — empty domains or infeasible clue counts
+function ruleContradiction(st, clues) {
+  const { R, C } = st;
+  for (let i = 0; i < R * C; i++) if (st.cellCfg[i] === 0) {
+    return { rule: 'Contradiction', contradiction: true, cells: [i],
+      text: 'Cell ' + rc(st, i) + ' has no possible shape left — the clues (or earlier marks) are contradictory.' };
+  }
+  for (const line of eachLine(st, clues)) {
+    // all five clues of one line must account for exactly its cells
+    if (line.clue.length >= 5 && line.clue.every(v => v >= 0)) {
+      const sum = line.clue.reduce((a, v) => a + v, 0);
+      if (sum !== line.cells.length) {
+        return { rule: 'Contradiction', contradiction: true, cells: line.cells.slice(),
+          text: line.name + '’s five clues total ' + sum + ' cells, but it has ' + line.cells.length + ' — impossible.' };
+      }
+    }
+    for (let s = 0; s < 5; s++) {
+      if (line.clue[s] === undefined || line.clue[s] < 0) continue;
+      const { def, pos } = countShape(st, line, s);
+      if (def > line.clue[s] || pos < line.clue[s]) {
+        return { rule: 'Contradiction', contradiction: true, cells: line.cells.slice(),
+          text: line.name + ' needs exactly ' + line.clue[s] + ' ' + (line.clue[s] === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) +
+            ', but ' + (def > line.clue[s] ? def + ' are already certain' : 'only ' + pos + ' cell' + (pos === 1 ? ' is' : 's are') + ' still possible') + '.' };
+      }
+    }
+  }
+  // clue sums must agree between rows and columns; total branches must be even
+  for (let s = 0; s < 5; s++) {
+    let rowSum = 0, rowAll = true, colSum = 0, colAll = true;
+    for (let r = 0; r < R; r++) { const v = clues.row[r][s] === undefined ? -1 : clues.row[r][s]; if (v < 0) rowAll = false; else rowSum += v; }
+    for (let c = 0; c < C; c++) { const v = clues.col[c][s] === undefined ? -1 : clues.col[c][s]; if (v < 0) colAll = false; else colSum += v; }
+    if (rowAll && colAll && rowSum !== colSum) {
+      return { rule: 'Contradiction', contradiction: true, cells: [],
+        text: 'The row clues ask for ' + rowSum + ' ' + CLASS_PLURAL[s] + ' in total but the column clues ask for ' + colSum + ' — impossible.' };
+    }
+    if (s === 1) {
+      if (rowAll && rowSum % 2 === 1) return { rule: 'Contradiction', contradiction: true, cells: [],
+        text: 'The row clues ask for ' + rowSum + ' branch' + (rowSum === 1 ? '' : 'es') + ' in total, but the whole grid has no exiting lines, so its branch count must be even.' };
+      if (colAll && colSum % 2 === 1) return { rule: 'Contradiction', contradiction: true, cells: [],
+        text: 'The column clues ask for ' + colSum + ' branch' + (colSum === 1 ? '' : 'es') + ' in total, but the whole grid has no exiting lines, so its branch count must be even.' };
+    }
+  }
+  return null;
+}
+
+// rule 1: a cell's remaining shapes all agree on some border
+function ruleForcedBorder(st, strongOnly) {
+  const { R, C } = st;
+  for (let i = 0; i < R * C; i++) {
+    const m = st.cellCfg[i];
+    if (!m || st.blocked[i]) continue;
+    let andM = 15, orM = 0;
+    for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) { andM &= CFGS[k]; orM |= CFGS[k]; }
+    const r = (i / C) | 0, c = i - r * C;
+    const dirs = [[UP, 1, i - C, r > 0], [RT, 0, i, c < C - 1], [DN, 1, i, r < R - 1], [LF, 0, i - 1, c > 0]];
+    const on = [], off = [];
+    for (const [arm, kind, ei, exists] of dirs) {
+      if (!exists) continue;
+      if (edgeVal(st, kind, ei) >= 0) continue;
+      if (andM & arm) on.push([kind, ei]);
+      else if (!(orM & arm)) off.push([kind, ei]);
+    }
+    if (on.length || off.length) {
+      const single = popcnt2(m) === 1;
+      if (strongOnly && !on.length && !single) continue;   // plain × eliminations wait for the row-level rules
+      const letters = classLetters(st, i);
+      const text = 'Cell ' + rc(st, i) + (single ? ' is fully determined' : ' can only be ' + letters) +
+        (on.length ? ' — every remaining option uses ' + borderList(st, i, on) : '') +
+        (on.length && off.length ? ' and' : '') +
+        (off.length ? (on.length ? '' : ' —') + ' none of its options use ' + borderList(st, i, off) : '') + '.';
+      return {
+        rule: 'Forced border', text, cells: [i], edges: on.concat(off).map(([k, e]) => [k, e]),
+        apply() { for (const [k, e] of on) setEdge(st, k, e, 1); for (const [k, e] of off) setEdge(st, k, e, 0); }
+      };
+    }
+  }
+  return null;
+}
+function popcnt2(m) { let n = 0; while (m) { n += m & 1; m >>= 1; } return n; }
+function classLetters(st, i) {
+  const cls = cellClasses(st, i);
+  let s = '';
+  for (let k = 3; k >= 0; k--) if ((cls >> k) & 1) s += CLASS_LETTER[k];
+  if ((cls >> 4) & 1) s += CLASS_LETTER[4];
+  return s;
+}
+function borderList(st, i, list) {
+  const C = st.C;
+  return list.map(([kind, e]) => {
+    const other = kind ? (e === i ? e + C : e) : (e === i ? e + 1 : e);
+    return 'its border with ' + rc(st, other === i ? (kind ? e : e) : other);
+  }).join(', ');
+}
+
+// line iterator
+function cloneStepState(st) {
+  return {
+    R: st.R, C: st.C,
+    edgeR: Int8Array.from(st.edgeR),
+    edgeD: Int8Array.from(st.edgeD),
+    cellCfg: Int32Array.from(st.cellCfg),
+    blocked: Uint8Array.from(st.blocked),
+    stepNo: st.stepNo,
+    derived: st.derived ? { row: st.derived.row.map(r => r.slice()), col: st.derived.col.map(c => c.slice()) } : null
+  };
+}
+
+function eachLine(st, clues) {
+  const { R, C } = st;
+  const out = [];
+  for (let r = 0; r < R; r++) {
+    const cells = []; for (let c = 0; c < C; c++) cells.push(r * C + c);
+    out.push({ kind: 'row', idx: r, name: 'Row ' + (r + 1), cells, clue: clues.row[r] });
+  }
+  for (let c = 0; c < C; c++) {
+    const cells = []; for (let r = 0; r < R; r++) cells.push(r * C + c);
+    out.push({ kind: 'col', idx: c, name: 'Column ' + (c + 1), cells, clue: clues.col[c] });
+  }
+  return out;
+}
+function countShape(st, line, s) {
+  let def = 0, pos = 0; const posCells = [], defCells = [];
+  for (const i of line.cells) {
+    const cls = cellClasses(st, i);
+    if (cls === (1 << s)) { def++; pos++; defCells.push(i); posCells.push(i); }
+    else if ((cls >> s) & 1) { pos++; posCells.push(i); }
+  }
+  return { def, pos, posCells, defCells };
+}
+
+// rule 2: clue exhausted / clue forces placement (sudoku-style counting)
+function ruleClueCount(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    for (let s = 0; s < 5; s++) {
+      if (line.clue[s] === undefined) continue;
+      const k = line.clue[s];
+      if (k < 0) continue;
+      const { def, pos, posCells } = countShape(st, line, s);
+      if (def === k && pos > k) {
+        const rest = posCells.filter(i => cellClasses(st, i) !== (1 << s));
+        return {
+          rule: 'Clue satisfied', cells: rest,
+          text: (k === 0
+            ? line.name + ' allows no ' + CLASS_PLURAL[s]
+            : line.name + ' already has its ' + k + ' ' + (k === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s])) +
+            ' — no ' + (k === 0 ? '' : 'other ') + 'cell in ' + line.name.toLowerCase() + ' can be a ' + CLASS_NAME[s] + '.',
+          apply() { for (const i of rest) filterCfg(st, i, m => classOf(m) !== s); }
+        };
+      }
+      if (pos === k && def < k) {
+        const rest = posCells.filter(i => cellClasses(st, i) !== (1 << s));
+        return {
+          rule: 'Clue forces placement', cells: rest,
+          text: line.name + ' needs ' + k + ' ' + (k === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + ' and only ' +
+            rest.map(i => rc(st, i)).join(', ') + ' can still hold ' + (k === 1 ? 'it' : 'them') + ' — ' +
+            (rest.length === 1 ? 'that cell is' : 'all of them are') + ' a ' + CLASS_NAME[s] + '.',
+          apply() { for (const i of rest) filterCfg(st, i, m => classOf(m) === s); }
+        };
+      }
+    }
+    // total piece count: from the empty-cell clue, or from all four shape clues
+    const e4 = line.clue[4] === undefined ? -1 : line.clue[4];
+    const shapesAll = line.clue[0] >= 0 && line.clue[1] >= 0 && line.clue[2] >= 0 && line.clue[3] >= 0;
+    if (e4 >= 0 || shapesAll) {
+      const total = e4 >= 0 ? line.cells.length - e4
+        : line.clue[0] + line.clue[1] + line.clue[2] + line.clue[3];
+      let defP = 0, posP = 0; const posCells = [];
+      for (const i of line.cells) {
+        const cls = cellClasses(st, i);
+        const canPiece = (cls & 15) !== 0, mustPiece = ((cls >> 4) & 1) === 0;
+        if (mustPiece && canPiece) defP++;
+        if (canPiece) { posP++; posCells.push(i); }
+      }
+      if (posP === total && defP < total) {
+        const rest = posCells.filter(i => (cellClasses(st, i) >> 4) & 1);
+        return {
+          rule: 'Piece count', cells: rest,
+          text: line.name + ' must use exactly ' + total + ' cells and only ' + posP + ' can still hold a piece — none of those cells can stay empty.',
+          apply() { for (const i of rest) filterCfg(st, i, m => m !== 0); }
+        };
+      }
+      if (defP === total && posP > total) {
+        const rest = line.cells.filter(i => { const cls = cellClasses(st, i); return (cls & 15) !== 0 && ((cls >> 4) & 1); });
+        return {
+          rule: 'Piece count', cells: rest,
+          text: line.name + ' must use exactly ' + total + ' cells, which are already accounted for — every other cell in ' + line.name.toLowerCase() + ' is empty.',
+          apply() { for (const i of rest) filterCfg(st, i, m => m === 0); }
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// rule 3: segment capacity (guide: "line segment counting") — a horizontal segment in a
+// row needs two ender pieces (turns / vertical branches) on top of the straights.
+function ruleSegmentCapacity(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const horiz = line.kind === 'row';
+    const s = line.clue[2];                    // straights
+    const t = line.clue[3], b = line.clue[1];  // turns, branches
+    let maxPieces = 0;
+    for (const i of line.cells) if (cellClasses(st, i) & 15) maxPieces++;
+    const eCap = line.clue[4] === undefined ? -1 : line.clue[4];
+    if (eCap >= 0) maxPieces = Math.min(maxPieces, line.cells.length - eCap);
+    const inArms = horiz ? (RT | LF) : (UP | DN);   // arms that create a segment along the line
+    const already = line.cells.some(i => hasCertainArm(st, i, inArms));
+    if (already) continue;
+    const segWord = horiz ? 'horizontal' : 'vertical';
+    // (a) no ender pieces at all -> no segments along the line
+    if (t === 0 && b === 0) {
+      const move = banArms(st, line, inArms);
+      if (move) {
+        move.rule = 'Segment endpoints';
+        move.text = line.name + ' allows no turns and no branches, so no ' + segWord + ' line segment can end in it — no ' +
+          segWord + ' connections are possible anywhere in ' + line.name.toLowerCase() + '.';
+        return move;
+      }
+    }
+    // (b) straights + two enders would exceed the room
+    if (s >= 0 && s + 2 > maxPieces) {
+      const move = banArms(st, line, inArms);
+      if (move) {
+        move.rule = 'Segment capacity';
+        move.text = line.name + ' must hold ' + s + ' straights; any ' + segWord + ' segment would add two turn/branch endpoint pieces, giving at least ' +
+          (s + 2) + ' pieces where at most ' + maxPieces + ' fit. So ' + line.name.toLowerCase() + ' has no ' + segWord +
+          ' connections: every straight in it runs the other way.';
+        return move;
+      }
+    }
+    // (c) one step weaker: a cross or through-branch would create such a segment
+    if (s >= 0 && s + 3 > maxPieces) {
+      const badBranch = horiz ? IS_HBRANCH : IS_VBRANCH;
+      const cells = line.cells.filter(i => {
+        let m = st.cellCfg[i];
+        for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) { const cm = CFGS[k]; if (cm === 15 || badBranch(cm)) return true; }
+        return false;
+      });
+      if (cells.length) {
+        return {
+          rule: 'Segment capacity', cells,
+          text: line.name + ' must hold ' + s + ' straights; a cross or a through-going branch would create a ' + segWord +
+            ' segment, adding two more endpoint pieces for at least ' + (s + 3) + ' pieces where at most ' + maxPieces +
+            ' fit — so ' + line.name.toLowerCase() + ' has no crosses and no ' + (horiz ? 'horizontal' : 'vertical') + ' branches.',
+          apply() { for (const i of cells) filterCfg(st, i, m => !(m === 15 || badBranch(m))); }
+        };
+      }
+    }
+  }
+  return null;
+}
+function hasCertainArm(st, i, arms) {
+  let m = st.cellCfg[i], and = 15;
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) and &= CFGS[k];
+  return (and & arms) !== 0;
+}
+function banArms(st, line, arms) {
+  const cells = line.cells.filter(i => {
+    let m = st.cellCfg[i];
+    for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) if (CFGS[k] & arms) return true;
+    return false;
+  });
+  if (!cells.length) return null;
+  return { cells, apply() { for (const i of cells) filterCfg(st, i, m => (m & arms) === 0); } };
+}
+
+// rule 4: branch orientation by parity (guide: "Branch Orientation I/II") —
+// segment-ending pieces along a line (turns + cross-oriented branches) come in pairs.
+function ruleBranchParity(st, clues) {
+  // Full orientation accounting: parity + capacity pin how many branches are
+  // perpendicular (segment-ending) vs parallel; matching those counts against
+  // the cells that can take each orientation forces or eliminates placements.
+  for (const line of eachLine(st, clues)) {
+    const t = line.clue[3], b = line.clue[1];
+    if (t < 0 || b < 0 || b === 0) continue;
+    const horiz = line.kind === 'row';
+    const isEnderBranch = horiz ? IS_VBRANCH : IS_HBRANCH;   // ends a segment along the line
+    const isFlatBranch = horiz ? IS_HBRANCH : IS_VBRANCH;
+    const info = enderRange(st, line, isEnderBranch, isFlatBranch, clues);
+    if (info.lo < 0 || info.Pmin !== info.Pmax) continue;    // orientation split not pinned yet
+    const P = info.Pmin;                                     // perpendicular branches, exactly
+    const F = b - P;                                         // parallel branches, exactly
+    const enderWord = horiz ? 'vertical' : 'horizontal';
+    const flatWord = horiz ? 'horizontal' : 'vertical';
+    const segWord = horiz ? 'horizontal' : 'vertical';
+    const base = line.name + ' has ' + t + ' turn' + (t === 1 ? '' : 's') + ' and ' + b + ' branch' + (b === 1 ? '' : 'es') + ': turns and ' + enderWord + ' branches end ' + segWord + ' segments and must come in pairs, so exactly ' + P + ' branch' + (P === 1 ? ' is' : 'es are') + ' ' + enderWord + ' and ' + F + ' ' + (F === 1 ? 'is' : 'are') + ' ' + flatWord + '.';
+    if (F < 0) {
+      return { rule: 'Branch orientation', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' would need ' + P + ' ' + enderWord + ' branch' + (P === 1 ? '' : 'es') + ' to pair off its turns, but only ' + b + ' branch' + (b === 1 ? '' : 'es') + ' exist' + (b === 1 ? 's' : '') + ' — impossible.' };
+    }
+    let dEnd = 0, dFlat = 0;
+    const candEnd = [], candFlat = [];
+    for (const i of line.cells) {
+      const bk = branchKinds(st, i, isEnderBranch, isFlatBranch);
+      if (bk === 1) dEnd++;
+      else if (bk === 2) dFlat++;
+      else {
+        if (cellHasCfg(st, i, isEnderBranch)) candEnd.push(i);
+        if (cellHasCfg(st, i, isFlatBranch)) candFlat.push(i);
+      }
+    }
+    const needEnd = P - dEnd, needFlat = F - dFlat;
+    if (needEnd < 0 || needFlat < 0 || needEnd > candEnd.length || needFlat > candFlat.length) {
+      return { rule: 'Branch orientation', contradiction: true, cells: line.cells.slice(),
+        text: base + ' But the committed branches and the cells still able to take each orientation cannot meet those counts — contradiction.' };
+    }
+    if (needEnd === 0 && candEnd.length) {
+      return { rule: 'Branch orientation', cells: candEnd.slice(),
+        text: base + (dEnd ? ' All ' + P + ' ' + enderWord + ' branch' + (P === 1 ? '' : 'es') + ' are already placed — no' : ' No') + ' other cell in ' + line.name.toLowerCase() + ' can be a ' + enderWord + ' branch.',
+        apply() { for (const i of candEnd) filterCfg(st, i, m => !isEnderBranch(m)); } };
+    }
+    if (needFlat === 0 && candFlat.length) {
+      return { rule: 'Branch orientation', cells: candFlat.slice(),
+        text: base + (dFlat ? ' All ' + F + ' ' + flatWord + ' branch' + (F === 1 ? '' : 'es') + ' are already placed — no' : ' No') + ' other cell in ' + line.name.toLowerCase() + ' can be a ' + flatWord + ' branch.',
+        apply() { for (const i of candFlat) filterCfg(st, i, m => !isFlatBranch(m)); } };
+    }
+    if (needEnd > 0 && needEnd === candEnd.length) {
+      return { rule: 'Branch orientation', cells: candEnd.slice(),
+        text: base + ' Only ' + candEnd.map(i => rc(st, i)).join(', ') + ' can hold the remaining ' + enderWord + ' branch' + (needEnd === 1 ? '' : 'es') + ' — so ' + (needEnd === 1 ? 'it is one' : 'they all are') + '.',
+        apply() { for (const i of candEnd) filterCfg(st, i, m => isEnderBranch(m)); } };
+    }
+    if (needFlat > 0 && needFlat === candFlat.length) {
+      return { rule: 'Branch orientation', cells: candFlat.slice(),
+        text: base + ' Only ' + candFlat.map(i => rc(st, i)).join(', ') + ' can hold the remaining ' + flatWord + ' branch' + (needFlat === 1 ? '' : 'es') + ' — so ' + (needFlat === 1 ? 'it is one' : 'they all are') + '.',
+        apply() { for (const i of candFlat) filterCfg(st, i, m => isFlatBranch(m)); } };
+    }
+  }
+  return null;
+}
+function branchKinds(st, i, isEnder, isFlat) {
+  // 0 = not necessarily a branch / orientation open; 1 = definitely ender-branch; 2 = definitely flat-branch
+  const cls = cellClasses(st, i);
+  if (cls !== (1 << 1)) return 0;   // not a committed branch
+  let m = st.cellCfg[i], allEnd = true, allFlat = true;
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) {
+    if (!isEnder(CFGS[k])) allEnd = false;
+    if (!isFlat(CFGS[k])) allFlat = false;
+  }
+  return allEnd ? 1 : (allFlat ? 2 : 0);
+}
+function cellHasCfg(st, i, pred) {
+  let m = st.cellCfg[i];
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) if (pred(CFGS[k])) return true;
+  return false;
+}
+
+// rule: combined shape count - the pigeonhole above, over a set of shapes taken together
+// e.g. "5 turns+branches needed and only 5 cells can hold a turn or branch".
+const SHAPE_SUBSETS = [
+  [1, 3], [0, 1], [0, 2], [0, 3], [1, 2], [2, 3],
+  [0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]
+];
+function subsetLabel(S) {
+  return S.map(s => CLASS_PLURAL[s]).join(' + ');
+}
+function ruleShapeSubset(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    for (const S of SHAPE_SUBSETS) {
+      let demand = 0, ok = true;
+      for (const s of S) { const v = line.clue[s]; if (v < 0) { ok = false; break; } demand += v; }
+      if (!ok) continue;
+      let mask = 0;
+      for (const s of S) mask |= 1 << s;
+      const cand = [], def = [];
+      for (const i of line.cells) {
+        const cls = cellClasses(st, i);
+        if (cls & mask) cand.push(i);
+        if (cls !== 0 && (cls & ~mask) === 0) def.push(i);
+      }
+      if (cand.length < demand || def.length > demand) {
+        return { rule: 'Combined shape count', contradiction: true, cells: line.cells.slice(),
+          text: line.name + ' needs ' + demand + ' ' + subsetLabel(S) + ' but ' +
+            (cand.length < demand ? 'only ' + cand.length + ' cells can hold one' : def.length + ' cells are already forced to be one') + ' — impossible.' };
+      }
+      if (cand.length === demand && demand > 0) {
+        const targets = cand.filter(i => (cellClasses(st, i) & ~mask) !== 0);
+        if (targets.length) {
+          return { rule: 'Combined shape count', cells: cand.slice(),
+            text: line.name + ' needs ' + demand + ' ' + subsetLabel(S) + ' in total, and only ' + demand + ' cells can hold any of them — each of those cells must be one.',
+            apply() { for (const i of targets) filterCfg(st, i, m => S.indexOf(classOf(m)) >= 0); } };
+        }
+      }
+      if (def.length === demand) {
+        const targets = line.cells.filter(i => def.indexOf(i) < 0 && (cellClasses(st, i) & mask) !== 0);
+        if (targets.length) {
+          return { rule: 'Combined shape count', cells: def.slice(),
+            text: line.name + ' already has its ' + demand + ' ' + subsetLabel(S) + ' accounted for — no other cell in it can be one.',
+            apply() { for (const i of targets) filterCfg(st, i, m => S.indexOf(classOf(m)) < 0); } };
+        }
+      }
+      // adjacent-pair exclusions: two neighbouring candidates that cannot BOTH be
+      // one of these shapes (no options agree on their shared border) count as one.
+      if (demand > 0 && cand.length > demand) {
+        const n = line.cells.length;
+        const toNext = line.kind === 'row' ? RT : DN;
+        const toPrev = line.kind === 'row' ? LF : UP;
+        const canS = new Uint8Array(n), mustS = new Uint8Array(n);
+        for (let p = 0; p < n; p++) {
+          const cls = cellClasses(st, line.cells[p]);
+          if (cls & mask) canS[p] = 1;
+          if (cls !== 0 && (cls & ~mask) === 0) mustS[p] = 1;
+        }
+        const conflict = new Uint8Array(Math.max(1, n - 1));
+        const pairs = [];
+        for (let p = 0; p + 1 < n; p++) {
+          if (!canS[p] || !canS[p + 1]) continue;
+          const A = line.cells[p], B = line.cells[p + 1];
+          let okPair = false;
+          const ma = st.cellCfg[A], mb = st.cellCfg[B];
+          for (let ka = 0; ka < CFGS.length && !okPair; ka++) if ((ma >> ka) & 1) {
+            const a = CFGS[ka];
+            if (S.indexOf(classOf(a)) < 0) continue;
+            for (let kb = 0; kb < CFGS.length && !okPair; kb++) if ((mb >> kb) & 1) {
+              const b = CFGS[kb];
+              if (S.indexOf(classOf(b)) < 0) continue;
+              if (((a & toNext) !== 0) === ((b & toPrev) !== 0)) okPair = true;
+            }
+          }
+          if (!okPair) { conflict[p] = 1; pairs.push(rc(st, A) + '/' + rc(st, B)); }
+        }
+        if (pairs.length) {
+          const maxCount = banned => {
+            let dpNo = 0, dpYes = -1e9;
+            for (let p = 0; p < n; p++) {
+              if (mustS[p] && p === banned) return -1e9;
+              const can = canS[p] && p !== banned;
+              let no = Math.max(dpNo, dpYes);
+              let yes = -1e9;
+              if (can) {
+                yes = dpNo + 1;
+                if (!(p > 0 && conflict[p - 1])) yes = Math.max(yes, dpYes + 1);
+              }
+              if (mustS[p]) no = -1e9;
+              dpNo = no; dpYes = yes;
+            }
+            return Math.max(dpNo, dpYes);
+          };
+          const maxAll = maxCount(-1);
+          const pairText = pairs.join(' and ') + ' cannot both be one (none of their shapes agree on the shared border)';
+          if (maxAll < demand) {
+            return { rule: 'Combined shape count', contradiction: true, cells: line.cells.slice(),
+              text: line.name + ' needs ' + demand + ' ' + subsetLabel(S) + ', but ' + pairText + ', leaving room for at most ' + maxAll + ' — impossible.' };
+          }
+          if (maxAll === demand) {
+            const forced = [];
+            for (let p = 0; p < n; p++) if (canS[p] && !mustS[p] && maxCount(p) < demand) forced.push(line.cells[p]);
+            const targets = forced.filter(i => (cellClasses(st, i) & ~mask) !== 0);
+            if (targets.length) {
+              return { rule: 'Combined shape count', cells: forced.slice(),
+                text: line.name + ' needs ' + demand + ' ' + subsetLabel(S) + ', and ' + pairText + ' — so the candidates fit only just, which pins ' + forced.map(i => rc(st, i)).join(', ') + ' as ' + subsetLabel(S) + '.',
+                apply() { for (const i of targets) filterCfg(st, i, m => S.indexOf(classOf(m)) >= 0); } };
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// rule: derived clue. A missing clue can be pinned two ways: (a) for any shape,
+// the row totals and column totals must match, so one missing line inherits the
+// difference; (b) the grid's total branch count is even (every branch flips the
+// parity of exits, and the whole grid has none), so one missing branch clue has
+// known parity, and capacity can pin it exactly.
+// rule: shape footprint. A shape with in-line arms drags its neighbours into
+// use. When the line's used-cell budget is pinned (empty clue, or all four shape
+// clues), any placement whose minimum induced usage overflows the budget dies.
+// rule: exact allocation. When a line's given shape clues (plus the parity-
+// forced branch) demand exactly as many pieces as there are cells that could be
+// non-empty, every such cell is used -- and simple per-shape counting then
+// commits shapes whose capable cells only just suffice.
+function ruleExactAllocation(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const clv = s => (line.clue[s] === undefined || line.clue[s] < 0) ? -1 : line.clue[s];
+    if (clv(0) < 0 && clv(1) < 0 && clv(2) < 0 && clv(3) < 0) continue;
+    let demand = 0, allGiven = true;
+    const parts = [];
+    for (let s = 0; s < 4; s++) {
+      if (clv(s) < 0) { allGiven = false; continue; }
+      demand += clv(s);
+      if (clv(s) > 0) parts.push(clv(s) + ' ' + (clv(s) === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]));
+    }
+    let parityExtra = 0;
+    if (clv(3) >= 0 && clv(1) < 0 && clv(3) % 2 === 1) {
+      parityExtra = 1;
+      demand += 1;
+      parts.push('a parity-forced ' + (line.kind === 'row' ? 'vertical' : 'horizontal') + ' branch');
+    }
+    if (!allGiven && !parityExtra && clv(3) < 0) { /* partial clue sets still usable below when all four given */ }
+    if (!(allGiven || parityExtra)) continue;
+    if (demand === 0) continue;
+    const usable = [], usableSet = new Set();
+    for (let p = 0; p < line.cells.length; p++) {
+      const i = line.cells[p];
+      if (st.cellCfg[i] !== 0 && st.cellCfg[i] !== 1 && (st.cellCfg[i] & ~1) !== 0) { usable.push(p); usableSet.add(p); }
+      else if (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0) { usable.push(p); usableSet.add(p); }
+    }
+    if (usable.length !== demand) continue;
+    // every usable cell is used; commit that first if it says anything new
+    const commitUsed = usable.filter(p => (st.cellCfg[line.cells[p]] & 1) !== 0).map(p => line.cells[p]);
+    // per-shape counting: capable cells vs quota, only for cleanly-given shapes
+    const commits = [];
+    if (allGiven) for (let s = 0; s < 4; s++) {
+      if (clv(s) <= 0) continue;
+      const cap = usable.filter(p => (cellClasses(st, line.cells[p]) >> s) & 1);
+      if (cap.length === clv(s)) for (const p of cap) if (cellClasses(st, line.cells[p]) !== (1 << s)) commits.push({ p, s });
+    }
+    if (!commitUsed.length && !commits.length) continue;
+    const bits = [];
+    if (commitUsed.length) bits.push(commitUsed.map(i => rc(st, i)).join(', ') + ' ' + (commitUsed.length === 1 ? 'is' : 'are') + ' certainly used');
+    const byS = new Map();
+    for (const t2 of commits) { if (!byS.has(t2.s)) byS.set(t2.s, []); byS.get(t2.s).push(t2.p); }
+    for (const [s, ps] of byS) bits.push('the ' + (ps.length === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + ' can only sit at ' + ps.map(p => rc(st, line.cells[p])).join(', '));
+    return { rule: 'Exact allocation', cells: commitUsed.concat(commits.map(t2 => line.cells[t2.p])),
+      text: line.name + ' must fit ' + demand + ' piece' + (demand === 1 ? '' : 's') + ' (' + parts.join(' + ') + ') and only ' + demand + ' cell' + (demand === 1 ? ' is' : 's are') + ' still able to hold one — the pieces exactly fill them. So ' + bits.join('; ') + '.',
+      apply() {
+        for (const i of commitUsed) filterCfg(st, i, mm => mm !== 0);
+        for (const t2 of commits) filterCfg(st, line.cells[t2.p], mm => classOf(mm) === t2.s);
+      } };
+  }
+  return null;
+}
+
+function ruleFootprint(st, clues) {
+  // component-escape separators: each drawn component must reach the rest of the
+  // network; any full row/column (disjoint from the component) whose removal
+  // disconnects it from the rest must be crossed -- the crossing cells form a
+  // usage disjunction for that line's budget
+  {
+    const { R, C } = st, N = R * C;
+    const comp = new Int32Array(N).fill(-1);
+    const openCell = i => st.cellCfg[i] !== 1 && st.cellCfg[i] !== 0;   // not committed empty
+    const onEdge = i => {
+      const r = (i / C) | 0, c = i - r * C;
+      return (c < C - 1 && st.edgeR[i] === 1) || (c > 0 && st.edgeR[i - 1] === 1) ||
+             (r < R - 1 && st.edgeD[i] === 1) || (r > 0 && st.edgeD[i - C] === 1);
+    };
+    const nbrs = i => {
+      const r = (i / C) | 0, c = i - r * C, out = [];
+      if (c < C - 1 && st.edgeR[i] !== 0) out.push(i + 1);
+      if (c > 0 && st.edgeR[i - 1] !== 0) out.push(i - 1);
+      if (r < R - 1 && st.edgeD[i] !== 0) out.push(i + C);
+      if (r > 0 && st.edgeD[i - C] !== 0) out.push(i - C);
+      return out;
+    };
+    let nc = 0;
+    for (let i = 0; i < N; i++) {
+      if (comp[i] >= 0 || !onEdge(i)) continue;
+      const q = [i];
+      comp[i] = nc;
+      while (q.length) {
+        const j = q.pop();
+        const r = (j / C) | 0, c = j - r * C;
+        const step2 = (jj, on) => { if (on === 1 && comp[jj] < 0) { comp[jj] = nc; q.push(jj); } };
+        if (c < C - 1) step2(j + 1, st.edgeR[j]);
+        if (c > 0) step2(j - 1, st.edgeR[j - 1]);
+        if (r < R - 1) step2(j + C, st.edgeD[j]);
+        if (r > 0) step2(j - C, st.edgeD[j - C]);
+      }
+      nc++;
+    }
+    const frontiers = [];
+    for (let k = 0; k < nc && frontiers.length < 8; k++) {
+      // the rest of the network: other components and certainly-used loose cells
+      const restSeed = [];
+      for (let i = 0; i < N; i++) {
+        if (comp[i] !== k && (comp[i] >= 0 || (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0))) restSeed.push(i);
+      }
+      if (!restSeed.length) continue;
+      const bfs = (seeds, banRow, banCol) => {
+        const vis = new Uint8Array(N);
+        const q = [];
+        for (const s2 of seeds) { if (!vis[s2]) { vis[s2] = 1; q.push(s2); } }
+        while (q.length) {
+          const j = q.pop();
+          for (const jj of nbrs(j)) {
+            if (vis[jj]) continue;
+            if (!(openCell(jj) || comp[jj] >= 0)) continue;
+            const r2 = (jj / C) | 0, c2 = jj - r2 * C;
+            if (r2 === banRow || c2 === banCol) continue;
+            vis[jj] = 1;
+            q.push(jj);
+          }
+        }
+        return vis;
+      };
+      const kSeed = [];
+      for (let i = 0; i < N; i++) if (comp[i] === k) kSeed.push(i);
+      const reachK = bfs(kSeed, -1, -1);
+      const reachR = bfs(restSeed, -1, -1);
+      let touches = false;
+      for (const s2 of restSeed) if (reachK[s2]) { touches = true; break; }
+      if (!touches) continue;   // disconnected outright: the connectivity rule handles it
+      const kRows = new Set(kSeed.map(i => (i / C) | 0)), kCols = new Set(kSeed.map(i => i % C));
+      const rRows = new Set(restSeed.map(i => (i / C) | 0)), rCols = new Set(restSeed.map(i => i % C));
+      for (let r2 = 0; r2 < R; r2++) {
+        if (kRows.has(r2) || rRows.has(r2)) continue;
+        const vis = bfs(kSeed, r2, -1);
+        if (restSeed.some(s2 => vis[s2])) continue;   // row r2 is not a separator
+        // entry points: the first row-r2 cell of any escape path borders the
+        // component's side of the cut
+        const D = [];
+        for (let c2 = 0; c2 < C; c2++) {
+          const i2 = r2 * C + c2;
+          if (openCell(i2) && reachR[i2] && nbrs(i2).some(jj => vis[jj])) D.push(i2);
+        }
+        if (D.length && D.length <= 6) frontiers.push({ lineKind: 'row', lineIdx: r2, cells: D, anchor: kSeed[0] });
+      }
+      for (let c2 = 0; c2 < C; c2++) {
+        if (kCols.has(c2) || rCols.has(c2)) continue;
+        const vis = bfs(kSeed, -1, c2);
+        if (restSeed.some(s2 => vis[s2])) continue;
+        const D = [];
+        for (let r2 = 0; r2 < R; r2++) {
+          const i2 = r2 * C + c2;
+          if (openCell(i2) && reachR[i2] && nbrs(i2).some(jj => vis[jj])) D.push(i2);
+        }
+        if (D.length && D.length <= 6) frontiers.push({ lineKind: 'col', lineIdx: c2, cells: D, anchor: kSeed[0] });
+      }
+    }
+    st.__frontiers = frontiers;
+  }
+  for (const line of eachLine(st, clues)) {
+    const e = line.clue[4] === undefined ? -1 : line.clue[4];
+    let U = -1;
+    if (e >= 0) U = line.cells.length - e;
+    else if (line.clue[0] >= 0 && line.clue[1] >= 0 && line.clue[2] >= 0 && line.clue[3] >= 0)
+      U = line.clue[0] + line.clue[1] + line.clue[2] + line.clue[3];
+    // piece demand: the given shape clues (plus a parity-forced extra branch when
+    // the turn count is odd and no branch clue caps it) must all fit
+    const clv = s2 => (line.clue[s2] === undefined || line.clue[s2] < 0) ? -1 : line.clue[s2];
+    let demand = 0;
+    const demandParts = [];
+    for (let s2 = 0; s2 < 4; s2++) if (clv(s2) > 0) { demand += clv(s2); demandParts.push(clv(s2) + ' ' + (clv(s2) === 1 ? CLASS_NAME[s2] : CLASS_PLURAL[s2])); }
+    let parityExtra = 0;
+    const eD = line.clue[4] === undefined ? -1 : line.clue[4];
+    if (clv(3) >= 0 && clv(1) < 0 && clv(3) % 2 === 1) {
+      parityExtra = 1;
+      demand += 1;
+      demandParts.push('a ' + (line.kind === 'row' ? 'vertical' : 'horizontal') + ' branch (segment ends pair up, and ' + clv(3) + ' turns is odd)');
+    }
+    if (U < 0 && demand === 0 && eD < 0) continue;
+    const horiz = line.kind === 'row';
+    const inA = horiz ? LF : UP, inB = horiz ? RT : DN;
+    const n = line.cells.length;
+    const used = line.cells.map(i => st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0);
+    const totalUsed = used.filter(Boolean).length;
+    // perpendicular contributions: a neighbouring line's clued shapes that must
+    // reach into this line (crosses always; others when every candidate's configs
+    // carry the arm) each use a distinct cell of it among their candidate rows
+    const nbBounds = [];
+    {
+      const { R: R2, C: C2 } = st;
+      const nbLines = [];
+      if (line.kind === 'row') {
+        if (line.idx > 0) nbLines.push({ cellAt: p => (line.idx - 1) * C2 + p, arm: DN, name: 'row ' + line.idx, clue: clues.row[line.idx - 1] });
+        if (line.idx < R2 - 1) nbLines.push({ cellAt: p => (line.idx + 1) * C2 + p, arm: UP, name: 'row ' + (line.idx + 2), clue: clues.row[line.idx + 1] });
+      } else {
+        if (line.idx > 0) nbLines.push({ cellAt: p => p * C2 + (line.idx - 1), arm: RT, name: 'column ' + line.idx, clue: clues.col[line.idx - 1] });
+        if (line.idx < C2 - 1) nbLines.push({ cellAt: p => p * C2 + (line.idx + 1), arm: LF, name: 'column ' + (line.idx + 2), clue: clues.col[line.idx + 1] });
+      }
+      for (const nb of nbLines) {
+        for (let s2 = 0; s2 < 4; s2++) {
+          const k2 = nb.clue[s2] === undefined ? -1 : nb.clue[s2];
+          if (k2 < 1) continue;
+          const S = [];
+          let allArm = true;
+          for (let p = 0; p < n; p++) {
+            const j2 = nb.cellAt(p);
+            if ((cellClasses(st, j2) >> s2) & 1) {
+              S.push(p);
+              if (!shapeAllHaveArm(st, j2, s2, nb.arm)) allArm = false;
+            }
+          }
+          if (!allArm || S.length < k2) continue;
+          nbBounds.push({ k: k2, S: new Set(S), s: s2, name: nb.name });
+        }
+      }
+    }
+    // paired exclusion: k copies of shape s here + k2 copies of shape s2 in the
+    // neighbouring line, where every s2 placement forces an arm this line's s
+    // cannot receive -- if k + k2 equals the s-capable positions, every position
+    // the neighbour's shape cannot reach must be s
+    for (const b2 of nbBounds) {
+      for (let s3 = 0; s3 < 4; s3++) {
+        const k3 = line.clue[s3] === undefined ? -1 : line.clue[s3];
+        if (k3 < 1) continue;
+        const armFromNb = horiz ? (b2.name === 'row ' + line.idx ? UP : DN) : (b2.name === 'column ' + line.idx ? LF : RT);
+        const Ps = [];
+        for (let p = 0; p < n; p++) if ((cellClasses(st, line.cells[p]) >> s3) & 1) Ps.push(p);
+        if (k3 + b2.k !== Ps.length) continue;
+        let allInside = true, allIncompat = true;
+        for (const p of b2.S) {
+          if (!Ps.includes(p)) { allInside = false; break; }
+          if (cellHasCfg(st, line.cells[p], mm => classOf(mm) === s3 && (mm & armFromNb))) { allIncompat = false; break; }
+        }
+        if (!allInside || !allIncompat) continue;
+        const commits = Ps.filter(p => !b2.S.has(p) && cellClasses(st, line.cells[p]) !== (1 << s3));
+        if (!commits.length) continue;
+        return { rule: 'Paired exclusion', cells: commits.map(p => line.cells[p]),
+          text: 'Wherever ' + b2.name + '’s ' + b2.k + ' ' + CLASS_PLURAL[b2.s] + ' sit, the cell beside them in ' + line.name.toLowerCase() + ' cannot be a ' + CLASS_NAME[s3] + '. With ' + k3 + ' ' + CLASS_PLURAL[s3] + ' needed among ' + Ps.length + ' capable cells, every cell out of the ' + CLASS_PLURAL[b2.s] + '’ reach must be one: ' + commits.map(p => rc(st, line.cells[p])).join(', ') + '.',
+          apply() { for (const p of commits) filterCfg(st, line.cells[p], mm => classOf(mm) === s3); } };
+      }
+    }
+    if (U >= 0) {
+    const elim = [];
+    for (let p = 0; p < n; p++) {
+      const i = line.cells[p];
+      const cls = cellClasses(st, i);
+      for (let s = 0; s < 4; s++) {
+        if (!((cls >> s) & 1)) continue;
+        // over the remaining configs of shape s at this cell: can it avoid each in-line arm?
+        let minArms = 9, canA = false, canB = false, canAonly = false, canBonly = false;
+        for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[i] >> k) & 1) {
+          const m = CFGS[k];
+          if (classOf(m) !== s) continue;
+          const hasA = (m & inA) ? 1 : 0, hasB = (m & inB) ? 1 : 0;
+          const a = hasA + hasB;
+          if (a < minArms) minArms = a;
+          if (hasA) canA = true;
+          if (hasB) canB = true;
+          if (hasA && !hasB) canAonly = true;
+          if (hasB && !hasA) canBonly = true;
+        }
+        if (minArms === 9 || minArms === 0) continue;
+        let need = totalUsed + (used[p] ? 0 : 1);
+        const leftUsed = p > 0 ? used[p - 1] : true;
+        const rightUsed = p < n - 1 ? used[p + 1] : true;
+        if (minArms === 2) {
+          need += (leftUsed ? 0 : 1) + (rightUsed ? 0 : 1);
+        } else {
+          // exactly one in-line arm in the cheapest configuration; it can pick a side
+          // only among the sides some remaining config actually offers
+          const options = [];
+          if (canAonly || (canA && !canB)) options.push(leftUsed ? 0 : 1);
+          if (canBonly || (canB && !canA)) options.push(rightUsed ? 0 : 1);
+          if (!options.length) { if (canA) options.push(leftUsed ? 0 : 1); if (canB) options.push(rightUsed ? 0 : 1); }
+          need += Math.min(...options);
+        }
+        if (need > U) elim.push({ i, s, need });
+      }
+    }
+    // disjunctive usage: a certainly-used cell whose every option carries an
+    // in-line arm must use one of its in-line neighbours. Lower-bound the used
+    // count with a minimum hitting set of those neighbour pairs; cells whose
+    // hypothetical usage would overflow the budget are forced empty.
+    const supports = [];
+    for (let p = 0; p < n; p++) {
+      if (!used[p]) continue;
+      let all = true, any = false;
+      for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[line.cells[p]] >> k) & 1) {
+        any = true;
+        if (!(CFGS[k] & (inA | inB))) all = false;
+      }
+      if (!any || !all) continue;
+      const pair = [];
+      if (p > 0 && !used[p - 1]) pair.push(p - 1);
+      if (p < n - 1 && !used[p + 1]) pair.push(p + 1);
+      // if a neighbour is already used the pair is auto-hit; if both free, record it
+      const leftAuto = p > 0 && used[p - 1], rightAuto = p < n - 1 && used[p + 1];
+      if (leftAuto || rightAuto) continue;
+      if (pair.length) supports.push({ set: pair, why: 'arm' });
+    }
+    // component-escape frontiers that lie entirely within this line: the drawn
+    // component must reach the rest of the network through one of these cells
+    if (st.__frontiers) for (const fr of st.__frontiers) {
+      if (fr.lineKind === line.kind && fr.lineIdx === line.idx) {
+        const setP = fr.cells.map(i => line.cells.indexOf(i)).filter(p => p >= 0 && !used[p]);
+        if (setP.length && setP.length === fr.cells.length) supports.push({ set: setP, why: 'link', anchor: fr.anchor });
+      }
+    }
+    const minHit = extra => {
+      // disjoint-packing lower bound: every solution uses >=1 cell of each support
+      // set, so pairwise-disjoint unsatisfied sets each demand a distinct used cell
+      const sets = supports.filter(s2 => !s2.set.includes(extra)).map(s2 => s2.set);
+      sets.sort((a, b) => Math.max(...a) - Math.max(...b));
+      const taken = new Set();
+      let cnt = 0;
+      for (const s2 of sets) {
+        if (s2.some(q => taken.has(q))) continue;
+        for (const q of s2) taken.add(q);
+        cnt++;
+      }
+      return cnt;
+    };
+    const nbExtra = inB2 => {
+      let best = 0, bestInfo = null;
+      for (const b2 of nbBounds) {
+        let overlap = 0;
+        for (const p of b2.S) if (inB2.has(p)) overlap++;
+        const extra = Math.max(0, b2.k - overlap);
+        if (extra > best) { best = extra; bestInfo = b2; }
+      }
+      return { extra: best, info: bestInfo };
+    };
+    const usedSet = new Set();
+    for (let p = 0; p < n; p++) if (used[p]) usedSet.add(p);
+    const baseNb = nbExtra(usedSet);
+    const baseMin = totalUsed + Math.max(minHit(-1), baseNb.extra);
+    // tight attribution: if the budget is exactly consumed by a neighbour bound,
+    // then every used cell of this line inside that bound's range IS one of the
+    // arm targets -- so the neighbouring cell there is the shape (and the border
+    // carries a line), while certainly-empty cells there ban it
+    for (const b2 of nbBounds) {
+      let overlap = 0;
+      for (const p of b2.S) if (usedSet.has(p)) overlap++;
+      if (overlap > b2.k) continue;   // more used cells than copies: cannot attribute which are the targets
+      if (totalUsed + (b2.k - overlap) !== U) continue;
+      const commits = [], bans = [];
+      const nbCellAt = p => {
+        if (line.kind === 'row') return (b2.name === 'row ' + line.idx ? (line.idx - 1) : (line.idx + 1)) * st.C + p;
+        return p * st.C + (b2.name === 'column ' + line.idx ? (line.idx - 1) : (line.idx + 1));
+      };
+      const armKind = line.kind === 'row' ? 1 : 0;
+      const borderAt = p => {
+        const a2 = line.cells[p], bcell = nbCellAt(p);
+        return Math.min(a2, bcell);
+      };
+      for (const p of b2.S) {
+        const j2 = nbCellAt(p);
+        if (usedSet.has(p)) {
+          const needClass = (cellClasses(st, j2) !== (1 << b2.s));
+          const ev = armKind ? st.edgeD[borderAt(p)] : st.edgeR[borderAt(p)];
+          if (needClass || ev === -1) commits.push({ p, j2 });
+        } else if (st.cellCfg[line.cells[p]] === 1) {
+          if ((cellClasses(st, j2) >> b2.s) & 1) bans.push({ p, j2 });
+        }
+      }
+      if (!commits.length && !bans.length) continue;
+      const parts = [];
+      if (commits.length) parts.push(commits.map(t => rc(st, line.cells[t.p]) + ' is used, so ' + rc(st, t.j2) + ' is a ' + CLASS_NAME[b2.s]).join('; '));
+      if (bans.length) parts.push(bans.map(t => rc(st, line.cells[t.p]) + ' is empty, so ' + rc(st, t.j2) + ' is not a ' + CLASS_NAME[b2.s]).join('; '));
+      return { rule: 'Arm attribution',
+        cells: commits.map(t => t.j2).concat(bans.map(t => t.j2)),
+        edges: commits.map(t => [armKind, borderAt(t.p)]),
+        text: line.name + '’s used cells are fully accounted for: ' + totalUsed + ' certainly used plus the ' + b2.k + ' ' + (b2.k === 1 ? CLASS_NAME[b2.s] + ' arm' : CLASS_PLURAL[b2.s] + '’ arms') + ' reaching in from ' + b2.name + '. Every used cell in that stretch sits beside one of them — ' + parts.join('; ') + '.',
+        apply() {
+          for (const t of commits) {
+            filterCfg(st, t.j2, m => classOf(m) === b2.s);
+            const ev = armKind ? st.edgeD[borderAt(t.p)] : st.edgeR[borderAt(t.p)];
+            if (ev === -1) setEdge(st, armKind, borderAt(t.p), 1);
+          }
+          for (const t of bans) filterCfg(st, t.j2, m => classOf(m) !== b2.s);
+        } };
+    }
+    if (baseMin > U) {
+      return { rule: 'Usage budget', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' may use at most ' + U + ' cells, but its certainly-used pieces and the neighbours their arms must reach already require at least ' + baseMin + ' — impossible.' };
+    }
+    // enumeration-based arrival bounds: the neighbouring line's feasible arm
+    // patterns (its clues + marks, exactly) each land a set of arms in this line;
+    // whatever every pattern forces, combined with the used cells, must fit U
+    let armSets = null;
+    if (!st.fastLadder && n <= 12) {
+      armSets = [];
+      const nbSpecs = [];
+      if (line.kind === 'row') {
+        if (line.idx > 0) nbSpecs.push({ kind: 'row', idx: line.idx - 1, take: 'toNext', name: 'row ' + line.idx });
+        if (line.idx < st.R - 1) nbSpecs.push({ kind: 'row', idx: line.idx + 1, take: 'toPrev', name: 'row ' + (line.idx + 2) });
+      } else {
+        if (line.idx > 0) nbSpecs.push({ kind: 'col', idx: line.idx - 1, take: 'toNext', name: 'column ' + line.idx });
+        if (line.idx < st.C - 1) nbSpecs.push({ kind: 'col', idx: line.idx + 1, take: 'toPrev', name: 'column ' + (line.idx + 2) });
+      }
+      for (const spec of nbSpecs) {
+        const mk2 = cachedArmMasks(st, clues, spec.kind, spec.idx, 12);
+        if (mk2) armSets.push({ masks: [...mk2[spec.take]], name: spec.name });
+      }
+    }
+    let usedBits = 0;
+    for (let p = 0; p < n; p++) if (used[p]) usedBits |= 1 << p;
+    const pcnt2 = v => { let n2 = 0; while (v) { n2 += v & 1; v >>= 1; } return n2; };
+    const enumBound = extraBits => {
+      // strongest single-neighbour bound: min over that neighbour's patterns of
+      // the used-cell union size
+      let best = totalUsed + pcnt2(extraBits & ~usedBits), bestName = null, bestArr = 0;
+      if (armSets) for (const a2 of armSets) {
+        if (!a2.masks.length) continue;
+        let mn = Infinity, arr = 0;
+        for (const mk3 of a2.masks) {
+          const u2 = pcnt2(usedBits | extraBits | mk3);
+          if (u2 < mn) { mn = u2; arr = pcnt2(mk3 & ~(usedBits | extraBits)); }
+        }
+        if (mn > best) { best = mn; bestName = a2.name; bestArr = arr; }
+      }
+      return { best, bestName, bestArr };
+    };
+    const baseEnum = enumBound(0);
+    if (baseEnum.best > U) {
+      return { rule: 'Arm arrivals', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' may use at most ' + U + ' cells, but however ' + baseEnum.bestName + '’s pieces are arranged, their arms plus the certainly-used cells need at least ' + baseEnum.best + ' — impossible.' };
+    }
+    const emptyForced = [];
+    for (let p = 0; p < n; p++) {
+      if (used[p]) continue;
+      const i = line.cells[p];
+      if ((st.cellCfg[i] & 1) && st.cellCfg[i] === 1) continue;   // already committed empty
+      if (!(st.cellCfg[i] & 1)) continue;                          // can't be empty anyway (counted)
+      const setJ = new Set(usedSet); setJ.add(p);
+      const nbJ = nbExtra(setJ);
+      let withJ = totalUsed + 1 + Math.max(minHit(p), nbJ.extra);
+      let enumInfo = null;
+      if (withJ <= U) {
+        const eb = enumBound(1 << p);
+        if (eb.best > withJ) { withJ = eb.best; enumInfo = eb; }
+      }
+      if (withJ > U) emptyForced.push({ i, nb: nbJ.extra > minHit(p) ? nbJ.info : null, en: enumInfo });
+    }
+    // dual budget: the empty-cell clue caps empties. Hypothesise a cell empty and
+    // cascade within the line (a neighbour whose every remaining piece needs an arm
+    // into an empty cell goes empty too); overflow forces the cell to be used.
+    if (emptyForced.length) {
+      const firstT = emptyForced[0];
+      const linkSup = supports.find(s2 => s2.why === 'link');
+      if (firstT.en) {
+        return { rule: 'Arm arrivals', cells: emptyForced.map(t => t.i),
+          text: line.name + ' may use at most ' + U + ' cell' + (U === 1 ? '' : 's') + (e >= 0 ? ' (its empty clue reserves ' + e + ')' : '') + '. However ' + firstT.en.bestName + '’s pieces are arranged, their arms reach at least ' + firstT.en.bestArr + ' more of its cells — so using ' + emptyForced.map(t => rc(st, t.i)).join(', ') + ' as well would overflow the budget: ' + (emptyForced.length === 1 ? 'it stays' : 'they stay') + ' empty.',
+          apply() { for (const t of emptyForced) filterCfg(st, t.i, m => m === 0); } };
+      }
+      const nbPhrase = firstT.nb
+        ? ', and ' + firstT.nb.name + '’s ' + firstT.nb.k + ' ' + (firstT.nb.k === 1 ? CLASS_NAME[firstT.nb.s] : CLASS_PLURAL[firstT.nb.s]) + ' each reach into it among the rows they can occupy'
+        : (linkSup ? ', and the drawn piece around ' + rc(st, linkSup.anchor) + ' must reach the rest of the network through ' + linkSup.set.map(p2 => rc(st, line.cells[p2])).join(', ') + ' — one of them is used'
+        : (supports.length ? ', and each certainly-used piece with in-line arms must reach a neighbour' : ''));
+      return { rule: firstT.nb ? 'Neighbour arms' : (linkSup ? 'Escape routes' : 'Usage budget'), cells: emptyForced.map(t => t.i),
+        text: line.name + ' may use at most ' + U + ' cell' + (U === 1 ? '' : 's') + (e >= 0 ? ' (its empty clue reserves ' + e + ')' : '') + '. ' + totalUsed + (totalUsed === 1 ? ' cell is' : ' cells are') + ' certainly used' + nbPhrase + ' — using ' + emptyForced.map(t => rc(st, t.i)).join(', ') + ' as well would overflow the budget: ' + (emptyForced.length === 1 ? 'it stays' : 'they stay') + ' empty.',
+        apply() { for (const t of emptyForced) filterCfg(st, t.i, m => m === 0); } };
+    }
+    if (elim.length) {
+    const byClass = new Map();
+    for (const t of elim) {
+      if (!byClass.has(t.s)) byClass.set(t.s, []);
+      byClass.get(t.s).push(t.i);
+    }
+    const parts = [];
+    for (const [s, cellsOf] of byClass) {
+      parts.push(cellsOf.map(i => rc(st, i)).join(', ') + ' cannot be ' + (cellsOf.length === 1 ? 'a ' + CLASS_NAME[s] : CLASS_PLURAL[s]));
+    }
+    const first = elim[0];
+    return {
+      rule: 'Shape footprint', cells: elim.map(t => t.i),
+      text: line.name + ' may use at most ' + U + ' cell' + (U === 1 ? '' : 's') + (e >= 0 ? ' (its empty clue reserves ' + e + ')' : '') + ', and ' + totalUsed + (totalUsed === 1 ? ' is' : ' are') + ' already certainly used. A ' + CLASS_NAME[first.s] + ' at ' + rc(st, first.i) + ' would drag its neighbour' + '(s) along the ' + (horiz ? 'row' : 'column') + ' into use as well — at least ' + first.need + ' used cells, too many. So ' + parts.join('; ') + '.',
+      apply() { for (const t of elim) filterCfg(st, t.i, m => classOf(m) !== t.s); }
+    };
+    }
+    }
+    const usedForced = [];
+    if (e >= 0 || demand > 0) {
+      const certEmpty = line.cells.map(i => st.cellCfg[i] === 1);
+      const baseEmpty = certEmpty.filter(Boolean).length;
+      for (let p = 0; p < n; p++) {
+        const i = line.cells[p];
+        if (certEmpty[p] || !(st.cellCfg[i] & 1) || used[p]) continue;
+        const marked = certEmpty.slice();
+        marked[p] = true;
+        let changed = true, broken = false;
+        while (changed && !broken) {
+          changed = false;
+          for (let q = 0; q < n && !broken; q++) {
+            if (marked[q]) continue;
+            let alive = false, canEmpty = (st.cellCfg[line.cells[q]] & 1) !== 0;
+            for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[line.cells[q]] >> k) & 1) {
+              const mm = CFGS[k];
+              if (mm === 0) continue;
+              const dies = ((mm & inA) && q > 0 && marked[q - 1]) || ((mm & inB) && q < n - 1 && marked[q + 1]);
+              if (!dies) { alive = true; break; }
+            }
+            if (!alive) {
+              if (!canEmpty) { broken = true; break; }
+              marked[q] = true;
+              changed = true;
+            }
+          }
+        }
+        const totE = marked.filter(Boolean).length;
+        const quotaHit = e >= 0 && totE > e;
+        // capacity for the demanded pieces: cells that survive the cascade AND can
+        // still hold one of the demanded shape classes (a cell reduced to
+        // straight-or-empty cannot help satisfy crosses, turns, or branches)
+        let dMask = 0;
+        for (let s2 = 0; s2 < 4; s2++) if (clv(s2) > 0) dMask |= 1 << s2;
+        if (parityExtra) dMask |= 1 << 1;
+        let unionCap = 0;
+        if (demand > 0) for (let q = 0; q < n; q++) {
+          if (marked[q]) continue;
+          let clsMask = 0;
+          for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[line.cells[q]] >> k) & 1) {
+            const mm = CFGS[k];
+            if (mm === 0) continue;
+            const dies = ((mm & inA) && q > 0 && marked[q - 1]) || ((mm & inB) && q < n - 1 && marked[q + 1]);
+            if (!dies) clsMask |= 1 << classOf(mm);
+          }
+          if (clsMask & dMask) unionCap++;
+        }
+        const demandHit = demand > 0 && unionCap < demand;
+        if (broken || quotaHit || demandHit) usedForced.push({ i, totE, broken, demandHit: demandHit && !quotaHit, unionCap });
+      }
+    }
+    if (usedForced.length) {
+      const first = usedForced[0];
+      const story = first.broken
+        ? 'If ' + rc(st, first.i) + ' were empty, its neighbours would lose their last connections — impossible outright.'
+        : first.demandHit
+        ? line.name + ' must fit at least ' + demand + ' piece' + (demand === 1 ? '' : 's') + ' (' + demandParts.join(' + ') + '). If ' + rc(st, first.i) + ' were empty, only ' + first.unionCap + ' cell' + (first.unionCap === 1 ? '' : 's') + ' could hold any of them — not enough.'
+        : line.name + ' allows only ' + e + ' empty cell' + (e === 1 ? '' : 's') + '. If ' + rc(st, first.i) + ' were empty, its neighbours would lose their last connections and go empty too — ' + first.totE + ' empties, too many.'
+      return { rule: first.demandHit ? 'Piece demand' : 'Empty quota', cells: usedForced.map(t => t.i),
+        text: story + ' So ' + usedForced.map(t => rc(st, t.i)).join(', ') + ' ' + (usedForced.length === 1 ? 'is' : 'are') + ' certainly used.',
+        apply() { for (const t of usedForced) filterCfg(st, t.i, mm => mm !== 0); } };
+    }
+  }
+  return null;
+}
+
+function ruleDerivedClue(st, clues) {
+  const dirs = [
+    { vals: s => clues.row.map(r => (r[s] === undefined ? -1 : r[s])), kind: 'row', word: 'row' },
+    { vals: s => clues.col.map(c => (c[s] === undefined ? -1 : c[s])), kind: 'col', word: 'column' }
+  ];
+  const lines = eachLine(st, clues);
+  const lineOf = (kind, idx) => lines.find(l => l.kind === kind && l.idx === idx);
+  const applyDerived = (line, s, B, why) => {
+    const { def, pos, posCells, defCells } = countShape(st, line, s);
+    if (def > B || pos < B) {
+      return { rule: 'Derived clue', contradiction: true, cells: line.cells.slice(),
+        text: why + ' But ' + line.name.toLowerCase() + ' ' + (def > B ? 'already has ' + def + ' certain ' + CLASS_PLURAL[s] : 'can hold at most ' + pos) + ' — contradiction.' };
+    }
+    const pin = () => { st.derived[line.kind][line.idx][s] = B; };
+    const defSet = new Set(defCells);
+    const extras = posCells.filter(i => !defSet.has(i));
+    if (def === B && pos > B) {
+      return { rule: 'Derived clue', cells: extras,
+        text: why + (B ? ' All ' + B + ' are accounted for — no' : ' No') + ' other cell in ' + line.name.toLowerCase() + ' can be a ' + CLASS_NAME[s] + '.',
+        apply() { pin(); for (const i of extras) filterCfg(st, i, m => classOf(m) !== s); } };
+    }
+    if (pos === B && def < B) {
+      return { rule: 'Derived clue', cells: extras,
+        text: why + ' Exactly ' + B + ' cell' + (B === 1 ? '' : 's') + ' can hold them — so ' + (extras.length === 1 ? rc(st, extras[0]) + ' is one' : 'they all are') + '.',
+        apply() { pin(); for (const i of extras) filterCfg(st, i, m => classOf(m) === s); } };
+    }
+    // nothing to eliminate right now, but the derived count itself feeds every other rule
+    return { rule: 'Derived clue', cells: line.cells.slice(),
+      text: why,
+      apply() { pin(); } };
+  };
+  // a line with four of its five clues given inherits the fifth (cells must add up)
+  for (const line of lines) {
+    const vals = [];
+    for (let s = 0; s < 5; s++) vals.push(line.clue[s] === undefined ? -1 : line.clue[s]);
+    const missing = [];
+    for (let s = 0; s < 5; s++) if (vals[s] < 0) missing.push(s);
+    if (missing.length !== 1) continue;
+    const s = missing[0];
+    const B = line.cells.length - vals.reduce((a, v) => a + Math.max(v, 0), 0);
+    const why = line.name + '’s other clues account for ' + (line.cells.length - B) + ' of its ' + line.cells.length + ' cells — so it contains exactly ' + B + ' ' + (B === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + '.';
+    if (B < 0) {
+      return { rule: 'Derived clue', contradiction: true, cells: line.cells.slice(),
+        text: line.name + '’s clues already account for more cells than it has — impossible.' };
+    }
+    const mv = applyDerived(line, s, B, why);
+    if (mv) return mv;
+  }
+  for (let s = 0; s < 5; s++) {
+    for (let d = 0; d < 2; d++) {
+      const full = dirs[d].vals(s), part = dirs[1 - d].vals(s);
+      if (full.some(v => v < 0)) continue;
+      const missing = [];
+      for (let i = 0; i < part.length; i++) if (part[i] < 0) missing.push(i);
+      if (missing.length !== 1) continue;
+      const total = full.reduce((a, v) => a + v, 0);
+      const rest = part.reduce((a, v) => a + Math.max(v, 0), 0);
+      const B = total - rest;
+      const line = lineOf(dirs[1 - d].kind, missing[0]);
+      if (B < 0) {
+        return { rule: 'Derived clue', contradiction: true, cells: line.cells.slice(),
+          text: 'Every ' + dirs[d].word + '’s ' + CLASS_NAME[s] + ' clue is given, totalling ' + total + ', but the other ' + dirs[1 - d].word + 's’ clues already total ' + rest + ' — the counts cannot match.' };
+      }
+      const why = 'Every ' + dirs[d].word + '’s ' + CLASS_NAME[s] + ' clue is given (' + total + ' in total) and every ' + dirs[1 - d].word + '’s except ' + line.name.toLowerCase() + '’s (' + rest + ' in total) — so ' + line.name.toLowerCase() + ' contains exactly ' + B + ' ' + (B === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + '.';
+      const mv = applyDerived(line, s, B, why);
+      if (mv) return mv;
+    }
+  }
+  for (let d = 0; d < 2; d++) {
+    const part = dirs[d].vals(1);
+    const missing = [];
+    for (let i = 0; i < part.length; i++) if (part[i] < 0) missing.push(i);
+    if (missing.length !== 1) continue;
+    const rest = part.reduce((a, v) => a + Math.max(v, 0), 0);
+    const line = lineOf(dirs[d].kind, missing[0]);
+    const { def, pos } = countShape(st, line, 1);
+    let usable = 0;
+    for (const i of line.cells) if (st.cellCfg[i] & ~1) usable++;
+    const cx = line.clue[0], cs = line.clue[2], ct = line.clue[3];
+    const ce = line.clue[4] === undefined ? -1 : line.clue[4];
+    const budget = ce >= 0 ? Math.min(usable, line.cells.length - ce) : usable;
+    let hi = Math.min(pos, budget - (cx >= 0 ? cx : 0) - (cs >= 0 ? cs : 0) - (ct >= 0 ? ct : 0));
+    let lo = def;
+    if (lo % 2 !== rest % 2) lo++;
+    if (hi >= 0 && hi % 2 !== rest % 2) hi--;
+    if (lo > hi) {
+      return { rule: 'Derived clue', contradiction: true, cells: line.cells.slice(),
+        text: 'The grid’s total branch count must be even (each branch flips the parity of a region’s exits, and the whole grid has none). The other ' + dirs[d].word + 's’ branch clues total ' + rest + ', so ' + line.name.toLowerCase() + ' needs an ' + (rest % 2 ? 'odd' : 'even') + ' branch count — but none fits its other clues and marks.' };
+    }
+    if (lo !== hi) continue;
+    const why = 'The grid’s total branch count must be even (each branch flips the parity of a region’s exits, and the whole grid has none). The other ' + dirs[d].word + 's’ branch clues total ' + rest + ', so ' + line.name.toLowerCase() + ' holds an ' + (rest % 2 ? 'odd' : 'even') + ' number of branches — and with its other clues filling the line, that number is exactly ' + lo + '.';
+    const mv = applyDerived(line, 1, lo, why);
+    if (mv) return mv;
+  }
+  return null;
+}
+
+// rule: pigeonhole connection (generalizing the guide's "If N crosses are limited
+// to N+1 cells..."). N copies of a clued shape confined to N+1 candidate cells:
+// every adjacent pair of candidates contains one. Whenever that shape, at both
+// cells of the pair, is guaranteed to reach across their shared border (a cross
+// always; a straight or branch whose remaining configurations all carry the arm,
+// e.g. straights forced perpendicular in an edge line), the border carries a line.
+function shapeAllHaveArm(st, i, s, arm) {
+  let m = st.cellCfg[i], any = false;
+  for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) {
+    if (classOf(CFGS[k]) !== s) continue;
+    any = true;
+    if (!(CFGS[k] & arm)) return false;
+  }
+  return any;
+}
+function rulePigeonhole(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const kind = line.kind === 'row' ? 0 : 1;
+    const inA = line.kind === 'row' ? LF : UP;   // arm toward the previous cell of the line
+    const inB = line.kind === 'row' ? RT : DN;   // arm toward the next cell
+    for (let s = 0; s < 5; s++) {
+      const k = line.clue[s] === undefined ? -1 : line.clue[s];
+      if (k < 1) continue;
+      const cand = line.cells.filter(i => (cellClasses(st, i) >> s) & 1);
+      if (cand.length !== k + 1) continue;
+      const candSet = new Set(cand);
+      const edges = [], pairs = [];
+      for (let p = 0; p + 1 < line.cells.length; p++) {
+        const a = line.cells[p], b = line.cells[p + 1];
+        if (!candSet.has(a) || !candSet.has(b)) continue;
+        if (edgeVal(st, kind, a) >= 0) continue;
+        if (s < 4 && (!shapeAllHaveArm(st, a, s, inB) || !shapeAllHaveArm(st, b, s, inA))) continue;
+        edges.push([kind, a]);
+        pairs.push(rc(st, a) + '–' + rc(st, b));
+      }
+      if (!edges.length) continue;
+      const name = CLASS_NAME[s], plural = CLASS_PLURAL[s];
+      const reach = s === 4
+        ? 'and a blank cell has no arms at all, so the border between the pair can never carry a line'
+        : s === 0
+        ? 'and a cross uses all four of its borders'
+        : 'and here a ' + name + ' at either cell of such a pair is forced to reach across their shared border';
+      return {
+        rule: 'Pigeonhole connection', cells: cand.slice(), edges,
+        text: line.name + ' needs ' + k + ' ' + (k === 1 ? name : plural) + ' and only ' + (k + 1) +
+          ' cells can hold them, so at most one candidate is not a ' + name + ' — every grid-adjacent pair of candidates contains one, ' + reach +
+          '. The border' + (edges.length === 1 ? '' : 's') + ' between ' + pairs.join(', ') + (s === 4 ? (edges.length === 1 ? ' stays empty' : ' stay empty') : ' carr' + (edges.length === 1 ? 'ies a line' : 'y lines')) + '.',
+        apply() { for (const [kk, e] of edges) setEdge(st, kk, e, s === 4 ? 0 : 1); }
+      };
+    }
+  }
+  return null;
+}
+
+// rule: connectivity (guide: "The entire loop network must be connected.")
+// If a shape would seal a drawn component while proven line cells exist elsewhere, it's impossible.
+function ruleConnectivity(st) {
+  const { R, C } = st, N = R * C;
+  const par = new Int32Array(N);
+  for (let i = 0; i < N; i++) par[i] = i;
+  const find = x => { while (par[x] !== x) x = par[x] = par[par[x]]; return x; };
+  let anyOn = false;
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if (c < C - 1 && st.edgeR[i] === 1) { par[find(i + 1)] = find(i); anyOn = true; }
+    if (r < R - 1 && st.edgeD[i] === 1) { par[find(i + C)] = find(i); anyOn = true; }
+  }
+  if (!anyOn) return null;
+  const onArms = i => {
+    const r = (i / C) | 0, c = i - r * C;
+    let m = 0;
+    if (r > 0 && st.edgeD[i - C] === 1) m |= UP;
+    if (c < C - 1 && st.edgeR[i] === 1) m |= RT;
+    if (r < R - 1 && st.edgeD[i] === 1) m |= DN;
+    if (c > 0 && st.edgeR[i - 1] === 1) m |= LF;
+    return m;
+  };
+  const hasUnknownBorder = i => {
+    const r = (i / C) | 0, c = i - r * C;
+    return (r > 0 && st.edgeD[i - C] < 0) || (c < C - 1 && st.edgeR[i] < 0) ||
+           (r < R - 1 && st.edgeD[i] < 0) || (c > 0 && st.edgeR[i - 1] < 0);
+  };
+  const certainLine = [];
+  for (let i = 0; i < N; i++) if (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0) certainLine.push(i);   // empty config (bit 0) ruled out => used in every solution
+  const comps = new Map();
+  for (let i = 0; i < N; i++) if (onArms(i)) {
+    const r = find(i);
+    if (!comps.has(r)) comps.set(r, []);
+    comps.get(r).push(i);
+  }
+  for (const [root, cells] of comps) {
+    const open = cells.filter(hasUnknownBorder);
+    if (open.length !== 1) continue;
+    const i = open[0];
+    if (!certainLine.some(j => find(j) !== root)) continue;
+    const on = onArms(i);
+    const closingBit = CFG_BIT[on];
+    if (closingBit === undefined || !(st.cellCfg[i] & closingBit)) continue;
+    return {
+      rule: 'Connectivity', cells: [i],
+      text: 'The network must be one connected piece. If ' + rc(st, i) + ' took no further border, its drawn component would seal itself off while proven line cells exist elsewhere — so ' + rc(st, i) + ' must extend beyond it.',
+      apply() { filterCfg(st, i, m => m !== on); }
+    };
+  }
+  return null;
+}
+
+// shared helper for the global-connectivity rules: terminals are groups of proven
+// network material (drawn components and certainly-used cells) that must all join.
+function networkTerminals(st) {
+  const { R, C } = st, N = R * C;
+  const par = new Int32Array(N);
+  for (let i = 0; i < N; i++) par[i] = i;
+  const find = x => { while (par[x] !== x) x = par[x] = par[par[x]]; return x; };
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if (c < C - 1 && st.edgeR[i] === 1) par[find(i + 1)] = find(i);
+    if (r < R - 1 && st.edgeD[i] === 1) par[find(i + C)] = find(i);
+  }
+  const usable = new Uint8Array(N);      // cell could still carry lines
+  const certain = new Uint8Array(N);     // cell carries lines in every solution
+  for (let i = 0; i < N; i++) {
+    if (st.cellCfg[i] & ~1) usable[i] = 1;
+    if (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0) certain[i] = 1;
+  }
+  const hasOnArm = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if ((c < C - 1 && st.edgeR[i] === 1) || (c > 0 && st.edgeR[i - 1] === 1) ||
+        (r < R - 1 && st.edgeD[i] === 1) || (r > 0 && st.edgeD[i - C] === 1)) hasOnArm[i] = 1;
+  }
+  const groupOf = new Map();   // representative cell of each terminal group -> [cells]
+  for (let i = 0; i < N; i++) if (hasOnArm[i] || certain[i]) {
+    const g = find(i);
+    if (!groupOf.has(g)) groupOf.set(g, []);
+    groupOf.get(g).push(i);
+  }
+  return { usable, groups: [...groupOf.values()] };
+}
+
+// possibility-graph union-find: which cells can still reach each other, optionally
+// pretending one undecided border (skipKind, skipIdx) were empty.
+function possibilityFind(st, usable, skipKind, skipIdx) {
+  const { R, C } = st, N = R * C;
+  const par = new Int32Array(N);
+  for (let i = 0; i < N; i++) par[i] = i;
+  const find = x => { while (par[x] !== x) x = par[x] = par[par[x]]; return x; };
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if (c < C - 1 && st.edgeR[i] !== 0 && usable[i] && usable[i + 1] && !(skipKind === 0 && skipIdx === i))
+      par[find(i + 1)] = find(i);
+    if (r < R - 1 && st.edgeD[i] !== 0 && usable[i] && usable[i + C] && !(skipKind === 1 && skipIdx === i))
+      par[find(i + C)] = find(i);
+  }
+  return find;
+}
+
+// rule: unreachable region ("the network can never get there, so it stays empty";
+// also catches proven network material that can never join up)
+function ruleUnreachable(st) {
+  const { R, C } = st, N = R * C;
+  const { usable, groups } = networkTerminals(st);
+  if (!groups.length) return null;
+  const find = possibilityFind(st, usable, -1, -1);
+  const home = find(groups[0][0]);
+  for (let g = 1; g < groups.length; g++) {
+    if (find(groups[g][0]) !== home) {
+      return { rule: 'Unreachable region', contradiction: true, cells: [groups[0][0], groups[g][0]],
+        text: 'The proven network material around ' + rc(st, groups[0][0]) + ' and around ' + rc(st, groups[g][0]) +
+          ' can no longer be joined — every possible route between them is blocked, but the network must be one connected piece.' };
+    }
+  }
+  const outside = [];
+  for (let i = 0; i < N; i++) if (usable[i] && find(i) !== home) outside.push(i);
+  if (!outside.length) return null;
+  return {
+    rule: 'Unreachable region', cells: outside.slice(),
+    text: 'The network must stay connected to its proven lines, and no possible route leads from them into the area around ' +
+      rc(st, outside[0]) + (outside.length > 1 ? ' (' + outside.length + ' cells)' : '') + ' — those cells can never be reached and stay empty.',
+    apply() { for (const i of outside) filterCfg(st, i, m => m === 0); }
+  };
+}
+
+// rule: only connection ("if not for this border, the network would fall into two
+// disconnected pieces") - every route between two proven parts crosses one border.
+function ruleOnlyConnection(st) {
+  const { R, C } = st;
+  const { usable, groups } = networkTerminals(st);
+  if (groups.length < 2) return null;
+  const find0 = possibilityFind(st, usable, -1, -1);
+  const home = find0(groups[0][0]);
+  for (const g of groups) if (find0(g[0]) !== home) return null;   // separation handled by Unreachable region
+  for (let kind = 0; kind < 2; kind++) {
+    const E = kind ? st.edgeD : st.edgeR;
+    for (let i = 0; i < E.length; i++) {
+      if (E[i] !== -1) continue;
+      const r = (i / C) | 0, c = i - r * C;
+      if (kind === 0 && c >= C - 1) continue;
+      if (kind === 1 && r >= R - 1) continue;
+      const j = kind ? i + C : i + 1;
+      if (!usable[i] || !usable[j]) continue;
+      const find = possibilityFind(st, usable, kind, i);
+      let split = null;
+      const h = find(groups[0][0]);
+      for (let g = 1; g < groups.length; g++) if (find(groups[g][0]) !== h) { split = groups[g][0]; break; }
+      if (split === null) continue;
+      return {
+        rule: 'Only connection', cells: [groups[0][0], split], edges: [[kind, i]],
+        text: 'The proven lines around ' + rc(st, groups[0][0]) + ' and around ' + rc(st, split) +
+          ' must join into one network, and every remaining route between them crosses the border between ' +
+          rc(st, i) + ' and ' + rc(st, j) + ' — it must carry a line.',
+        apply() { setEdge(st, kind, i, 1); }
+      };
+    }
+  }
+  return null;
+}
+
+// rule: single segment (guide: "If a row or column ... only has 2 turns, then it only has 1 segment.")
+function ruleSingleSegment(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const horiz = line.kind === 'row';
+    const isEnder = horiz ? IS_VBRANCH : IS_HBRANCH;
+    const isFlat = horiz ? IS_HBRANCH : IS_VBRANCH;
+    // exactly one segment, however that is derived: two clued turns with no
+    // perpendicular branch possible, or the general ender-count bounds
+    let one = false, why = '';
+    const t = line.clue[3];
+    if (t === 2) {
+      let enderBranchPossible = false;
+      for (const i of line.cells) if (cellHasCfg(st, i, isEnder)) { enderBranchPossible = true; break; }
+      if (!enderBranchPossible || line.clue[1] === 0) { one = true; why = '2 turns, no perpendicular branch possible'; }
+    }
+    if (!one) {
+      const info = enderRange(st, line, isEnder, isFlat, clues);
+      if (info.lo === 2 && info.hi === 2) {
+        one = true;
+        why = info.budgetOnly ? (info.viaCap ? 'its neighbours can supply arms for only one' : 'its turns and branches total just ' + info.sumTB) : info.t + ' turn' + (info.t === 1 ? '' : 's') + ' + ' + info.Pmin + ' perpendicular branch' + (info.Pmin === 1 ? '' : 'es') + ' by parity';
+      }
+    }
+    if (!one) continue;
+    const kind = horiz ? 0 : 1;
+    const inline = horiz ? (LF | RT) : (UP | DN);
+    // anchors: drawn in-line borders, plus cells provably ON the segment (used,
+    // and every remaining option carries an in-line arm)
+    const anchors = [];
+    for (let k = 0; k + 1 < line.cells.length; k++) if (edgeVal(st, kind, line.cells[k]) === 1) { anchors.push(k); anchors.push(k + 1); }
+    for (let k = 0; k < line.cells.length; k++) {
+      const i = line.cells[k];
+      if (st.cellCfg[i] === 0 || (st.cellCfg[i] & 1)) continue;   // must be certainly used
+      let all = true;
+      for (let m = 0; m < CFGS.length; m++) if ((st.cellCfg[i] >> m) & 1) if (!(CFGS[m] & inline)) all = false;
+      if (all) anchors.push(k);
+    }
+    if (anchors.length < 2) continue;
+    const lo = Math.min(...anchors), hi = Math.max(...anchors);
+    if (hi - lo < 1) continue;
+    const edges = [];
+    for (let k = lo; k < hi; k++) if (edgeVal(st, kind, line.cells[k]) < 0) edges.push([kind, line.cells[k]]);
+    if (!edges.length) continue;
+    const segWord = horiz ? 'horizontal' : 'vertical';
+    return {
+      rule: 'Single segment', cells: [], edges,
+      text: line.name + ' holds exactly one ' + segWord + ' segment (' + why + '). ' + rc(st, line.cells[lo]) + ' and ' + rc(st, line.cells[hi]) + ' both provably lie on it, so everything between them connects.',
+      apply() { for (const [k, e] of edges) setEdge(st, k, e, 1); }
+    };
+  }
+  return null;
+}
+
+// rule: segment room. When a line provably holds exactly one segment (2 segment-
+// ending pieces) and interior pieces (crosses, committed flat branches) must sit
+// strictly inside it, a known endpoint must extend toward the side with room.
+function ruleSegmentRoom(st, clues) {
+  const allCfg = (i, pred) => {
+    let m = st.cellCfg[i];
+    if (m === 0) return false;
+    for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) { if (!pred(CFGS[k])) return false; }
+    return true;
+  };
+  const isTurnCfg = m => {
+    let n = 0, x = m; while (x) { n += x & 1; x >>= 1; }
+    return n === 2 && m !== (UP | DN) && m !== (LF | RT);
+  };
+  for (const line of eachLine(st, clues)) {
+    const t = line.clue[3];
+    if (t < 0) continue;
+    const horiz = line.kind === 'row';
+    const isEnder = horiz ? IS_VBRANCH : IS_HBRANCH;
+    const isFlat = horiz ? IS_HBRANCH : IS_VBRANCH;
+    let dEnd = 0, extra = 0;
+    for (const i of line.cells) {
+      const bk = branchKinds(st, i, isEnder, isFlat);
+      if (bk === 1) dEnd++;
+      else if (cellHasCfg(st, i, isEnder)) extra++;
+    }
+    if (t + dEnd !== 2 || extra > 0) continue;   // exactly one segment along this line
+    // interior demand: pieces with both in-line arms, strictly between the endpoints
+    const x = line.clue[0];
+    let k = 0;
+    if (x >= 0) k += x; else for (const i of line.cells) if (allCfg(i, m => m === 15)) k++;
+    for (const i of line.cells) if (branchKinds(st, i, isEnder, isFlat) === 2) k++;
+    if (k < 1) continue;
+    // known endpoint cells: committed to a segment-ending shape (turn or perpendicular branch)
+    const enders = [];
+    for (let p = 0; p < line.cells.length; p++) if (allCfg(line.cells[p], m => isTurnCfg(m) || isEnder(m))) enders.push(p);
+    if (!enders.length || enders.length > 2) continue;
+    const kind = horiz ? 0 : 1;
+    const len = line.cells.length;
+    const bVal = p => edgeVal(st, kind, line.cells[p]);   // border between position p and p+1
+    const segWord = horiz ? 'horizontal' : 'vertical';
+    const interiorWord = (x >= 1 ? x + ' cross' + (x === 1 ? '' : 'es') : 'its interior pieces');
+    const endersWord = t + ' turn' + (t === 1 ? '' : 's') + (dEnd ? ' + ' + dEnd + ' ' + (horiz ? 'vertical' : 'horizontal') + ' branch' + (dEnd === 1 ? '' : 'es') : '');
+
+    if (enders.length === 2) {
+      const [p1, p2] = enders;
+      if (p2 - p1 - 1 < k) {
+        return { rule: 'Segment room', contradiction: true, cells: [line.cells[p1], line.cells[p2]],
+          text: line.name + ' holds exactly one ' + segWord + ' segment (' + endersWord + '), with both endpoints known at ' + rc(st, line.cells[p1]) + ' and ' + rc(st, line.cells[p2]) + ' — but ' + interiorWord + ' cannot fit strictly between them.' };
+      }
+      const edges = [];
+      for (let p = p1; p < p2; p++) if (bVal(p) < 0) edges.push([kind, line.cells[p]]);
+      if (p1 > 0 && bVal(p1 - 1) < 0) edges.push([kind, line.cells[p1 - 1], 0]);
+      if (p2 < len - 1 && bVal(p2) < 0) edges.push([kind, line.cells[p2], 0]);
+      if (!edges.length) continue;
+      return { rule: 'Segment room', cells: [line.cells[p1], line.cells[p2]], edges: edges.map(e => [e[0], e[1]]),
+        text: line.name + ' holds exactly one ' + segWord + ' segment (' + endersWord + '), and both endpoints are known: ' + rc(st, line.cells[p1]) + ' and ' + rc(st, line.cells[p2]) + ' — the segment runs exactly between them.',
+        apply() { for (const e of edges) setEdge(st, e[0], e[1], e.length > 2 ? 0 : 1); } };
+    }
+
+    const p = enders[0];
+    const E = line.cells[p];
+    const needed = k + 1;   // interior cells plus the far endpoint
+    const rightB = p < len - 1 ? bVal(p) : 0;
+    const leftB = p > 0 ? bVal(p - 1) : 0;
+    let dir = 0;
+    if (rightB === 1) dir = 1;
+    else if (leftB === 1) dir = -1;
+    else {
+      let roomR = 0; for (let q = p; q < len - 1 && bVal(q) !== 0; q++) roomR++;
+      let roomL = 0; for (let q = p - 1; q >= 0 && bVal(q) !== 0; q--) roomL++;
+      const rOK = rightB !== 0 && roomR >= needed;
+      const lOK = leftB !== 0 && roomL >= needed;
+      if (!rOK && !lOK) {
+        return { rule: 'Segment room', contradiction: true, cells: [E],
+          text: line.name + ' holds exactly one ' + segWord + ' segment (' + endersWord + ') which must contain ' + interiorWord + ' strictly inside it, and ' + rc(st, E) + ' is a known endpoint — but neither side of ' + rc(st, E) + ' has room for the rest of the segment.' };
+      }
+      if (rOK && lOK) continue;
+      dir = rOK ? 1 : -1;
+    }
+    const edges = [];
+    for (let q = 0; q <= k; q++) {
+      const bp = dir === 1 ? p + q : p - 1 - q;
+      if (bp < 0 || bp >= len - 1) {
+        return { rule: 'Segment room', contradiction: true, cells: [E],
+          text: line.name + ' holds exactly one ' + segWord + ' segment (' + endersWord + ') and ' + rc(st, E) + ' is a known endpoint whose line points ' + (dir === 1 ? (horiz ? 'right' : 'down') : (horiz ? 'left' : 'up')) + ' — but there is no room there for ' + interiorWord + ' plus the far endpoint.' };
+      }
+      if (bVal(bp) < 0) edges.push([kind, line.cells[bp], 1]);
+    }
+    const oppB = dir === 1 ? p - 1 : p;
+    if (oppB >= 0 && oppB < len - 1 && bVal(oppB) < 0) edges.push([kind, line.cells[oppB], 0]);
+    if (!edges.length) continue;
+    const dirWord = dir === 1 ? (horiz ? 'rightward' : 'downward') : (horiz ? 'leftward' : 'upward');
+    const oppWord = dir === 1 ? (horiz ? 'left' : 'above') : (horiz ? 'right' : 'below');
+    return { rule: 'Segment room', cells: [E], edges: edges.map(e => [e[0], e[1]]),
+      text: line.name + ' holds exactly one ' + segWord + ' segment (' + endersWord + '), and ' + interiorWord + ' must lie strictly inside it, between the endpoints. ' + rc(st, E) + ' is a known endpoint, and to its ' + oppWord + ' there is not enough room — so the segment extends ' + dirWord + ' far enough to hold ' + interiorWord + ' plus the far endpoint.',
+      apply() { for (const e of edges) setEdge(st, e[0], e[1], e[2]); } };
+  }
+  return null;
+}
+
+// rule: segment packing. When the exact number of in-line segments is known
+// (turns clue + perpendicular branches pinned by parity and capacity), enumerate
+// every legal arrangement of that many segments consistent with the current marks,
+// cell capabilities, and cells proven to lie on a segment. Force whatever all
+// arrangements agree on.
+// per-step cache for line arm-mask enumerations (they are expensive and several
+// rules ask for the same neighbour within one step)
+function cachedArmMasks(st, clues, kind, idx, maxN) {
+  const key = kind + ':' + idx + ':' + lineFingerprint(st, kind, idx) + ':' + (maxN || 9);
+  if (!st.__maskCache) st.__maskCache = new Map();
+  if (st.__maskCache.has(key)) return st.__maskCache.get(key);
+  // cheap pre-gate: if the raw option product is huge, the enumeration would
+  // only burn its node budget before overflowing -- skip it outright
+  let r = null;
+  {
+    const { R, C } = st;
+    const n = kind === 'row' ? C : R;
+    let prod = 1;
+    for (let p = 0; p < n && prod < 1e14; p++) {
+      const i = kind === 'row' ? idx * C + p : p * C + idx;
+      let m = st.cellCfg[i], c2 = 0;
+      while (m) { c2 += m & 1; m >>>= 1; }
+      prod *= Math.max(1, c2);
+    }
+    // clue-tight lines are attempted even when raw options look huge: the clue
+    // counts prune the real search, and a bounded node budget caps the cost
+    const lc = kind === 'row' ? clues.row[idx] : clues.col[idx];
+    let given = 0;
+    for (let s2 = 0; s2 < 5; s2++) if (lc && lc[s2] !== undefined && lc[s2] >= 0) given++;
+    if (prod < 3e6) r = lineArmMasks(st, clues, kind, idx, maxN);
+    else if (given >= 2 && n <= 12) {
+      if ((st.__enumBudget || 0) <= 0) return null;   // spread escalated attempts across steps (not cached)
+      st.__enumBudget -= 120000;
+      r = lineArmMasks(st, clues, kind, idx, maxN, 120000);
+    }
+  }
+  st.__maskCache.set(key, r);
+  return r;
+}
+
+// fingerprint of one line's current state (cell options + in-line borders):
+// enumeration results are reusable until this changes
+function lineFingerprint(st, kind, idx) {
+  const { R, C } = st;
+  const n = kind === 'row' ? C : R;
+  let h = 2166136261 >>> 0;
+  const mix = v => { h ^= v; h = Math.imul(h, 16777619) >>> 0; };
+  for (let p = 0; p < n; p++) {
+    const i = kind === 'row' ? idx * C + p : p * C + idx;
+    mix(st.cellCfg[i]);
+    if (p < n - 1) mix((kind === 'row' ? st.edgeR[i] : st.edgeD[i]) + 2);
+  }
+  return h;
+}
+
+// per-step cache of exact line-completion cell unions (same pre-gate as masks)
+function cachedCellUnion(st, clues, kind, idx) {
+  const key = kind + ':' + idx + ':' + lineFingerprint(st, kind, idx);
+  if (!st.__unionCache) st.__unionCache = new Map();
+  if (st.__unionCache.has(key)) return st.__unionCache.get(key);
+  let r = null;
+  {
+    const { R, C } = st;
+    const n = kind === 'row' ? C : R;
+    let prod = 1;
+    for (let p = 0; p < n && prod < 1e14; p++) {
+      const i = kind === 'row' ? idx * C + p : p * C + idx;
+      let m = st.cellCfg[i], c2 = 0;
+      while (m) { c2 += m & 1; m >>>= 1; }
+      prod *= Math.max(1, c2);
+    }
+    // clue-tight lines are attempted even when raw options look huge: the clue
+    // counts prune the real search, and a bounded node budget caps the cost
+    const lc = kind === 'row' ? clues.row[idx] : clues.col[idx];
+    let given = 0;
+    for (let s2 = 0; s2 < 5; s2++) if (lc && lc[s2] !== undefined && lc[s2] >= 0) given++;
+    if (n <= 12 && prod < 3e6) r = lineCellUnion(st, clues, kind, idx, () => true, 12);
+    else if (given >= 2 && n <= 12) {
+      if ((st.__enumBudget || 0) <= 0) return null;   // spread escalated attempts across steps (not cached)
+      st.__enumBudget -= 120000;
+      r = lineCellUnion(st, clues, kind, idx, () => true, 12, 120000);
+    }
+  }
+  st.__unionCache.set(key, r);
+  return r;
+}
+
+// maximum number of arms the neighbouring lines can send into this line, from
+// their exact feasible assignments (cached per step; Infinity when unbounded)
+function neighborArmCap(st, clues, line) {
+  if (st.fastLadder) return Infinity;
+  const key = line.kind + ':' + line.idx;
+  if (st.__capCache && st.__capCache.has(key)) return st.__capCache.get(key);
+  const n = line.cells.length;
+  let cap = 0;
+  if (n <= 12) {
+    const specs = [];
+    if (line.kind === 'row') {
+      if (line.idx > 0) specs.push({ kind: 'row', idx: line.idx - 1, take: 'toNext' });
+      if (line.idx < st.R - 1) specs.push({ kind: 'row', idx: line.idx + 1, take: 'toPrev' });
+    } else {
+      if (line.idx > 0) specs.push({ kind: 'col', idx: line.idx - 1, take: 'toNext' });
+      if (line.idx < st.C - 1) specs.push({ kind: 'col', idx: line.idx + 1, take: 'toPrev' });
+    }
+    for (const spec of specs) {
+      const mk2 = cachedArmMasks(st, clues, spec.kind, spec.idx, 12);
+      if (!mk2) { cap = Infinity; break; }
+      let best = 0;
+      for (const m of mk2[spec.take]) { let c2 = 0, v = m; while (v) { c2 += v & 1; v >>= 1; } if (c2 > best) best = c2; }
+      cap += best;
+    }
+  } else cap = Infinity;
+  if (!st.__capCache) st.__capCache = new Map();
+  st.__capCache.set(key, cap);
+  return cap;
+}
+
+function enderRange(st, line, isEnder, isFlat, clues) {
+  const t = line.clue[3];
+  let dEnd = 0, dFlat = 0, cand = 0, usable = 0, anyPerpArm = false;
+  for (const i of line.cells) {
+    if (st.cellCfg[i] & ~1) usable++;
+    const bk = branchKinds(st, i, isEnder, isFlat);
+    if (bk === 1) dEnd++;
+    else if (bk === 2) dFlat++;
+    else if (cellHasCfg(st, i, isEnder)) cand++;
+    // certainly used and every option has an in-line perpendicular arm: this
+    // cell provably lies on a segment of this line
+    if (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0) {
+      const inline = line.kind === 'row' ? (LF | RT) : (UP | DN);
+      let all = true;
+      for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[i] >> k) & 1) if (!(CFGS[k] & inline)) all = false;
+      if (all) anyPerpArm = true;
+    }
+  }
+  if (t < 0) {
+    // no turn clue -- bound the ender count from whatever is available: the other
+    // clues pin the turn+branch total, and each segment end consumes one arm
+    // toward a neighbouring line, whose exact arm capacity is enumerable
+    const x2 = line.clue[0], s2 = line.clue[2];
+    let e2 = line.clue[4] === undefined ? -1 : line.clue[4];
+    let sumTB = -1;
+    if (x2 >= 0 && s2 >= 0) {
+      let eEff = e2;
+      if (eEff < 0) {
+        eEff = 0;
+        for (const i of line.cells) if (st.cellCfg[i] === 1) eEff++;
+      }
+      sumTB = line.cells.length - eEff - x2 - s2;
+      if (sumTB < 0) return { lo: -1, contra: false };
+    }
+    let cap = Infinity;
+    if (sumTB < 0 || sumTB > 3) cap = clues ? neighborArmCap(st, clues, line) : Infinity;
+    let Emax = Math.min(sumTB >= 0 ? sumTB : Infinity, cap);
+    if (!isFinite(Emax)) return { lo: -1 };
+    // does the straight clue guarantee an in-line segment? (all straight options
+    // in this line run along it, e.g. any edge line)
+    let sInline = false;
+    if (line.clue[2] >= 1) {
+      const inl = line.kind === 'row' ? (LF | RT) : (UP | DN);
+      sInline = true;
+      let anyCand = false;
+      for (const i of line.cells) {
+        let hasS = false, bad = false;
+        for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[i] >> k) & 1) {
+          if (classOf(CFGS[k]) === 2) { hasS = true; if (!(CFGS[k] & inl)) bad = true; }
+        }
+        if (hasS) { anyCand = true; if (bad) { sInline = false; break; } }
+      }
+      if (!anyCand) sInline = false;
+    }
+    let Emin = dEnd;
+    if ((anyPerpArm || (x2 >= 1) || sInline) && Emin < 2) Emin = 2;
+    if (Emin % 2 === 1) Emin++;
+    if (Emax % 2 === 1) Emax--;
+    if (Emin > Emax) return { lo: -1, contra: false };
+    return { lo: Emin, hi: Emax, t: -1, sumTB: sumTB >= 0 ? sumTB : Emax, cap, dEnd, dFlat, budgetOnly: true, viaCap: cap < (sumTB >= 0 ? sumTB : Infinity) };
+  }
+  let Pmin = dEnd, Pmax = dEnd + cand;
+  const b = line.clue[1], s = line.clue[2], x = line.clue[0];
+  const e = line.clue[4] === undefined ? -1 : line.clue[4];
+  const budget = e >= 0 ? Math.min(usable, line.cells.length - e) : usable;
+  if (b >= 0) Pmax = Math.min(Pmax, b - dFlat);
+  Pmax = Math.min(Pmax, budget - t - dFlat - (s >= 0 ? s : 0) - (x >= 0 ? x : 0));
+  if (Pmin % 2 !== t % 2) Pmin++;
+  if (Pmax >= 0 && Pmax % 2 !== t % 2) Pmax--;
+  if (Pmin > Pmax) return { lo: -1, contra: true, t, dEnd };
+  return { lo: t + Pmin, hi: t + Pmax, t, Pmin, Pmax, dEnd, dFlat };
+}
+
+function ruleSegmentPacking(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const horiz = line.kind === 'row';
+    const isEnder = horiz ? IS_VBRANCH : IS_HBRANCH;
+    const isFlat = horiz ? IS_HBRANCH : IS_VBRANCH;
+    const info = enderRange(st, line, isEnder, isFlat, clues);
+    const segWord = horiz ? 'horizontal' : 'vertical';
+    const perpWord = horiz ? 'vertical' : 'horizontal';
+    if (info.contra) {
+      return { rule: 'Segment packing', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' cannot reach an even number of segment-ending pieces: ' + info.t + ' turn' + (info.t === 1 ? '' : 's') + ' plus ' + perpWord + ' branches limited by parity and by the room left in the line — impossible, since segment ends come in pairs.' };
+    }
+    if (info.lo < 0) continue;
+    const Slo = info.lo / 2, Shi = info.hi / 2;
+    const n = line.cells.length;
+    if (n - 1 > 16) continue;
+    const inline = horiz ? (LF | RT) : (UP | DN);
+    const inA = horiz ? LF : UP;    // arm toward the previous cell of the line
+    const inB = horiz ? RT : DN;    // arm toward the next cell
+    const canOff = new Uint8Array(n), canStart = new Uint8Array(n), canEnd = new Uint8Array(n), canMid = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+      let m = st.cellCfg[line.cells[p]];
+      for (let k = 0; k < CFGS.length; k++) if ((m >> k) & 1) {
+        const a = CFGS[k] & inline;
+        if (a === 0) canOff[p] = 1;
+        else if (a === inB) canStart[p] = 1;
+        else if (a === inA) canEnd[p] = 1;
+        else canMid[p] = 1;
+      }
+    }
+    // interior composition: with turn and branch clues, each arrangement pins how
+    // many branches are perpendicular (segment ends) vs flat (interiors); the
+    // clued crosses and flat branches must then fit the interior slots
+    const tC = line.clue[3] === undefined ? -1 : line.clue[3];
+    const bC = line.clue[1] === undefined ? -1 : line.clue[1];
+    const xC = line.clue[0] === undefined ? -1 : line.clue[0];
+    const canX = new Uint8Array(n), canFlat = new Uint8Array(n);
+    if (tC >= 0 && bC >= 0) for (let p = 0; p < n; p++) {
+      if (cellHasCfg(st, line.cells[p], mm => classOf(mm) === 0)) canX[p] = 1;
+      if (cellHasCfg(st, line.cells[p], mm => isFlat(mm))) canFlat[p] = 1;
+    }
+    const kind = horiz ? 0 : 1;
+    const bv = [];
+    for (let p = 0; p < n - 1; p++) bv.push(edgeVal(st, kind, line.cells[p]));
+    const nb = n - 1;
+    // neighbour compatibility: some feasible arm pattern of each neighbouring
+    // line must land all its arms on cells this arrangement can accept -- run
+    // members that can take the arm, or off-run cells usable without in-line arms
+    const nbFilters = [];
+    if (!st.fastLadder && n <= 12 && nb <= 11) {
+      const specs = [];
+      if (horiz) {
+        if (line.idx > 0) specs.push({ kind: 'row', idx: line.idx - 1, take: 'toNext', arm: UP });
+        if (line.idx < st.R - 1) specs.push({ kind: 'row', idx: line.idx + 1, take: 'toPrev', arm: DN });
+      } else {
+        if (line.idx > 0) specs.push({ kind: 'col', idx: line.idx - 1, take: 'toNext', arm: LF });
+        if (line.idx < st.C - 1) specs.push({ kind: 'col', idx: line.idx + 1, take: 'toPrev', arm: RT });
+      }
+      for (const spec of specs) {
+        const mk2 = cachedArmMasks(st, clues, spec.kind, spec.idx, 12);
+        if (!mk2) continue;
+        const masks = [...mk2[spec.take]];
+        if (!masks.length || masks.length > 600) continue;
+        let inOK = 0, offOK = 0;
+        for (let p = 0; p < n; p++) {
+          if (cellHasCfg(st, line.cells[p], mm => (mm & spec.arm) && (mm & inline))) inOK |= 1 << p;
+          if (cellHasCfg(st, line.cells[p], mm => (mm & spec.arm) && !(mm & inline))) offOK |= 1 << p;
+        }
+        nbFilters.push({ masks, inOK, offOK });
+      }
+    }
+    const seen = new Int8Array(nb).fill(-2);   // -2 untouched, -1 conflicting, 0/1 constant
+    const survivors = new Set();
+    let any = false;
+    for (let mask = 0; mask < (1 << nb); mask++) {
+      let ok = true, runs = 0;
+      for (let p = 0; p < nb && ok; p++) {
+        const a = (mask >> p) & 1;
+        if (bv[p] >= 0 && a !== bv[p]) ok = false;
+      }
+      if (!ok) continue;
+      for (let p = 0; p < n && ok; p++) {
+        const l = p > 0 ? (mask >> (p - 1)) & 1 : 0;
+        const r = p < nb ? (mask >> p) & 1 : 0;
+        if (!l && !r) { if (!canOff[p]) ok = false; }
+        else if (!l && r) { if (!canStart[p]) ok = false; runs++; }
+        else if (l && !r) { if (!canEnd[p]) ok = false; }
+        else { if (!canMid[p]) ok = false; }
+      }
+      if (!ok || runs < Slo || runs > Shi) continue;
+      if (tC >= 0 && bC >= 0) {
+        const perpB = 2 * runs - tC;
+        if (perpB < 0 || perpB > bC) continue;
+        const fB = bC - perpB;
+        const dX = xC >= 0 ? xC : 0;
+        if (fB > 0 || dX > 0) {
+          let intCount = 0, cntX = 0, cntF = 0, cntU = 0;
+          for (let p = 0; p < n; p++) {
+            const l = p > 0 ? (mask >> (p - 1)) & 1 : 0;
+            const r = p < nb ? (mask >> p) & 1 : 0;
+            if (l && r) {
+              intCount++;
+              if (canX[p]) cntX++;
+              if (canFlat[p]) cntF++;
+              if (canX[p] || canFlat[p]) cntU++;
+            }
+          }
+          if (dX > cntX || fB > cntF || dX + fB > cntU || dX + fB > intCount) continue;
+        }
+      }
+      if (nbFilters.length) {
+        let members = 0;
+        for (let p = 0; p < n; p++) {
+          const l = p > 0 ? (mask >> (p - 1)) & 1 : 0;
+          const r = p < nb ? (mask >> p) & 1 : 0;
+          if (l || r) members |= 1 << p;
+        }
+        let compatAll = true;
+        for (const f of nbFilters) {
+          const allowed = (members & f.inOK) | (~members & f.offOK);
+          let compat = false;
+          for (const mk3 of f.masks) if ((mk3 & ~allowed) === 0) { compat = true; break; }
+          if (!compat) { compatAll = false; break; }
+        }
+        if (!compatAll) continue;
+      }
+      any = true;
+      survivors.add(runs);
+      for (let p = 0; p < nb; p++) {
+        const a = (mask >> p) & 1;
+        if (seen[p] === -2) seen[p] = a;
+        else if (seen[p] !== a) seen[p] = -1;
+      }
+    }
+    const breakdown = info.budgetOnly
+      ? (info.viaCap
+        ? 'each segment end needs an arm into a neighbouring line, and the neighbours can supply at most ' + info.cap + ' — so at most ' + (info.hi / 2) + ' segment' + (info.hi / 2 === 1 ? ' fits' : 's fit') + ' along it'
+        : 'its turns and branches total just ' + info.sumTB + ', so at most ' + (info.hi / 2) + ' segment' + (info.hi / 2 === 1 ? ' fits' : 's fit') + ' along it')
+      : info.t + ' turn' + (info.t === 1 ? '' : 's') +
+      (info.Pmax > 0 ? ' + ' + (info.Pmin === info.Pmax ? info.Pmin : info.Pmin + '–' + info.Pmax) + ' ' + perpWord + ' branch' + (info.Pmax === 1 ? '' : 'es') + ' (by parity)' : '');
+    const demand = (Slo === Shi ? 'exactly ' + Slo : 'between ' + Slo + ' and ' + Shi) + ' ' + segWord + ' segment' + (Shi === 1 ? '' : 's');
+    if (!any) {
+      return { rule: 'Segment packing', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' must hold ' + demand + ' (' + breakdown + '), but no arrangement of them fits the current marks.' };
+    }
+    const edges = [];
+    for (let p = 0; p < nb; p++) if (bv[p] < 0 && seen[p] >= 0) edges.push([kind, line.cells[p], seen[p]]);
+    if (!edges.length) continue;
+    const fitNote = (Slo !== Shi && survivors.size === 1) ? ' Only ' + [...survivors][0] + ' can actually be arranged, and every' : ' Every';
+    const onList = edges.filter(e2 => e2[2] === 1).map(e2 => rc(st, e2[1]) + '–' + rc(st, e2[1] + (kind ? st.C : 1)));
+    const offList = edges.filter(e2 => e2[2] === 0).map(e2 => rc(st, e2[1]) + '–' + rc(st, e2[1] + (kind ? st.C : 1)));
+    const parts2 = [];
+    if (onList.length) parts2.push((onList.length <= 4 ? onList.join(', ') : onList.slice(0, 3).join(', ') + ' and ' + (onList.length - 3) + ' more') + ' carr' + (onList.length === 1 ? 'ies' : 'y') + ' a line');
+    if (offList.length) parts2.push((offList.length <= 4 ? offList.join(', ') : offList.slice(0, 3).join(', ') + ' and ' + (offList.length - 3) + ' more') + ' stay' + (offList.length === 1 ? 's' : '') + ' empty');
+    return { rule: 'Segment packing', cells: [], edges: edges.map(e => [e[0], e[1]]),
+      text: line.name + ' must hold ' + demand + ' (' + breakdown + ').' + fitNote + ' legal placement of the segment' + (Shi === 1 ? '' : 's') + ' — checked against which cells can start, end, or continue one, and against the neighbouring lines’ possible arms — puts the same value on ' + (edges.length === 1 ? 'one border' : edges.length + ' borders') + ': ' + parts2.join('; ') + '.',
+      apply() { for (const e of edges) setEdge(st, e[0], e[1], e[2]); } };
+  }
+  return null;
+}
+
+// rule: perpendicular-branch parity (guide: "Parity of Turns and Branches") -
+// turns + perpendicular branches come in pairs; parity can place or ban the last candidate.
+function rulePerpParity(st, clues) {
+  for (const line of eachLine(st, clues)) {
+    const t = line.clue[3];
+    if (t < 0) continue;
+    const horiz = line.kind === 'row';
+    const isEnder = horiz ? IS_VBRANCH : IS_HBRANCH;
+    const isFlat = horiz ? IS_HBRANCH : IS_VBRANCH;
+    let dV = 0; const candidates = [];
+    for (const i of line.cells) {
+      const bk = branchKinds(st, i, isEnder, isFlat);
+      if (bk === 1) dV++;
+      else if (cellHasCfg(st, i, isEnder)) candidates.push(i);
+    }
+    const parity = (t + dV) % 2;
+    const word = horiz ? 'vertical' : 'horizontal';
+    const known = t + ' turn' + (t === 1 ? '' : 's') + (dV ? ' plus ' + dV + ' known ' + word + ' branch' + (dV === 1 ? '' : 'es') : '');
+    if (candidates.length === 0 && parity === 1) {
+      return { rule: 'Perpendicular-branch parity', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' would have an odd number of segment-ending pieces (' + known + ') with no cell able to hold another ' + word + ' branch — impossible, since segment ends come in pairs.' };
+    }
+    if (candidates.length === 1) {
+      const i = candidates[0];
+      if (parity === 1) {
+        return { rule: 'Perpendicular-branch parity', cells: [i],
+          text: line.name + ' has ' + known + ' — an odd count of segment-ending pieces. Ends come in pairs, so one more ' + word + ' branch is required, and only ' + rc(st, i) + ' can hold it.',
+          apply() { filterCfg(st, i, m => isEnder(m)); } };
+      } else {
+        return { rule: 'Perpendicular-branch parity', cells: [i],
+          text: line.name + ' has ' + known + ' — an even count of segment-ending pieces. Ends come in pairs, so a single extra ' + word + ' branch at ' + rc(st, i) + ' would break parity: it is not one.',
+          apply() { filterCfg(st, i, m => !isEnder(m)); } };
+      }
+    }
+  }
+  return null;
+}
+
+// rule: counting lines (guide: "Counting Lines" min-max). Crosses in a neighbouring
+// line each send a connection into this line, confined to the columns/rows where
+// those crosses can still sit. The receiving line's clued pieces can supply only so
+// many perpendicular arms there; when the budget is exact, orientations and
+// positions are forced.
+function ruleCountingLines(st, clues) {
+  const all = eachLine(st, clues);
+  for (const kindName of ['row', 'col']) {
+    const group = all.filter(l => l.kind === kindName);
+    const horizRecv = kindName === 'row';
+    const posWord = horizRecv ? 'column' : 'row';
+    const armWord = horizRecv ? 'vertical' : 'horizontal';
+    for (let ri = 0; ri < group.length; ri++) {
+      const recv = group[ri];
+      const xg = recv.clue[0], bg = recv.clue[1], sg = recv.clue[2], tg = recv.clue[3];
+      let usable = 0;
+      for (const i of recv.cells) if (st.cellCfg[i] & ~1) usable++;
+      const given = Math.max(xg, 0) + Math.max(bg, 0) + Math.max(sg, 0) + Math.max(tg, 0);
+      const jokers = usable - given;
+      if (jokers < 0) continue;
+      const Wset = new Set(); const parts = [];
+      let D = 0;
+      for (const nb of [group[ri - 1], group[ri + 1]]) {
+        if (!nb) continue;
+        const xn = nb.clue[0];
+        if (xn < 1) continue;
+        const spots = [];
+        for (let p = 0; p < nb.cells.length; p++) if ((cellClasses(st, nb.cells[p]) >> 0) & 1) spots.push(p);
+        if (spots.length < xn) continue;
+        D += xn;
+        for (const p of spots) Wset.add(p);
+        parts.push(nb.name + ' places ' + xn + ' cross' + (xn === 1 ? '' : 'es'));
+      }
+      if (D < 1) continue;
+      const W = [...Wset].sort((a, b) => a - b);
+      let k = 0;
+      for (const p of W) if (st.cellCfg[recv.cells[p]] & ~1) k++;
+      const pool = [];
+      const pushN = (n2, v, lab) => { for (let q = 0; q < n2; q++) pool.push({ v, lab }); };
+      pushN(Math.max(xg, 0), 2, 'x'); pushN(Math.max(bg, 0), 2, 'b');
+      pushN(Math.max(sg, 0), 2, 's'); pushN(Math.max(tg, 0), 1, 't');
+      pushN(jokers, 2, 'j');
+      const topSum = (arr, kk) => arr.map(o => o.v).sort((a, b) => b - a).slice(0, Math.max(0, kk)).reduce((a, v) => a + v, 0);
+      const supply = topSum(pool, k);
+      const ranges = [];
+      for (let a = 0; a < W.length;) {
+        let b2 = a;
+        while (b2 + 1 < W.length && W[b2 + 1] === W[b2] + 1) b2++;
+        ranges.push(W[a] === W[b2] ? posWord + ' ' + (W[a] + 1) : posWord + 's ' + (W[a] + 1) + '–' + (W[b2] + 1));
+        a = b2 + 1;
+      }
+      const where = ranges.join(', ');
+      const intro = parts.join(' and ') + ', all confined to ' + where + ' (the only cells that can still be crosses) — ' + D + ' ' + armWord + ' connection' + (D === 1 ? '' : 's') + ' into ' + recv.name.toLowerCase() + ' there. ' + recv.name + '’s pieces can supply at most ' + supply + ' ' + armWord + ' arm' + (supply === 1 ? '' : 's') + ' in those cells';
+      if (supply < D) {
+        return { rule: 'Counting lines', contradiction: true, cells: recv.cells.slice(),
+          text: intro + ' — fewer than the ' + D + ' required. Impossible.' };
+      }
+      if (supply !== D) continue;
+      // exact budget: probe which pieces must be full-value and inside the window
+      const acts = []; const notes = [];
+      const flatBranch = horizRecv ? IS_HBRANCH : IS_VBRANCH;
+      const flatStraight = horizRecv ? (m => m === (LF | RT)) : (m => m === (UP | DN));
+      const downgrade = (lab, nv) => {
+        const arr = pool.map(o => ({ v: o.v, lab: o.lab }));
+        const it = arr.find(o => o.lab === lab);
+        if (!it) return supply;
+        it.v = nv;
+        return topSum(arr, k);
+      };
+      const removeOne = lab => {
+        const arr = [];
+        let removed = false;
+        for (const o of pool) { if (!removed && o.lab === lab) { removed = true; continue; } arr.push(o); }
+        if (!removed) return supply;
+        return topSum(arr, k);
+      };
+      if (bg > 0 && downgrade('b', 1) < D) {
+        const cells = recv.cells.filter(i => cellHasCfg(st, i, flatBranch));
+        if (cells.length) {
+          notes.push('every branch in ' + recv.name.toLowerCase() + ' is ' + armWord);
+          acts.push(() => { for (const i of cells) filterCfg(st, i, m => !flatBranch(m)); });
+        }
+      }
+      if (sg > 0 && downgrade('s', 0) < D) {
+        const cells = recv.cells.filter(i => cellHasCfg(st, i, flatStraight));
+        if (cells.length) {
+          notes.push('every straight in ' + recv.name.toLowerCase() + ' is ' + armWord);
+          acts.push(() => { for (const i of cells) filterCfg(st, i, m => !flatStraight(m)); });
+        }
+      }
+      const clsOf = { x: 0, b: 1, s: 2, t: 3 };
+      const labName = { x: 'cross', b: 'branch', s: 'straight', t: 'turn' };
+      for (const lab of ['x', 'b', 's', 't']) {
+        const cnt = [xg, bg, sg, tg][clsOf[lab]];
+        if (cnt < 1) continue;
+        if (removeOne(lab) < D) {
+          const outside = [];
+          for (let p = 0; p < recv.cells.length; p++) {
+            if (Wset.has(p)) continue;
+            const i = recv.cells[p];
+            if (cellClasses(st, i) & (1 << clsOf[lab])) outside.push(i);
+          }
+          if (outside.length) {
+            notes.push((cnt === 1 ? 'the ' + labName[lab] : 'all ' + cnt + ' ' + CLASS_PLURAL[clsOf[lab]]) + ' must sit inside ' + where + ' (' + outside.map(i => rc(st, i)).join(', ') + ' cannot be one)');
+            acts.push(() => { for (const i of outside) filterCfg(st, i, m => classOf(m) !== clsOf[lab]); });
+          }
+        }
+      }
+      if (!acts.length) continue;
+      return { rule: 'Counting lines', cells: recv.cells.filter((i, p) => Wset.has(p)),
+        text: intro + ', so the budget is exact: ' + notes.join('; ') + '.',
+        apply() { for (const a of acts) a(); } };
+    }
+  }
+  return null;
+}
+
+// rule: shape trial. The last copies of a clued shape fit in only a few cells.
+// Try each spot on a scratch copy and follow quick consequences with the same
+// human rules; a spot that leads to contradiction is eliminated.
+// rule: border trial. Suppose one undecided border carried a line (or stayed
+// empty), follow the quick consequences with the fast rules; a contradiction
+// forces the opposite value, with the chain shown. Tried only near proven
+// network material, where consequences cascade.
+function ruleBorderTrial(st, clues) {
+  if (st.noTrial) return null;
+  const { R, C } = st, N = R * C;
+  const hot = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    const onArm = (r > 0 && st.edgeD[i - C] === 1) || (r < R - 1 && st.edgeD[i] === 1) ||
+                  (c > 0 && st.edgeR[i - 1] === 1) || (c < C - 1 && st.edgeR[i] === 1);
+    if (onArm || (st.cellCfg[i] !== 0 && (st.cellCfg[i] & 1) === 0)) hot[i] = 1;
+  }
+  const hotScore = i => {
+    const r = (i / C) | 0, c = i - r * C;
+    let s2 = hot[i] ? 2 : 0;
+    if (r > 0 && hot[i - C]) s2++;
+    if (r < R - 1 && hot[i + C]) s2++;
+    if (c > 0 && hot[i - 1]) s2++;
+    if (c < C - 1 && hot[i + 1]) s2++;
+    return s2;
+  };
+  const deadline = Date.now() + 2500;
+  const cands = [];
+  for (let i = 0; i < N; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if (c < C - 1 && st.edgeR[i] === -1 && (hot[i] || hot[i + 1])) cands.push([0, i, hotScore(i) + hotScore(i + 1)]);
+    if (r < R - 1 && st.edgeD[i] === -1 && (hot[i] || hot[i + C])) cands.push([1, i, hotScore(i) + hotScore(i + C)]);
+  }
+  cands.sort((a, b) => b[2] - a[2]);
+  // cell trials: for undecided cells near the action, hypothesise empty (or used)
+  // -- a contradiction proves the cell is visited (or blank). "This cell must be
+  // visited" is useful knowledge on its own: it feeds every budget rule.
+  const cellCands = [];
+  for (let i = 0; i < N; i++) {
+    if (st.cellCfg[i] === 0 || st.cellCfg[i] === 1) continue;
+    if (!(st.cellCfg[i] & 1)) continue;   // usage already certain
+    if (hotScore(i) > 0) cellCands.push(i);
+  }
+  cellCands.sort((a, b) => hotScore(b) - hotScore(a));
+  for (const i of cellCands) {
+    if (Date.now() > deadline) break;
+    for (const asEmpty of [true, false]) {
+      const ghost = cloneStepState(st);
+      ghost.noTrial = true;
+      ghost.fastLadder = true;
+      try { filterCfg(ghost, i, m => asEmpty ? m === 0 : m !== 0); } catch (err) { continue; }
+      const chain = [];
+      let contra = null;
+      for (let k = 0; k < 30 && !contra; k++) {
+        let mv = null;
+        try { mv = takeHumanStep(ghost, clues); } catch (err) { break; }
+        if (!mv) break;
+        chain.push(mv);
+        if (mv.contradiction) contra = mv;
+      }
+      if (contra) {
+        return { rule: 'Cell trial', cells: [i],
+          chain,
+          chainIntro: 'Suppose ' + rc(st, i) + ' were ' + (asEmpty ? 'empty' : 'visited') + '. Then:',
+          chainOutro: 'So ' + rc(st, i) + ' is certainly ' + (asEmpty ? '<b>visited</b>' : '<b>empty</b>') + '.',
+          text: 'Suppose ' + rc(st, i) + ' were ' + (asEmpty ? 'empty' : 'visited') + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' — ' + contra.text + ' So ' + rc(st, i) + ' is certainly ' + (asEmpty ? 'visited' : 'empty') + '.',
+          apply() { filterCfg(st, i, m => asEmpty ? m !== 0 : m === 0); } };
+      }
+    }
+  }
+  // class trials: for cells near the action with few remaining shapes,
+  // hypothesise each shape in turn -- a quick contradiction eliminates it (this
+  // catches x-wing-style interactions: a branch here would force branches
+  // elsewhere and break a column's quota)
+  const classCands = [];
+  for (let i = 0; i < N; i++) {
+    if (st.cellCfg[i] === 0 || st.cellCfg[i] === 1) continue;
+    if (hotScore(i) > 0) classCands.push(i);
+  }
+  classCands.sort((a, b) => hotScore(b) - hotScore(a));
+  for (const i of classCands) {
+    if (Date.now() > deadline) break;
+    const cls = cellClasses(st, i);
+    let ncls = 0;
+    for (let s = 0; s < 4; s++) if ((cls >> s) & 1) ncls++;
+    if (ncls < 2 || ncls > 3) continue;
+    for (let s = 0; s < 4; s++) {
+      if (!((cls >> s) & 1)) continue;
+      const ghost = cloneStepState(st);
+      ghost.noTrial = true;
+      ghost.fastLadder = true;
+      try { filterCfg(ghost, i, m => classOf(m) === s); } catch (err) { continue; }
+      const chain = [];
+      let contra = null;
+      for (let k = 0; k < 30 && !contra; k++) {
+        let mv = null;
+        try { mv = takeHumanStep(ghost, clues); } catch (err) { break; }
+        if (!mv) break;
+        chain.push(mv);
+        if (mv.contradiction) contra = mv;
+      }
+      if (contra) {
+        return { rule: 'Shape hypothesis', cells: [i],
+          chain,
+          chainIntro: 'Suppose ' + rc(st, i) + ' were a ' + CLASS_NAME[s] + '. Then:',
+          chainOutro: 'So ' + rc(st, i) + ' is <b>not a ' + CLASS_NAME[s] + '</b>.',
+          text: 'Suppose ' + rc(st, i) + ' were a ' + CLASS_NAME[s] + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' — ' + contra.text + ' So ' + rc(st, i) + ' is not a ' + CLASS_NAME[s] + '.',
+          apply() { filterCfg(st, i, m => classOf(m) !== s); } };
+      }
+    }
+  }
+  for (const [kind, i] of cands) {
+    if (Date.now() > deadline) break;
+    for (const val of [0, 1]) {
+      const ghost = cloneStepState(st);
+      ghost.noTrial = true;
+      ghost.fastLadder = true;
+      setEdge(ghost, kind, i, val);
+      const chain = [];
+      let contra = null;
+      for (let k = 0; k < 30 && !contra; k++) {
+        let mv = null;
+        try { mv = takeHumanStep(ghost, clues); } catch (err) { break; }
+        if (!mv) break;
+        chain.push(mv);
+        if (mv.contradiction) contra = mv;
+      }
+      if (contra) {
+        const j = kind ? i + C : i + 1;
+        const assume = val ? 'carried a line' : 'stayed empty';
+        const conclude = val ? 'stays empty' : 'carries a line';
+        return { rule: 'Border trial', cells: [], edges: [[kind, i]],
+          chain,
+          chainIntro: 'Suppose the border between ' + rc(st, i) + ' and ' + rc(st, j) + ' ' + assume + '. Then:',
+          chainOutro: 'So the border between ' + rc(st, i) + ' and ' + rc(st, j) + ' <b>' + conclude + '</b>.',
+          text: 'Suppose the border between ' + rc(st, i) + ' and ' + rc(st, j) + ' ' + assume + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' — ' + contra.text + ' So it ' + conclude + '.',
+          apply() { setEdge(st, kind, i, 1 - val); } };
+      }
+    }
+  }
+  return null;
+}
+
+function ruleShapeTrial(st, clues) {
+  if (st.noTrial) return null;
+  for (const line of eachLine(st, clues)) {
+    for (let s = 0; s < 5; s++) {
+      const clue = line.clue[s] === undefined ? -1 : line.clue[s];
+      if (clue < 0) continue;
+      const { def, pos, posCells, defCells } = countShape(st, line, s);
+      const needed = clue - def;
+      if (needed < 1) continue;
+      const defSet = new Set(defCells);
+      const cand = posCells.filter(i => !defSet.has(i));
+      if (cand.length <= needed || cand.length > 4) continue;
+      const ghosts = [];
+      let refut = null;
+      const INTERSECT_DEPTH = 6;   // shallow snapshot: keep each intersection move one local thought
+      for (const c of cand) {
+        const ghost = cloneStepState(st);
+        ghost.noTrial = true;
+        filterCfg(ghost, c, m => classOf(m) === s);
+        const chain = [];
+        let contra = null, snap = null;
+        for (let k = 0; k < 60 && !contra; k++) {
+          if (k === INTERSECT_DEPTH) snap = cloneStepState(ghost);
+          const mv = takeHumanStep(ghost, clues);
+          if (!mv) break;
+          chain.push(mv);
+          if (mv.contradiction) contra = mv;
+        }
+        if (!snap) snap = ghost;
+        ghosts.push({ c, ghost: snap, contra, chain });
+        if (contra && !refut) refut = ghosts[ghosts.length - 1];
+      }
+      if (ghosts.length >= 2) {
+        // no candidate refutes -- but one of them IS the shape, so anything every
+        // case agrees on is forced (free intersection logic before any chains)
+        const cellTargets = [], edgeTargets = [];
+        const N2 = st.R * st.C;
+        for (let i2 = 0; i2 < N2; i2++) {
+          let allow = 0;
+          for (const g of ghosts) allow |= g.ghost.cellCfg[i2];
+          if (allow !== 0 && (st.cellCfg[i2] & ~allow) !== 0) cellTargets.push({ i: i2, allow });
+        }
+        const scanEdges = (arr, kind2) => {
+          for (let i2 = 0; i2 < arr.length; i2++) {
+            if (arr[i2] !== -1) continue;
+            const v0 = kind2 ? ghosts[0].ghost.edgeD[i2] : ghosts[0].ghost.edgeR[i2];
+            if (v0 === -1) continue;
+            if (ghosts.every(g => (kind2 ? g.ghost.edgeD[i2] : g.ghost.edgeR[i2]) === v0)) edgeTargets.push([kind2, i2, v0]);
+          }
+        };
+        scanEdges(st.edgeR, 0);
+        scanEdges(st.edgeD, 1);
+        if (cellTargets.length || edgeTargets.length) {
+          const emptied = cellTargets.filter(t => t.allow === 1).map(t => rc(st, t.i));
+          const narrowed = cellTargets.filter(t => t.allow !== 1).length;
+          const bits = [];
+          if (emptied.length) bits.push(emptied.join(', ') + ' ' + (emptied.length === 1 ? 'is' : 'are') + ' empty');
+          if (narrowed) bits.push(narrowed + ' cell' + (narrowed === 1 ? '' : 's') + ' lose' + (narrowed === 1 ? 's' : '') + ' options that appear in neither case');
+          if (edgeTargets.length) {
+            const eb = edgeTargets.slice(0, 4).map(t => rc(st, t[1]) + '–' + rc(st, t[1] + (t[0] ? st.C : 1)) + (t[2] ? ' carries a line' : ' stays empty'));
+            bits.push('the border' + (edgeTargets.length === 1 ? ' ' : 's ') + eb.join(', ') + (edgeTargets.length > 4 ? ' and ' + (edgeTargets.length - 4) + ' more are settled' : (edgeTargets.length === 1 ? '' : ' are settled')));
+          }
+          return { rule: 'Case agreement', cells: cellTargets.map(t => t.i),
+            edges: edgeTargets.map(t => [t[0], t[1]]),
+            text: line.name + ' still needs ' + needed + ' more ' + (needed === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + ' and only ' + cand.map(c2 => rc(st, c2)).join(', ') + ' can hold one. Following each case in turn with the quick rules, every conclusion they share must be true no matter which cell it is: ' + bits.join('; ') + '.',
+            apply() {
+              for (const t of cellTargets) filterCfg(st, t.i, mm => { for (let k = 0; k < CFGS.length; k++) if (CFGS[k] === mm && ((t.allow >> k) & 1)) return true; return false; });
+              for (const t of edgeTargets) if ((t[0] ? st.edgeD[t[1]] : st.edgeR[t[1]]) === -1) setEdge(st, t[0], t[1], t[2]);
+            } };
+        }
+      }
+      if (refut) {
+        const c = refut.c, chain = refut.chain, contra = refut.contra;
+        {
+          return { rule: 'Shape trial', cells: [c],
+            chain,
+            chainIntro: line.name + ' still needs ' + needed + ' more ' + (needed === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + ' and only ' + cand.length + ' cells can hold one. Suppose ' + rc(st, c) + ' were the ' + CLASS_NAME[s] + '. Then:',
+            chainOutro: 'So ' + rc(st, c) + ' is <b>not a ' + CLASS_NAME[s] + '</b>.',
+            text: line.name + ' still needs ' + needed + ' more ' + (needed === 1 ? CLASS_NAME[s] : CLASS_PLURAL[s]) + ' and only ' + cand.length + ' cells can hold one. Trying it at ' + rc(st, c) + ' fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ': ' + contra.text + ' So ' + rc(st, c) + ' is not a ' + CLASS_NAME[s] + '.',
+            apply() { filterCfg(st, c, m => classOf(m) !== s); } };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// rule: entrance counting (guide: examine an area that must be entered many
+// times, adjacent to an area with restricted entrances). Exact form: two
+// adjacent lines must agree on which borders between them carry lines, so we
+// enumerate every assignment of each line consistent with its clues, marks and
+// pencil marks, project the crossing-arm patterns, and intersect. Borders that
+// come out the same in every compatible pattern are forced.
+function enumerateLine(st, clues, kind, idx, onComplete, maxN, nodeCap) {
+  // Enumerate every assignment of one line consistent with cell pencil marks,
+  // in-line border agreement, known crossing borders, and the line's clues.
+  // onComplete(mPrev, mNext, chosen) is called per assignment; chosen[p] is the
+  // CFG bit index picked for cell p. Returns false on node-budget overflow.
+  const { R, C } = st;
+  const cells = [];
+  if (kind === 'row') for (let c = 0; c < C; c++) cells.push(idx * C + c);
+  else for (let r = 0; r < R; r++) cells.push(r * C + idx);
+  const clue = kind === 'row' ? clues.row[idx] : clues.col[idx];
+  const n = cells.length;
+  if (n > (maxN || 9)) return false;
+  const inA = kind === 'row' ? LF : UP;
+  const inB = kind === 'row' ? RT : DN;
+  const pA = kind === 'row' ? UP : LF;
+  const pB = kind === 'row' ? DN : RT;
+  const opts = cells.map(i => {
+    const o = [];
+    for (let k = 0; k < CFGS.length; k++) if ((st.cellCfg[i] >> k) & 1) o.push(k);
+    return o;
+  });
+  const armEdge = (i, arm) => {
+    const r = (i / C) | 0, c = i - r * C;
+    if (arm === UP) return r > 0 ? st.edgeD[i - C] : 0;
+    if (arm === DN) return r < R - 1 ? st.edgeD[i] : 0;
+    if (arm === LF) return c > 0 ? st.edgeR[i - 1] : 0;
+    return c < C - 1 ? st.edgeR[i] : 0;
+  };
+  const inline = kind === 'row' ? st.edgeR : st.edgeD;
+  let nodes = 0, overflow = false;
+  const chosen = new Array(n);
+  (function rec(p, prevB, counts, mPrev, mNext) {
+    if (overflow) return;
+    if (++nodes > (nodeCap || ((maxN || 9) > 9 ? 1500000 : 400000))) { overflow = true; return; }
+    if (p === n) {
+      for (let s = 0; s < 5; s++) { const cv = clue[s] === undefined ? -1 : clue[s]; if (cv >= 0 && counts[s] !== cv) return; }
+      onComplete(mPrev, mNext, chosen);
+      return;
+    }
+    for (const kb of opts[p]) {
+      const m = CFGS[kb];
+      const hasA = (m & inA) ? 1 : 0;
+      if (p === 0 ? hasA : hasA !== prevB) continue;
+      const evP = armEdge(cells[p], pA), evN = armEdge(cells[p], pB);
+      const hasP = (m & pA) ? 1 : 0, hasN = (m & pB) ? 1 : 0;
+      if ((evP === 1 && !hasP) || (evP === 0 && hasP)) continue;
+      if ((evN === 1 && !hasN) || (evN === 0 && hasN)) continue;
+      const hasB = (m & inB) ? 1 : 0;
+      if (p < n - 1) {
+        const ev = inline[cells[p]];
+        if (ev >= 0 && hasB !== ev) continue;
+      } else if (hasB) continue;
+      const cl = classOf(m);
+      let bad = false;
+      const c2 = counts.slice();
+      if (cl >= 0 && cl < 5) { c2[cl]++; const cv = clue[cl] === undefined ? -1 : clue[cl]; if (cv >= 0 && c2[cl] > cv) bad = true; }
+      if (bad) continue;
+      chosen[p] = kb;
+      rec(p + 1, hasB, c2, mPrev | (hasP << p), mNext | (hasN << p));
+    }
+  })(0, 0, [0, 0, 0, 0, 0], 0, 0);
+  return !overflow;
+}
+
+function lineArmMasks(st, clues, kind, idx, maxN, nodeCap) {
+  const toPrev = new Set(), toNext = new Set(), pairs = new Set();
+  const ok = enumerateLine(st, clues, kind, idx, (mPrev, mNext) => {
+    toPrev.add(mPrev);
+    toNext.add(mNext);
+    pairs.add((mPrev << 16) | mNext);
+  }, maxN, nodeCap);
+  if (!ok) return null;
+  return { toPrev, toNext, pairs };
+}
+
+function lineCellUnion(st, clues, kind, idx, accept, maxN, nodeCap) {
+  // union of the CFG bitmasks each cell can take, over accepted assignments
+  const { R, C } = st;
+  const n = kind === 'row' ? C : R;
+  const union = new Array(n).fill(0);
+  const ok = enumerateLine(st, clues, kind, idx, (mPrev, mNext, chosen) => {
+    if (!accept(mPrev, mNext)) return;
+    for (let p = 0; p < n; p++) union[p] |= 1 << chosen[p];
+  }, maxN, nodeCap);
+  return ok ? union : null;
+}
+
+// rule: single-line analysis. Enumerate every completion of one row/column
+// consistent with its clues and the current marks; options no completion uses
+// are eliminated (considering the line in isolation, exactly).
+function ruleLineRecount(st, clues) {
+  if (st.fastLadder) return null;
+  for (const line of eachLine(st, clues)) {
+    const union = cachedCellUnion(st, clues, line.kind, line.idx);
+    if (!union) continue;
+    const targets = [];
+    for (let p = 0; p < line.cells.length; p++) {
+      const i = line.cells[p];
+      const nm = st.cellCfg[i] & union[p];
+      if (nm === 0) {
+        return { rule: 'Single-line analysis', contradiction: true, cells: [i],
+          text: 'No completion of ' + line.name.toLowerCase() + ' satisfies its clues with the current marks at ' + rc(st, i) + ' — the position is contradictory.' };
+      }
+      if (nm !== st.cellCfg[i]) targets.push({ i, nm, lost: cellClasses(st, i) & ~(classesOfMask(nm)) });
+    }
+    if (!targets.length) continue;
+    const lostByClass = new Map();
+    for (const t of targets) for (let s = 0; s < 5; s++) if ((t.lost >> s) & 1) {
+      if (!lostByClass.has(s)) lostByClass.set(s, []);
+      lostByClass.get(s).push(t.i);
+    }
+    const bits = [];
+    for (const [s, cellsOf] of lostByClass) bits.push(cellsOf.map(i => rc(st, i)).join(', ') + (cellsOf.length === 1 ? ' cannot be ' + (s === 4 ? 'empty' : 'a ' + CLASS_NAME[s]) : ' cannot be ' + (s === 4 ? 'empty' : CLASS_PLURAL[s])));
+    const narrowedOnly = targets.filter(t => !t.lost).length;
+    if (narrowedOnly) bits.push(narrowedOnly + ' cell' + (narrowedOnly === 1 ? '' : 's') + ' keep' + (narrowedOnly === 1 ? 's' : '') + ' the same shapes but lose orientations no completion uses');
+    return { rule: 'Single-line analysis', cells: targets.map(t => t.i),
+      text: 'Every way to fill ' + line.name.toLowerCase() + ' that satisfies all its clues and matches the marks so far was checked, one line in isolation. In all of them: ' + bits.join('; ') + '.',
+      apply() { for (const t of targets) filterCfg(st, t.i, (mm, k2) => ((t.nm >> CFGS.indexOf(mm)) & 1) === 1); } };
+  }
+  return null;
+}
+
+function classesOfMask(cfgMask) {
+  let cls = 0;
+  for (let k = 0; k < CFGS.length; k++) if ((cfgMask >> k) & 1) cls |= 1 << (CFGS[k] === 0 ? 4 : classOf(CFGS[k]));
+  return cls;
+}
+
+function ruleEntranceCounting(st, clues) {
+  if (st.fastLadder) return null;
+  const { R, C } = st;
+  const dirs = [
+    { kind: 'row', count: R, word: 'row', edgeKind: 1, len: C },
+    { kind: 'col', count: C, word: 'column', edgeKind: 0, len: R }
+  ];
+  for (const d of dirs) {
+    const masksCache = new Array(d.count).fill(undefined);
+    const masksOf = idx => {
+      if (idx < 0 || idx >= d.count) return null;
+      if (masksCache[idx] === undefined) masksCache[idx] = lineArmMasks(st, clues, d.kind, idx);
+      return masksCache[idx];
+    };
+    for (let m = 0; m < d.count; m++) {
+      // undecided borders on either boundary of line m?
+      const upIdx = p => d.kind === 'row' ? (m - 1) * C + p : p * C + (m - 1);
+      const dnIdx = p => d.kind === 'row' ? m * C + p : p * C + m;
+      const upVal = p => d.kind === 'row' ? st.edgeD[(m - 1) * C + p] : st.edgeR[p * C + (m - 1)];
+      const dnVal = p => d.kind === 'row' ? st.edgeD[m * C + p] : st.edgeR[p * C + m];
+      let anyOpen = false;
+      for (let p = 0; p < d.len && !anyOpen; p++) {
+        if (m > 0 && upVal(p) === -1) anyOpen = true;
+        if (m < d.count - 1 && dnVal(p) === -1) anyOpen = true;
+      }
+      if (!anyOpen) continue;
+      const M = masksOf(m);
+      if (!M) continue;
+      const A = m > 0 ? masksOf(m - 1) : null;            // previous line: its toNext must match our toPrev
+      const B = m < d.count - 1 ? masksOf(m + 1) : null;  // next line: its toPrev must match our toNext
+      if (m > 0 && !A) continue;
+      if (m < d.count - 1 && !B) continue;
+      const pcnt = v => { let n = 0; while (v) { n += v & 1; v >>= 1; } return n; };
+      // demand and capacity before matching, for the human narrative
+      let mLo0 = 99, mHi0 = -1;
+      for (const enc of M.pairs) {
+        const t2 = pcnt(enc >> 16) + pcnt(enc & 65535);
+        if (t2 < mLo0) mLo0 = t2;
+        if (t2 > mHi0) mHi0 = t2;
+      }
+      let aLo = 0, aHi = 0, bLo = 0, bHi = 0;
+      if (A) { aLo = 99; for (const v of A.toNext) { const t2 = pcnt(v); if (t2 < aLo) aLo = t2; if (t2 > aHi) aHi = t2; } }
+      if (B) { bLo = 99; for (const v of B.toPrev) { const t2 = pcnt(v); if (t2 < bLo) bLo = t2; if (t2 > bHi) bHi = t2; } }
+      let andU = ~0, orU = 0, andD = ~0, orD = 0, any = false, lo = 99, hi = -1;
+      for (const enc of M.pairs) {
+        const u = enc >> 16, dn = enc & 65535;
+        if (A && !A.toNext.has(u)) continue;
+        if (B && !B.toPrev.has(dn)) continue;
+        any = true;
+        andU &= u; orU |= u; andD &= dn; orD |= dn;
+        const pc = pcnt(u) + pcnt(dn);
+        if (pc < lo) lo = pc;
+        if (pc > hi) hi = pc;
+      }
+      const name = d.word + ' ' + (m + 1);
+      const nbNames = [];
+      if (A) nbNames.push(d.word + ' ' + m);
+      if (B) nbNames.push(d.word + ' ' + (m + 2));
+      if (!any) {
+        return { rule: 'Entrance counting', contradiction: true, cells: [],
+          text: 'Entrance counting around ' + name + ': no pattern of lines entering it is compatible with what ' + nbNames.join(' and ') + ' can send across — contradiction.' };
+      }
+      const edges = [];
+      for (let p = 0; p < d.len; p++) {
+        if (m > 0 && upVal(p) === -1) {
+          if ((andU >> p) & 1) edges.push([d.edgeKind, upIdx(p), 1]);
+          else if (!((orU >> p) & 1)) edges.push([d.edgeKind, upIdx(p), 0]);
+        }
+        if (m < d.count - 1 && dnVal(p) === -1) {
+          if ((andD >> p) & 1) edges.push([d.edgeKind, dnIdx(p), 1]);
+          else if (!((orD >> p) & 1)) edges.push([d.edgeKind, dnIdx(p), 0]);
+        }
+      }
+      const horiz2 = d.kind === 'row';
+      const dirA = horiz2 ? 'down' : 'rightward';   // how the previous line sends lines into m
+      const dirB = horiz2 ? 'up' : 'leftward';
+      const demand = (A ? aLo : 0) + (B ? bLo : 0);
+      const supplyMax = (A ? aHi : 0) + (B ? bHi : 0);
+      const sendPhrase = [];
+      if (A) sendPhrase.push(nbNames[0] + ' must send at least ' + aLo + ' line' + (aLo === 1 ? '' : 's') + ' ' + dirA + ' into it');
+      if (B) sendPhrase.push(A
+        ? nbNames[nbNames.length - 1] + ' at least ' + bLo + ' ' + dirB
+        : nbNames[nbNames.length - 1] + ' must send at least ' + bLo + ' line' + (bLo === 1 ? '' : 's') + ' ' + dirB + ' into it');
+      let why;
+      if (demand > 0 && demand === mHi0) {
+        why = sendPhrase.join(' and ') + ' — ' + demand + ' entrances — while ' + name + ' can accept at most ' + mHi0 + ': every entrance it can offer is used.';
+      } else if (mLo0 > 0 && mLo0 === supplyMax) {
+        why = name + ' needs at least ' + mLo0 + ' entering line' + (mLo0 === 1 ? '' : 's') + ', and ' + nbNames.join(' and ') + ' can send at most ' + supplyMax + ' combined: every line they can send is needed.';
+      } else if (mLo0 === mHi0) {
+        why = name + '’s pieces provide exactly ' + mLo0 + ' entering arm' + (mLo0 === 1 ? '' : 's') + ' in every arrangement; matching where ' + nbNames.join(' and ') + ' can meet them pins the rest.';
+      } else {
+        why = 'matching every pattern of lines ' + name + ' can accept (' + mLo0 + '–' + mHi0 + ' entrances) against every pattern ' + nbNames.join(' and ') + ' can send across.';
+      }
+      const countPhrase = lo === hi ? ' Exactly ' + lo + ' entrances remain in every case.' : '';
+      if (edges.length) {
+        const nOn = edges.filter(e => e[2] === 1).length, nOff = edges.length - nOn;
+        const what = (nOn ? nOn + ' border' + (nOn === 1 ? '' : 's') + ' must carry lines' : '') +
+          (nOn && nOff ? ' and ' : '') +
+          (nOff ? (nOn ? nOff + ' must stay empty' : nOff + ' border' + (nOff === 1 ? '' : 's') + ' must stay empty') : '');
+        return { rule: 'Entrance counting', cells: [], edges: edges.map(e => [e[0], e[1]]),
+          text: 'Entrance counting around ' + name + ': ' + why + countPhrase + ' All compatible arrangements agree: ' + what + '.',
+          apply() { for (const e of edges) setEdge(st, e[0], e[1], e[2]); } };
+      }
+      // no border is pinned, but the surviving arrangements may pin SHAPES:
+      // e.g. every arm out of the middle line must feed a cross, forcing the
+      // outer cells to be turns and stripping arms from non-cross neighbours.
+      const survivors = new Set();
+      const uAllowed = new Set(), dAllowed = new Set();
+      for (const enc of M.pairs) {
+        const u = enc >> 16, dn = enc & 65535;
+        if (A && !A.toNext.has(u)) continue;
+        if (B && !B.toPrev.has(dn)) continue;
+        survivors.add(enc);
+        uAllowed.add(u);
+        dAllowed.add(dn);
+      }
+      const targets = [];
+      const collect = (kind2, idx2, accept) => {
+        const cellsOf = [];
+        if (d.kind === 'row') for (let c = 0; c < C; c++) cellsOf.push(idx2 * C + c);
+        else for (let r = 0; r < R; r++) cellsOf.push(r * C + idx2);
+        const union = lineCellUnion(st, clues, d.kind, idx2, accept);
+        if (!union) return;
+        for (let p = 0; p < cellsOf.length; p++) {
+          const i = cellsOf[p];
+          if (union[p] !== 0 && union[p] !== st.cellCfg[i]) targets.push({ i, allow: union[p] });
+        }
+      };
+      collect(d.kind, m, (u, dn) => survivors.has((u << 16) | dn));
+      if (m > 0) collect(d.kind, m - 1, (u, dn) => uAllowed.has(dn));
+      if (m < d.count - 1) collect(d.kind, m + 1, (u, dn) => dAllowed.has(u));
+      if (!targets.length) continue;
+      const classesOf = bits => {
+        let cls = 0;
+        for (let k = 0; k < CFGS.length; k++) if ((bits >> k) & 1) cls |= 1 << classOf(CFGS[k]);
+        return cls;
+      };
+      const lettersOf = cls => {
+        let out = '';
+        for (let s2 = 0; s2 < 4; s2++) if ((cls >> s2) & 1) out += CLASS_LETTER[s2];
+        if ((cls >> 4) & 1) out += '·';
+        return out;
+      };
+      const armInfo = bits => {
+        let orA = 0, andA = 15, any = false;
+        for (let k = 0; k < CFGS.length; k++) if ((bits >> k) & 1) { orA |= CFGS[k]; andA &= CFGS[k]; any = true; }
+        return { orA, andA: any ? andA : 0 };
+      };
+      const ARM_WORD = { 1: 'up', 2: 'right', 4: 'down', 8: 'left' };
+      const desc = targets.map(t => {
+        const beforeCls = classesOf(st.cellCfg[t.i]), afterCls = classesOf(t.allow);
+        if (beforeCls !== afterCls) return rc(st, t.i) + ' → ' + lettersOf(afterCls);
+        const b = armInfo(st.cellCfg[t.i]), a2 = armInfo(t.allow);
+        const armClasses = (bits, arm) => {
+          let cls = 0;
+          for (let k = 0; k < CFGS.length; k++) if ((bits >> k) & 1 && (CFGS[k] & arm)) cls |= 1 << classOf(CFGS[k]);
+          return cls;
+        };
+        const phrases = [];
+        for (const arm of [1, 2, 4, 8]) {
+          if ((b.orA & arm) && !(a2.orA & arm)) phrases.push('never reaches ' + ARM_WORD[arm]);
+          else if (!(b.andA & arm) && (a2.andA & arm)) phrases.push('must reach ' + ARM_WORD[arm]);
+          else if ((a2.orA & arm) && !(a2.andA & arm)) {
+            const cb = armClasses(st.cellCfg[t.i], arm), ca = armClasses(t.allow, arm);
+            if (ca !== cb) {
+              const one = [0, 1, 2, 3].filter(s2 => (ca >> s2) & 1);
+              if (one.length === 1) phrases.push('reaches ' + ARM_WORD[arm] + ' only as a ' + CLASS_NAME[one[0]]);
+            }
+          }
+        }
+        return rc(st, t.i) + ' ' + (phrases.length ? phrases.join(' and ') : 'narrows');
+      }).join('; ');
+      return { rule: 'Entrance counting', cells: targets.map(t => t.i),
+        text: 'Entrance counting around ' + name + ': ' + why + countPhrase + ' Every arm crossing the boundary is accounted for — the shapes narrow: ' + desc + '.',
+        apply() { for (const t of targets) filterCfg(st, t.i, mm => { for (let k = 0; k < CFGS.length; k++) if (CFGS[k] === mm && ((t.allow >> k) & 1)) return true; return false; }); } };
+    }
+  }
+  return null;
+}
+
+// ---------- driver ----------
+const RULES = [
+  st => ruleForcedBorder(st, true),   // draws lines / settles fully-determined cells
+  ruleClueCount,
+  ruleShapeSubset,
+  ruleExactAllocation,
+  ruleFootprint,
+  ruleDerivedClue,
+  rulePigeonhole,
+  ruleConnectivity,
+  ruleUnreachable,
+  ruleOnlyConnection,
+  ruleSegmentCapacity,
+  ruleSingleSegment,
+  ruleSegmentRoom,
+  rulePerpParity,
+  ruleBranchParity,
+  ruleSegmentPacking,
+  ruleCountingLines,
+  ruleLineRecount,
+  ruleEntranceCounting,
+  st => ruleForcedBorder(st, false),  // remaining plain × eliminations
+  ruleShapeTrial,
+  ruleBorderTrial
+];
+
+// catalog shown in the UI, in the order the stepper tries them
+const STRATEGIES = [
+  { name: 'Forced border', desc: 'Every remaining shape for a cell agrees on a border — draw the line or the × (includes extending dead ends).' },
+  { name: 'Clue satisfied', desc: 'A row/column already has its quota of a shape — eliminate it from the remaining cells.' },
+  { name: 'Clue forces placement', desc: 'Exactly as many candidate cells as the clue demands — all of them must be that shape.' },
+  { name: 'Piece count', desc: 'The number of used cells in a line is pinned — by the empty-cell clue, or by all four shape clues summed — fixing which cells are used and which stay empty.' },
+  { name: 'Combined shape count', desc: 'Counting over several shapes at once: N turns+branches (say) with exactly N possible cells — or a combined quota already met.' },
+  { name: 'Exact allocation', desc: 'The line’s clued pieces (plus the parity-forced branch) demand exactly as many cells as could still be non-empty — every one is used, and shapes whose capable cells only just suffice are committed.' },
+  { name: 'Shape footprint', desc: 'A shape’s in-line arms drag its neighbours into use; a placement whose induced usage overflows the line’s used-cell budget is impossible.' },
+  { name: 'Usage budget', desc: 'Certainly-used pieces whose every option carries an in-line arm must each reach a neighbour (up OR down counts once); using any further cell would overflow the budget, so it stays empty.' },
+  { name: 'Empty quota', desc: 'Hypothesise a cell empty and cascade: neighbours whose every remaining piece needed an arm into it go empty too. Overflowing the empty-cell clue proves the cell is visited.' },
+  { name: 'Piece demand', desc: 'The given shape clues (plus a parity-forced extra branch when the turn count is odd and unbounded by a branch clue) must all fit; a cell whose emptiness would leave too few capable cells is certainly visited.' },
+  { name: 'Neighbour arms', desc: 'A neighbouring line’s clued shapes that must reach across (crosses always) each consume a distinct cell of this line among their candidate positions — charged against the used-cell budget.' },
+  { name: 'Arm attribution', desc: 'When the budget is exactly consumed by a neighbour’s reaching shapes, every certainly-used cell in their range must sit beside one of them — committing the neighbour’s shape and the border.' },
+  { name: 'Arm arrivals', desc: 'The neighbouring line’s feasible arm patterns are enumerated exactly; a cell is empty if every pattern, together with the used cells and that cell, would overflow the budget.' },
+  { name: 'Escape routes', desc: 'A drawn component must reach the rest of the network; when every route crosses one row/column at a few entry cells, one of them is used — and the budget empties the rest.' },
+  { name: 'Paired exclusion', desc: 'k copies of a shape here + k₂ copies of an incompatible shape in the neighbouring line, filling all capable positions between them: every position out of the neighbour’s reach must be the shape.' },
+  { name: 'Derived clue', desc: 'A missing clue pinned by arithmetic: row and column totals of a shape must match, and the grid’s branch total must be even — capacity from the line’s other clues does the rest.' },
+  { name: 'Pigeonhole connection', desc: 'N copies of a clued shape confined to N+1 cells: each adjacent pair of candidates contains one — when that shape must reach across the pair’s border, the border carries a line.' },
+  { name: 'Connectivity', desc: 'The network is one connected piece — a shape that would seal off a drawn component is impossible.' },
+  { name: 'Unreachable region', desc: 'No possible route leads from the proven network into an area — its cells can never be reached and stay empty.' },
+  { name: 'Only connection', desc: 'Every remaining route between two proven parts of the network crosses one border — without it the network would fall into two pieces, so it carries a line.' },
+  { name: 'Segment endpoints', desc: 'A line allowing no turns and no branches can contain no segment ends — and therefore no connections along it.' },
+  { name: 'Segment capacity', desc: 'The clued straights plus a segment’s two endpoint pieces would overflow the line — no segment fits along it.' },
+  { name: 'Single segment', desc: 'Exactly two segment-ending pieces means exactly one segment — all known line cells connect to each other.' },
+  { name: 'Segment room', desc: 'A lone segment must hold its interior pieces strictly between its endpoints — a known endpoint extends toward the side with enough room.' },
+  { name: 'Perpendicular-branch parity', desc: 'Turns + perpendicular branches come in pairs; parity can place or ban the last possible perpendicular branch.' },
+  { name: 'Branch orientation', desc: 'Parity + capacity pin how many branches are perpendicular vs parallel; matching those counts against capable cells forces or eliminates orientations.' },
+  { name: 'Segment packing', desc: 'With the segment count pinned (by clues, budgets, or the neighbours’ arm capacity), every legal placement is enumerated — also checking each segment’s interior composition and the neighbouring lines’ arms — and borders they all share are forced.' },
+  { name: 'Counting lines', desc: 'Crosses in a neighbouring line each send a connection into this one, confined to where those crosses can sit; the receiving line’s clued pieces can supply only so many perpendicular arms there — an exact budget forces orientations and positions.' },
+  { name: 'Single-line analysis', desc: 'One row/column considered in isolation: every completion of its clues consistent with the current marks is enumerated — options no completion uses are eliminated.' },
+  { name: 'Entrance counting', desc: 'Two adjacent rows (or columns) must agree on the lines crossing between them — matching how often one side must enter against how often the other can be entered pins the crossings exactly.' },
+  { name: 'Shape trial', desc: 'The last copies of a clued shape fit in only a few cells — trying each spot and following quick consequences eliminates spots that fail, chain shown.' },
+  { name: 'Case agreement', desc: 'When no candidate spot fails, one of them still must be the shape — so every conclusion all the cases share is placed for free, before any chain is needed.' },
+  { name: 'Border trial', desc: 'Suppose one undecided border near the proven network carried a line (or stayed empty) and follow the quick consequences — a contradiction forces the opposite value, chain shown.' },
+  { name: 'Cell trial', desc: 'Suppose one cell were empty (or visited) and follow the quick consequences — a contradiction proves the opposite. “This cell must be visited” feeds every budget rule.' },
+  { name: 'Shape hypothesis', desc: 'Suppose one cell held a particular shape and follow the quick consequences — a contradiction eliminates it, catching x-wing-style interactions across parallel lines.' },
+  { name: 'Exhaustive analysis', desc: 'Last resort: brute-force satisfiability test of a single border against the clues and all current marks.' }
+];
+
+function effectiveClues(st, clues) {
+  // Given clues merged with clue values the stepper has derived (e.g. from grid
+  // branch parity). Derived values persist in the state so every rule sees them.
+  if (!st.derived) {
+    const pad = a => { const v = a.slice(); while (v.length < 5) v.push(-1); return v; };
+    st.derived = { row: clues.row.map(pad), col: clues.col.map(pad) };
+  }
+  return st.derived;
+}
+
+function takeHumanStep(st, clues) {
+  st.__capCache = new Map();
+  st.__enumBudget = 600000;
+  if (st.__maskCache && st.__maskCache.size > 4000) st.__maskCache.clear();
+  if (st.__unionCache && st.__unionCache.size > 4000) st.__unionCache.clear();
+  const eff = effectiveClues(st, clues);
+  const bad = ruleContradiction(st, eff);
+  if (bad) return bad;
+  for (const rule of RULES) {
+    const move = rule.length === 1 ? rule(st) : rule(st, eff);
+    if (move) { if (move.apply) move.apply(); st.stepNo++; return move; }
+  }
+  return null;
+}
+
+function isComplete(st) {
+  const { R, C } = st;
+  for (let i = 0; i < R * C; i++) {
+    const r = (i / C) | 0, c = i - r * C;
+    if (c < C - 1 && st.edgeR[i] < 0) return false;
+    if (r < R - 1 && st.edgeD[i] < 0) return false;
+  }
+  return true;
+}
+
+if (typeof module !== 'undefined') {
+module.exports = { makeStepState, cloneStepState, setEdge, filterCfg, cellClasses, classLetters, takeHumanStep, isComplete, CFGS, classOf, CLASS_LETTER, CLASS_NAME, STRATEGIES };
+}

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>U-Bahn Solver — v-sidebar2</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <h1>U-Bahn Solver</h1>
+</header>
+
+<main>
+  <div class="toolbar">
+    <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="12" value="6"></div>
+    <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="12" value="6"></div>
+    <div class="group"><label for="timeIn">Time limit (s)</label><input id="timeIn" type="number" min="1" max="600" value="10"></div>
+    <div class="sep"></div>
+    <button id="solveBtn" class="primary">Solve</button>
+    <button id="candBtn" class="primary">True candidates</button>
+    <button id="stepBtn">Take step</button>
+    <button id="cancelBtn">Cancel</button>
+    <div class="sep"></div>
+    <button id="randomBtn">Random puzzle</button>
+    <button id="stepResetBtn">Reset steps</button>
+    <button id="clearCluesBtn" class="danger">Clear clues</button>
+    <button id="resetBtn" class="danger">Reset board</button>
+  </div>
+
+  <div class="board-row">
+    <div class="board-col">
+      <div class="board-wrap">
+        <div class="board-grid" id="boardGrid">
+          <div class="corner-key" id="cornerKey" aria-label="Shape key: each icon labels the clue row to its right and the clue column below it"></div>
+          <div id="colClues"></div>
+          <div id="rowClues"></div>
+          <svg id="boardSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+    <div class="status" id="status">Set up your puzzle, then choose <b>Solve</b> or <b>True candidates</b>. Tip: <b>Random puzzle</b> fills in a complete, guaranteed-solvable clue set — delete clues from it to experiment.</div>
+    <div class="legend">
+    <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#0F4DA8" stroke-width="7" stroke-linecap="round"/></svg></span>segment in <b>every</b> solution</span>
+    <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#AEB6BF" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 7"/></svg></span>segment in <b>some</b> solutions</span>
+    <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#D9930D" stroke-width="5" stroke-linecap="round" stroke-dasharray="6 6"/></svg></span>undetermined (time limit)</span>
+    <span><span class="sw" style="width:14px;height:14px;background:var(--tint-used);border:1px solid var(--grid-line);border-radius:3px;"></span>cell used in every solution</span>
+    <span><span class="sw"><svg width="34" height="12"><line x1="12" y1="1.5" x2="21" y2="10.5" stroke="#ADB4BD" stroke-width="2.2" stroke-linecap="round"/><line x1="12" y1="10.5" x2="21" y2="1.5" stroke="#ADB4BD" stroke-width="2.2" stroke-linecap="round"/></svg></span>segment in <b>no</b> solution</span>
+    <span><span class="sw"><svg width="16" height="14"><circle cx="8" cy="7" r="4" fill="none" stroke="#B9C0C8" stroke-width="2"/></svg></span>cell empty in every solution</span>
+    <span><span class="sw" style="width:14px;height:14px;background:var(--shaded);border-radius:3px;"></span>shaded (click a cell to toggle)</span>
+    </div>
+    </div>
+    <aside class="strategies-side" id="strategiesSide">
+      <details class="help strategies" open>
+    <summary>Step deduction types</summary>
+    <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The idea used by the last step is highlighted, with counters showing how often each has fired since the last reset.</p>
+    <ol id="stratList"></ol>
+  </details>
+    </aside>
+  </div>
+
+  <details class="help">
+    <summary>Rules &amp; how to use this tool</summary>
+    <p><b>U-Bahn rules.</b> Draw one totally connected network through the centers of some unshaded cells. The network may branch or turn but may never dead-end: every used cell connects in 2, 3, or 4 directions. A clue outside the grid gives the exact count of a line shape in that row or column, regardless of the shape's rotation: <b style="color:var(--c-cross)">┼ cross</b> (4 connections), <b style="color:var(--c-branch)">├ branch</b> (3), <b style="color:var(--c-straight)">─ straight</b> (2 opposite), <b style="color:var(--c-turn)">└ turn</b> (2 adjacent) — or, in the outermost band, of <b style="color:var(--c-empty)">· empty cells</b> the network never visits (shaded cells count as empty).</p>
+    <p><b>Entering clues.</b> Clues are arranged the traditional U-Bahn way: the five rows above the grid hold column clues and the five columns on the left hold row clues — one band per shape, in the order shown by the icons on the corner diagonal (each icon labels the band to its right and the band below it). Leave a box empty for "no clue"; enter <code>0</code> to require zero of that shape. Click any grid cell to shade it (shaded cells can’t be used by the network).</p>
+    <p><b>Solve</b> finds one valid network and tells you whether it is unique. <b>True candidates</b> proves, for every individual segment, whether it appears in <b>every</b> solution (solid blue), in <b>some but not all</b> (dashed gray), or in <b>none</b> (a small × on that border) — each segment is tested independently, so the result is exact even when there are far too many solutions to enumerate. The solid network is the guaranteed partial solution: it can legitimately contain loose ends and partial pieces, because a cell’s remaining connections may differ from solution to solution. Tinted cells are used in every solution (even when no single segment through them is fixed); × marks cells used in none. Amber dashed segments could not be proven either way before the time limit — everything else shown is proven. Raise the limit and re-run to resolve them.</p>
+      <p><b>Take step</b> makes exactly one logical deduction at a time, sudoku-solver style: it keeps pencil marks for each cell (remaining shapes among <code>L</code> turn, <code>I</code> straight, <code>T</code> branch, <code>X</code> cross, <code>·</code> empty), draws borders it can prove (line or ×), and explains each move. The full ladder of ideas it tries — from clue counting through cross pigeonholes, connectivity (sealed loops, unreachable regions, forced bridges), segment capacity, and the parity tricks of the classic solving guides — is listed under <b>Step deduction types</b> below, with the idea behind the last step highlighted. When no human-style rule applies it falls back to an exhaustive test of a single border and says so. Steps reset automatically whenever you change clues or shading.</p>
+  </details>
+
+
+</main>
+
+<script src="js/engine.js"></script>
+<script src="js/stepper.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
