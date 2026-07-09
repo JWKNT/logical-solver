@@ -59,12 +59,16 @@ let fails = 0;
     cols: [['A','A','B'], ['BC'], null, ['D','B','C'], ['CE'], null, ['BE'], ['A','A','B']]
   };
   const st = S.makeSumsState(8, 8, 6);
-  let mv, k = 0, sawPairs = false, sawDisjoint = false;
+  let mv, k = 0, sawPairs = false, sawDisjoint = false, sawSpan = false, trials = 0;
   while (k++ < 1500 && (mv = S.takeSumsStep(st, clues))) {
     if (mv.rule === 'Letter pairs') sawPairs = true;
     if (mv.rule === 'Disjoint sums') sawDisjoint = true;
+    if (mv.rule === 'Span algebra') sawSpan = true;
+    if (/trial/i.test(mv.rule)) trials++;
     if (mv.contradiction) { console.log('FAIL: crypto position hit a contradiction'); fails++; break; }
   }
+  if (trials > 0) { console.log('FAIL: crypto position needed ' + trials + ' trials (should be zero with span algebra)'); fails++; }
+  if (!sawSpan) { console.log('FAIL: span algebra never fired on the crypto position'); fails++; }
   // the user's two non-trial conclusions must arrive before any trial:
   // r2c1+r2c4 certainly used (sizes-aware placements) and A = 5/6 (letter-
   // bound line enumeration)
@@ -85,7 +89,7 @@ let fails = 0;
   let ok = S.sumsComplete(st) && sawPairs && sawDisjoint;
   for (const [name, want] of Object.entries(truth)) if (S.digitsOf2(st.letterCand[name.charCodeAt(0) - 65]).join('') !== String(want)) ok = false;
   if (!ok) { console.log('FAIL: crypto position not solved (pairs=' + sawPairs + ', disjoint=' + sawDisjoint + ', complete=' + S.sumsComplete(st) + ')'); fails++; }
-  else console.log('ok: 8x8 crypto position fully solved in ' + (k - 1) + ' steps via Letter pairs + correlated Disjoint sums + trials');
+  else console.log('ok: 8x8 crypto position fully solved in ' + (k - 1) + ' steps, ZERO trials (pairs + disjoint sums + span algebra)');
 }
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();

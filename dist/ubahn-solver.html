@@ -5623,17 +5623,51 @@ function ruleLinePlacements(st, clues) {
       if (alwaysBlank[p] && (st.cand[line.cells[p]] & ~1)) mkBlank.push(p);
     }
     if (!mkFilled.length && !mkBlank.length) continue;
+    const lenTxt = line.clue.map((tok, g2) => {
+      const ls = lenOpts[g2];
+      return '\u201c' + tokenLabel(tok) + '\u201d is ' + (ls.length === 1 ? ls[0] + ' cell' + (ls[0] === 1 ? '' : 's') : ls[0] + '\u2013' + ls[ls.length - 1] + ' cells') + ' long';
+    }).join(', ');
+    let windowTxt = '';
+    if (G === 1) {
+      let a0 = 0, b0 = n - 1;
+      while (a0 < n && !(st.cand[line.cells[a0]] & ~1)) a0++;
+      while (b0 >= 0 && !(st.cand[line.cells[b0]] & ~1)) b0--;
+      if (a0 > 0 || b0 < n - 1) windowTxt = ', and it must fit between ' + rc(st, line.cells[a0]) + ' and ' + rc(st, line.cells[b0]);
+    }
     const bits = [];
-    if (mkFilled.length) bits.push(mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' carr' + (mkFilled.length === 1 ? 'ies' : 'y') + ' a digit in every arrangement');
-    if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' blank in every arrangement');
+    if (mkFilled.length) bits.push('wherever the group' + (G === 1 ? ' slides' : 's slide') + ', ' + mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkFilled.length === 1 ? 'is' : 'are') + ' covered');
+    if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' out of reach and blank');
     return { rule: 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
-      text: (G === 0 ? line.name + '’s clue is 0 — the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(s => s < 0 ? '?' : s).join(', ') + ') can only be arranged in so many ways given the blanks and digits already placed \u2014 ' + bits.join('; ') + '.'),
+      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + ' \u2014 ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
         for (const p of mkBlank) filterCand(st, line.cells[p], 1);
       } };
   }
   return null;
+}
+
+// decided spans of one line: maximal committed-non-blank runs, delimited by
+// committed blanks or edges, mapped to the clue groups when counts match
+function decidedSpans(st, line) {
+  if (!line.clue) return null;
+  const n = line.cells.length;
+  const runs = [];
+  let p = 0;
+  while (p < n) {
+    if ((st.cand[line.cells[p]] & 1) === 0 && st.cand[line.cells[p]] !== 0) {
+      let q = p;
+      while (q < n && (st.cand[line.cells[q]] & 1) === 0) q++;
+      const leftBlank = p === 0 || st.cand[line.cells[p - 1]] === 1;
+      const rightBlank = q === n || st.cand[line.cells[q]] === 1;
+      if (!leftBlank || !rightBlank) return null;   // some boundary undecided
+      runs.push([p, q]);
+      p = q;
+    } else if (st.cand[line.cells[p]] === 1) p++;
+    else return null;   // an undecided cell outside any committed run
+  }
+  if (runs.length !== line.clue.length) return null;
+  return runs.map(([a, b], g) => ({ a, b, tok: line.clue[g], cells: line.cells.slice(a, b) }));
 }
 
 // rule: group combinations — a fully-delimited group's sum restricts its digit set
@@ -5689,6 +5723,127 @@ function ruleGroupCombos(st, clues) {
         text: line.name + '\u2019s group at ' + rc(st, line.cells[a]) + '\u2013' + rc(st, line.cells[b - 1]) + ' must sum to ' + sumsLabel + (fixedSum ? ' (already holding ' + fixedSum + ')' : '') + '; its remaining ' + m + ' cell' + (m === 1 ? '' : 's') + ' need distinct digits completing that \u2014 ' + desc + '.',
         apply() { for (const e of elim) filterCand(st, line.cells[e.q], ~e.bad); } };
     }
+  }
+  return null;
+}
+
+// rule: span algebra — decided row and column spans interlock over shared
+// cells; enumerating the joint completions of one connected component (with
+// crypto letters bound consistently across all its spans) narrows both the
+// cells and the letters. This is the human \u201cadd the rows, subtract the
+// columns\u201d technique.
+function ruleSpanAlgebra(st, clues) {
+  const maxSum = st.D * (st.D + 1) / 2;
+  const spans = [];
+  for (const line of eachSumsLine(st, clues)) {
+    const ds = decidedSpans(st, line);
+    if (!ds) continue;
+    for (const sp of ds) {
+      const open = sp.cells.filter(i => popc(st.cand[i]) > 1);
+      if (!open.length) continue;
+      let fixed = 0, fixedMask = 0;
+      for (const i of sp.cells) { const d = committedDigit(st, i); if (d) { fixed += d; fixedMask |= 1 << d; } }
+      spans.push({ line, sp, open, fixed, fixedMask, sums: allowedSums(st, sp.tok, maxSum) });
+    }
+  }
+  if (spans.length < 2) return null;
+  // connected components over shared open cells
+  const cellSpanIdx = new Map();
+  spans.forEach((s2, k) => { for (const i of s2.open) { if (!cellSpanIdx.has(i)) cellSpanIdx.set(i, []); cellSpanIdx.get(i).push(k); } });
+  const seen = new Array(spans.length).fill(false);
+  for (let k0 = 0; k0 < spans.length; k0++) {
+    if (seen[k0]) continue;
+    const comp = [], stack = [k0];
+    seen[k0] = true;
+    while (stack.length) {
+      const k = stack.pop();
+      comp.push(k);
+      for (const i of spans[k].open) for (const k2 of cellSpanIdx.get(i)) if (!seen[k2]) { seen[k2] = true; stack.push(k2); }
+    }
+    if (comp.length < 2) continue;
+    const cells = [...new Set(comp.flatMap(k => spans[k].open))];
+    if (cells.length > 8) continue;
+    let prod = 1;
+    for (const i of cells) prod *= popc(st.cand[i]) - ((st.cand[i] & 1) ? 1 : 0) + ((st.cand[i] & 1) ? 1 : 0);
+    if (prod > 30000) continue;
+    // joint enumeration: cell values from candidates (cells in a span are
+    // non-blank), span sums in their sets with letters bound consistently
+    const cellUnion = new Map(cells.map(i => [i, 0]));
+    const letterUnion = new Int32Array(26);
+    const activeL = [...new Set(comp.flatMap(k => tokenLetters(spans[k].sp.tok)))];
+    const letterVal = new Int8Array(26).fill(-1);
+    let digitTaken = 0, count = 0, overflow = false;
+    const compSpans = comp.map(k => spans[k]);
+    function checkSpans(assign, partial) {
+      for (const s2 of compSpans) {
+        let sum = s2.fixed, all = true;
+        for (const i of s2.open) { if (assign.has(i)) sum += assign.get(i); else all = false; }
+        if (!all) continue;
+        // bind letters against the sum
+        const p2 = tokenParse(s2.sp.tok);
+        if (p2.exact !== undefined) { if (p2.exact !== sum) return false; continue; }
+        if (p2.any) continue;
+        const dsx = String(sum).split('').map(Number);
+        if (dsx.length !== p2.chars.length) return false;
+        for (let q = 0; q < dsx.length; q++) {
+          const ch = p2.chars[q], d = dsx[q];
+          if (ch.d !== undefined) { if (ch.d !== d) return false; }
+          else if (ch.L !== undefined) {
+            if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) return false; }
+            else {
+              if ((digitTaken & (1 << d)) || !(st.letterCand[ch.L] & (1 << d))) return false;
+              letterVal[ch.L] = d; digitTaken |= 1 << d; partial.push(ch.L);
+            }
+          }
+        }
+      }
+      return true;
+    }
+    const assign = new Map();
+    (function rec(idx) {
+      if (overflow || count > 20000) { overflow = count > 20000; return; }
+      if (idx === cells.length) {
+        count++;
+        for (const [i, v] of assign) cellUnion.set(i, cellUnion.get(i) | (1 << v));
+        for (const L of activeL) if (letterVal[L] >= 0) letterUnion[L] |= 1 << letterVal[L];
+        return;
+      }
+      const i = cells[idx];
+      for (let d = 1; d <= st.D; d++) {
+        if (!(st.cand[i] & (1 << d))) continue;
+        // in-line distinctness against committed digits and other comp cells
+        const r = (i / st.C) | 0, c = i % st.C;
+        let clash = false;
+        for (const [j, v] of assign) if (v === d && (((j / st.C) | 0) === r || (j % st.C) === c)) { clash = true; break; }
+        if (!clash) for (let c2 = 0; c2 < st.C && !clash; c2++) { const j = r * st.C + c2; if (j !== i && committedDigit(st, j) === d) clash = true; }
+        if (!clash) for (let r2 = 0; r2 < st.R && !clash; r2++) { const j = r2 * st.C + c; if (j !== i && committedDigit(st, j) === d) clash = true; }
+        if (clash) continue;
+        assign.set(i, d);
+        const bound = [];
+        if (checkSpans(assign, bound)) rec(idx + 1);
+        for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; }
+        assign.delete(i);
+      }
+    })(0);
+    if (overflow || count === 0) {
+      if (count === 0 && !overflow) return { rule: 'Span algebra', contradiction: true, cells,
+        text: 'The interlocking groups over ' + cells.map(i => rc(st, i)).join(', ') + ' admit no joint completion \u2014 the position is contradictory.' };
+      continue;
+    }
+    const cellHits = [], letterHits = [];
+    for (const i of cells) { const nm = st.cand[i] & (cellUnion.get(i) | 0); if (nm !== st.cand[i] && nm !== 0) cellHits.push({ i, nm }); }
+    for (const L of activeL) { const nm = st.letterCand[L] & letterUnion[L]; if (letterUnion[L] && nm !== st.letterCand[L] && nm !== 0) letterHits.push({ L, nm }); }
+    if (!cellHits.length && !letterHits.length) continue;
+    const spanDesc = compSpans.map(s2 => s2.line.name.toLowerCase() + '\u2019s \u201c' + tokenLabel(s2.sp.tok) + '\u201d (' + rc(st, s2.sp.cells[0]) + '\u2013' + rc(st, s2.sp.cells[s2.sp.cells.length - 1]) + ')').join(', ');
+    const bits = [];
+    if (letterHits.length) bits.push(letterHits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; '));
+    if (cellHits.length) bits.push(cellHits.slice(0, 5).map(h2 => rc(st, h2.i) + ' = ' + digitsOf(h2.nm).join('/')).join('; ') + (cellHits.length > 5 ? '; \u2026' : ''));
+    return { rule: 'Span algebra', cells: cellHits.map(h2 => h2.i),
+      text: 'The groups ' + spanDesc + ' interlock over the cells ' + cells.map(i => rc(st, i)).join(', ') + ' \u2014 summing the row groups must equal summing the column groups over the same cells. Every joint completion agrees: ' + bits.join('; ') + '.',
+      apply() {
+        for (const h2 of cellHits) filterCand(st, h2.i, h2.nm);
+        for (const h2 of letterHits) filterLetter(st, h2.L, h2.nm);
+      } };
   }
   return null;
 }
@@ -5856,8 +6011,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -5892,6 +6047,7 @@ const SUMS_STRATEGIES = [
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },
   { name: 'Group combinations', desc: 'A fully-delimited group\u2019s sum restricts which distinct digits its open cells can hold (killer-cage style) \u2014 impossible digits are eliminated.' },
+  { name: 'Span algebra', desc: 'Decided row and column groups interlocking over shared cells: summing the rows must equal summing the columns over the same region (letters bound consistently) \u2014 joint completions pin cells and letters both.' },
   { name: 'Line analysis', desc: 'One line considered in isolation: every completion consistent with its clue and the current candidates is enumerated \u2014 values no completion uses are eliminated.' },
   { name: 'Letter deduction', desc: 'The sums a clue group can actually achieve pin the decimal digits its crypto letters can stand for \u2014 impossible digits are removed from the letter\u2019s candidates.' },
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
