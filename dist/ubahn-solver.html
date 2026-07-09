@@ -5276,7 +5276,12 @@ function displayedMatch(st, p, v) {
   return true;
 }
 // displayed values a TRUE sum s can show: s itself normally; s-1 and s+1 in KD
-function displayedOptions(st, s) { return st.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s]; }   // displayed 0 = true sum 1
+function displayedOptions(st, s) {
+  if (!st.kd) return [s];
+  // the displayed-value floor is 0 for positive palettes (a shown 0 means true
+  // sum 1); with negatives in play, negative displayed values are legitimate
+  return st.minTotal < 0 ? [s - 1, s + 1] : [s - 1, s + 1].filter(v => v >= 0);
+}
 const DS_CACHE = new Map();
 function digitsOfValue(v) {
   let a = DS_CACHE.get(v);
@@ -5288,12 +5293,13 @@ function allowedSums(st, tok, maxSum) {
   const p = tokenParse(tok);
   const out = new Set();
   const lo2 = Math.min(1, st.minTotal);
+  // sum 0 needs a zero-capable palette (cancellation or 0-valued cells); all
+  // sums flow through the same displayed-value machinery (KD shifts included)
+  const zeroOk = st.minTotal < 0 || st.pal.includes(0);
   for (let s = lo2; s <= maxSum; s++) {
-    if (s === 0) continue;   // a group has at least one cell; sum 0 only via exact cancellation
+    if (s === 0 && !zeroOk) continue;
     for (const v of displayedOptions(st, s)) if (displayedMatch(st, p, v)) { out.add(s); break; }
   }
-  // a zero-sum group (cancellation or 0-valued cells) shows as '#' or a literal 0
-  if ((st.minTotal < 0 || st.pal.includes(0)) && (p.any || p.exact === 0)) out.add(0);
   return out;
 }
 // can k pairwise-disjoint subsets of {1..D}, with the given sizes (or any
@@ -6260,6 +6266,9 @@ function ruleCoralReach(st, clues) {
 // rule: full house — a line whose clue sums total 1+2+..+D must contain every digit
 function ruleFullLine(st, clues) {
   if (st.kd) return null;   // displayed totals are off by one per group under Knapp daneben
+  // with negatives or a placeable 0, omitting a zero-sum sub-multiset keeps the
+  // total unchanged - "total = whole palette" no longer forces every value
+  if (st.minTotal < 0 || st.pal.includes(0)) return null;
   const fullSum = st.maxTotal + st.minTotal;   // sum of the entire palette
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
@@ -6482,7 +6491,7 @@ function ruleGroupCombos(st, clues) {
       }
       if (!elim.length) continue;
       const sumsLabel = sumSet.size === 1 ? String([...sumSet][0]) : tokenLabel(line.clue[g]) + ' (' + (sumSet.size <= 6 ? [...sumSet].join('/') : sumSet.size + ' possible sums') + ')';
-      const desc = elim.map(e => rc(st, line.cells[e.q]) + ' loses ' + digitsOf(e.bad).join(', ')).join('; ');
+      const desc = elim.map(e => rc(st, line.cells[e.q]) + ' loses ' + digitsOf(e.bad).map(k2 => st.pal[k2 - 1]).join(', ')).join('; ');
       return { rule: 'Group combinations', cells: elim.map(e => line.cells[e.q]),
         text: line.name + '\u2019s group at ' + rc(st, line.cells[a]) + '\u2013' + rc(st, line.cells[b - 1]) + ' must sum to ' + sumsLabel + (fixedSum ? ' (already holding ' + fixedSum + ')' : '') + '; its remaining ' + m + ' cell' + (m === 1 ? '' : 's') + ' need distinct digits completing that \u2014 ' + desc + '.',
         apply() { for (const e of elim) filterCand(st, line.cells[e.q], ~e.bad); } };
@@ -6644,7 +6653,7 @@ function ruleLineAnalysis(st, clues) {
       const lost = st.cand[t.i] & ~t.nm;
       const parts = [];
       if (lost & 1) parts.push('blank');
-      const ds = digitsOf(lost); if (ds.length) parts.push(ds.join(', '));
+      const ds = digitsOf(lost).map(k2 => st.pal[k2 - 1]); if (ds.length) parts.push(ds.join(', '));
       return rc(st, t.i) + ' loses ' + parts.join(' and ');
     });
     return { rule: 'Line analysis', cells: targets.map(t => t.i),
