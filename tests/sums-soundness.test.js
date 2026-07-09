@@ -123,6 +123,30 @@ let fails = 0;
     console.log('FAIL: exact-budget row (' + (mv && mv.rule) + ', blanks=' + okBlank + ', used=' + okUsed + ')'); fails++;
   } else console.log('ok: exact-budget row: ' + mv.text.slice(0, 120));
 }
+{
+  // the 12x12 digits-1..9 crypto puzzle (logic-masters.de 0001GH): the rule
+  // ladder alone must solve it completely, zero trials
+  const P = {
+    rows: [['?','?','?','?','a','?'], ['?','??','?','?','b','?'], ['?a','c','?d','?'], ['??','?a'],
+      ['??','be','??','??'], ['?','?','c','?c'], ['fg','d','??'], ['??','?','h','?','?b'],
+      ['ad'], ['h?','e'], ['?','be','?','?'], ['?h','d','bj']],
+    cols: [['?','?','??','??'], ['?g','?','?','?'], ['f?','?j','??'], ['??','??','??','??'],
+      ['a?','?b'], ['?e','??','??','?j'], ['ah'], ['?','?','??'],
+      ['??','?e','?'], ['f?','??','??','h'], null, null]
+  };
+  const st = S.makeSumsState(12, 12, 9);
+  let mv, k = 0, trials = 0;
+  const t0 = Date.now();
+  while (k++ < 6000 && (mv = S.takeSumsStep(st, P))) {
+    if (/trial/i.test(mv.rule)) trials++;
+    if (mv.contradiction) { console.log('FAIL: 12x12 hit a contradiction: ' + mv.text.slice(0, 100)); fails++; break; }
+  }
+  const want = { A: 3, B: 1, C: 7, D: 9, E: 5, F: 2, G: 6, H: 4, J: 0 };
+  let ok = S.sumsComplete(st) && trials === 0;
+  for (const [name, w] of Object.entries(want)) if (S.digitsOf2(st.letterCand[name.charCodeAt(0) - 65]).join('') !== String(w)) ok = false;
+  if (!ok) { console.log('FAIL: 12x12 not rule-solved (complete=' + S.sumsComplete(st) + ', trials=' + trials + ')'); fails++; }
+  else console.log('ok: 12x12 D=9 crypto (LM 0001GH) fully solved by rules alone in ' + (k - 1) + ' steps, zero trials, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {

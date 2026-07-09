@@ -5156,10 +5156,10 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   function unbindClose(bound) { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } }
   const vals = new Int8Array(n);
   const groupSums = new Int32Array((line.clue || []).length);
-  let nodes = 0, overflow = false;
+  let nodes = 0, overflow = false, stopped = false;
   const cap = nodeCap || 400000;
   function rec(p, gi, run, mask) {
-    if (overflow) return;
+    if (overflow || stopped) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
       let g2 = gi, bound = null;
@@ -5170,7 +5170,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
         g2++;
       }
       if (clue && g2 !== clue.length) { if (bound) unbindClose(bound); return; }
-      onSolution(vals, groupSums);
+      if (onSolution(vals, groupSums) === true) stopped = true;
       if (bound) unbindClose(bound);
       return;
     }
@@ -5224,17 +5224,24 @@ function cachedLineUnion(st, clues, line) {
   for (const tok of line.clue || []) for (const L of tokenLetters(tok)) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; }
   const key = line.kind + ':' + line.idx + ':' + h;
   if (st.__lineCache.has(key)) return st.__lineCache.get(key);
-  let prod = 1;
-  for (const i of line.cells) { prod *= Math.max(1, popc(st.cand[i])); if (prod > 5e7) break; }
   let res = null;
-  if (prod <= 5e7) {
+  {
     const G = (line.clue || []).length;
-    const union = new Int32Array(line.cells.length);
+    const n2 = line.cells.length;
+    const union = new Int32Array(n2);
     const gSums = Array.from({ length: G }, () => new Set());
+    let sols = 0;
     const ok = enumerateSumsLine(st, line, (vals, gs) => {
       for (let p = 0; p < vals.length; p++) union[p] |= 1 << vals[p];
       for (let g = 0; g < G; g++) gSums[g].add(gs[g]);
-    }, 300000);
+      // saturation: once the union matches the current masks everywhere and
+      // every group has shown several sums, nothing further can be learned
+      if ((++sols & 255) === 0) {
+        for (let p = 0; p < n2; p++) if (union[p] !== st.cand[line.cells[p]]) return false;
+        return true;
+      }
+      return false;
+    }, 3000000);
     if (ok) res = { union, gSums };
   }
   if (st.__lineCache.size > 3000) st.__lineCache.clear();
@@ -5964,8 +5971,8 @@ function ruleCellTrial(st, clues) {
   for (const L of act) for (const d of digitsOf2(st.letterCand[L])) hyps.push({ L, d });
   const big = st.R * st.C > 100 || st.D >= 8;
   const tiers = [
-    { fast: true, deadline: Date.now() + 2000, steps: 20, list: hyps },
-    { fast: false, deadline: Date.now() + (big ? 10000 : 4000), steps: 30, list: hyps },
+    { fast: true, deadline: Date.now() + 3000, steps: 20, list: hyps },
+    { fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 50, list: hyps },
   ];
   for (const tier of tiers) {
     for (const { L, d } of tier.list) {
@@ -6000,8 +6007,8 @@ function ruleCellTrial(st, clues) {
   cands.sort((a, b) => popc(st.cand[a]) - popc(st.cand[b]));
   const big2 = st.R * st.C > 100 || st.D >= 8;
   const tiers2 = [
-    { fast: true, deadline: Date.now() + 2500, steps: 20, list: cands.slice(0, 60) },
-    { fast: false, deadline: Date.now() + (big2 ? 12000 : 4000), steps: 30, list: cands.slice(0, 14) },
+    { fast: true, deadline: Date.now() + 3000, steps: 20, list: cands.slice(0, 80) },
+    { fast: false, deadline: Date.now() + (big2 ? 90000 : 8000), steps: 50, list: cands.slice(0, 24) },
   ];
   for (const tier of tiers2) {
   for (const i of tier.list) {
