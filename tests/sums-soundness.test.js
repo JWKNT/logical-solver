@@ -111,7 +111,7 @@ let fails = 0;
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
-  const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 3) | 0);
+  const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 6) | 0);
   const g = randGrid(R, C, D);
   const clues = cluesOf(g, R, C);
   // every third puzzle: crypto-substitute 1-2 digits with letters

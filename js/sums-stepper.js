@@ -148,7 +148,7 @@ const comboMemo = new Map();
 function comboFeasible(s, len, avail) {
   if (len === 0) return s === 0;
   if (s <= 0) return false;
-  const key = s * 4096 + len * 512 + avail;
+  const key = ((s * 16 + len) << 10) | avail;   // avail needs 10 bits (digits up to 9)
   if (comboMemo.has(key)) return comboMemo.get(key);
   let ok = false;
   for (let d = 1; d < 31 && !ok; d++) {
@@ -987,7 +987,7 @@ function ruleCellTrial(st, clues) {
   const N = st.R * st.C;
   // letter trials first: a cipher letter down to 2-3 digits is a natural
   // hypothesis, and a quick contradiction removes the digit for good
-  const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 3);
+  const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 4);
   act.sort((a, b) => popc(st.letterCand[a]) - popc(st.letterCand[b]));
   const lDeadline = Date.now() + 1500;
   for (const L of act) {

@@ -180,6 +180,7 @@ function search(cfg, opts) {
     const rcl = S.rowClues[r], ccl = S.colClues[c];
     const vals = [];
     if (S.fixed && S.fixed[i] >= 0) vals.push(S.fixed[i]);
+    else if (cfg.candMask && cfg.candMask[i]) { const m = cfg.candMask[i]; for (let v = 0; v <= D; v++) if ((m >> v) & 1) vals.push(v); }
     else { vals.push(0); for (let v = 1; v <= D; v++) vals.push(v); }
     for (const v of vals) {
       let undoR = null, undoC = null;
