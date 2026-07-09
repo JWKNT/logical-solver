@@ -248,12 +248,12 @@ let fails = 0;
   st.noTrial = true;
   let mv, k = 0, escFired = false, contra = false;
   while (k++ < 200 && (mv = S.takeSumsStep(st, P))) {
-    if (mv.rule === 'Coral escape') escFired = true;
+    if (mv.rule === 'Shaded escape') escFired = true;
     if (mv.contradiction) { contra = true; break; }
   }
   const used = i => (st.cand[i] & 1) === 0;
   if (!escFired || contra || !used(8) || !used(9)) {
-    console.log('FAIL: coral escape regression (fired=' + escFired + ', contra=' + contra + ', r1c9 used=' + used(8) + ', r1c10 used=' + used(9) + ')'); fails++;
+    console.log('FAIL: shaded escape regression (fired=' + escFired + ', contra=' + contra + ', r1c9 used=' + used(8) + ', r1c10 used=' + used(9) + ')'); fails++;
   } else console.log('ok: "Coral escape" seals row 1\'s pocket layouts; r1c9, r1c10 forced used, no contradiction');
 }
 {
