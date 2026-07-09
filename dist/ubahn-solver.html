@@ -5905,7 +5905,7 @@ function ruleCoralConnect(st, clues) {
   }
   // cut cells: undecided blank-capable cells whose loss disconnects the coral
   for (let i = 0; i < N; i++) {
-    if (st.cand[i] === 1 || !canBlank(i) || popc(st.cand[i]) === 1) continue;
+    if (st.cand[i] === 1 || !canBlank(i)) continue;   // committed blanks are not deduction targets
     const seen = reachable(i);
     let cut = false;
     for (const j of committed) if (!seen[j]) { cut = true; break; }
@@ -5950,7 +5950,7 @@ function ruleCoralReach(st, clues) {
     }
   }
   for (let j = 0; j < N; j++) {
-    if (!canUse(j) || popc(st.cand[j]) === 1) continue;
+    if (!canUse(j) || !(st.cand[j] & 1)) continue;   // must still allow blank, or there is nothing to deduce
     for (const i of committedUsed) {
       if (escapes(i, j)) continue;
       return { rule: 'Coral reach', cells: [j],

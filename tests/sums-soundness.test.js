@@ -221,8 +221,16 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   st.kd = kd;
   st.coral = coral;
   let mv, k = 0;
+  let prevHash = null;
+  const hashState = () => { let h = 2166136261 >>> 0; for (let i = 0; i < st.cand.length; i++) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; } for (let L = 0; L < 26; L++) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; } return h; };
+  prevHash = hashState();
   while (k++ < 800 && (mv = S.takeSumsStep(st, { rows: clues.rows, cols: clues.cols }))) {
     steps++;
+    if (!mv.contradiction) {
+      const h2 = hashState();
+      if (h2 === prevHash) { console.log('FAIL: no-op step (would loop forever) [' + mv.rule + ']: ' + mv.text.slice(0, 120)); fails++; break; }
+      prevHash = h2;
+    }
     if (mv.chain) {
       trialSteps++;
       if (!mv.chain.length || !mv.chain[mv.chain.length - 1].contradiction) { console.log('FAIL: trial without complete chain'); fails++; }
