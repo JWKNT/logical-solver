@@ -566,6 +566,32 @@ html.dark .status .bad { color: #e08a8a; }
 html.dark .status .warn { color: #d0aa60; }
 html.dark #themeToggle { border-color: #55555b; }
 
+/* dim theme: U-Bahn tab */
+html.dark input[type="number"], html.dark input[type="text"] { background: #313136; border-color: #55555b; }
+html.dark button { background: #313136; border-color: #55555b; }
+html.dark button:hover:not(:disabled) { background: #3a3a40; }
+html.dark button.primary { border-color: #b8b4ac; }
+html.dark button.primary:hover:not(:disabled) { background: #3a3a40; }
+html.dark button.danger { color: #d89090; border-color: #7a4848; }
+html.dark input.clue { background: #313136; color: #cfccc4; border-color: #4c4c52; }
+html.dark input.clue.s0 { background: #3c3134; }
+html.dark input.clue.s1 { background: #3b362d; }
+html.dark input.clue.s2 { background: #2f353e; }
+html.dark input.clue.s3 { background: #303a32; }
+html.dark input.clue.s4 { background: #36363a; }
+html.dark .status { background: #2d2d32; border-left-color: #6a6a70; color: #cfccc4; }
+html.dark details.help { background: #2b2b2f; border-color: #45454b; }
+html.dark details.help code { background: #37373c; }
+html.dark .strategies li .sdesc { color: #9c9894; }
+html.dark .strategies li.active { background: #4a4433; outline-color: #8a7c4a; }
+html.dark #cancelBtn { background: #313136; }
+html.dark .tabs .tab:hover:not(.active) { background: #2f2f34; }
+html.dark .legend, html.dark .legend * { color: #a8a4a0; }
+html.dark label { color: #b8b4ac; }
+html.dark .toolbar label { color: #b8b4ac; }
+html.dark .toolbar .sep { border-color: #45454b; }
+html.dark svg text { fill: #cfccc4; }
+
 /* ---------------- bespoke checkboxes ---------------- */
 label.chk input[type="checkbox"], .variant-group input[type="checkbox"] {
   appearance: none; -webkit-appearance: none;
