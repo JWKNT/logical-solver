@@ -23,7 +23,34 @@ function cluesOf(g, R, C) {
   return { rows, cols };
 }
 
-let fails = 0, steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
+let fails = 0;
+// ---- scenarios (user-supplied techniques) ----
+{
+  // tens-digit cap: 'B?' with digits 1..9 -> B in 1..4 (max group sum 45)
+  const st = S.makeSumsState(4, 12, 9);
+  const mv = S.takeSumsStep(st, { rows: [['B?'], null, null, null], cols: new Array(12).fill(null) });
+  if (!mv || mv.rule !== 'Sum bounds' || S.digitsOf2(st.letterCand[1]).join('') !== '1234') { console.log('FAIL: tens-digit cap (' + (mv && mv.rule) + ' -> B=' + S.digitsOf2(st.letterCand[1]).join('') + ')'); fails++; }
+  else console.log('ok: "Sum bounds" (tens cap): ' + mv.text.slice(0, 110));
+}
+{
+  // line budget: ??, BE, ??, ?? -> the three ?? need >= 30, so BE <= 15, B = 1
+  const st = S.makeSumsState(4, 12, 9);
+  const clues = { rows: [['??', 'BE', '??', '??'], null, null, null], cols: new Array(12).fill(null) };
+  let mv, k = 0;
+  while (k++ < 10 && (mv = S.takeSumsStep(st, clues)) && S.popc(st.letterCand[1]) > 1) if (mv.contradiction) break;
+  if (S.digitsOf2(st.letterCand[1]).join('') !== '1') { console.log('FAIL: line budget B != 1'); fails++; }
+  else console.log('ok: "Sum bounds" (line budget): B = 1 via the 30-minimum of the three ?? groups');
+}
+{
+  // equal groups: X X X X in a 12-wide line -> X in 7..9
+  const st = S.makeSumsState(4, 12, 9);
+  const clues = { rows: [['X', 'X', 'X', 'X'], null, null, null], cols: new Array(12).fill(null) };
+  let mv, k = 0, saw = false;
+  while (k++ < 10 && (mv = S.takeSumsStep(st, clues))) { if (mv.rule === 'Equal groups') { saw = true; break; } if (mv.contradiction) break; }
+  if (!saw || S.digitsOf2(st.letterCand[23]).join('') !== '789') { console.log('FAIL: equal groups X != 789 (' + S.digitsOf2(st.letterCand[23]).join('') + ')'); fails++; }
+  else console.log('ok: "Equal groups": ' + mv.text.slice(0, 140));
+}
+let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
   const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 3) | 0);

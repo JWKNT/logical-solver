@@ -67,6 +67,56 @@ function allowedSums(st, tok, maxSum) {
   }
   return out;
 }
+// can k pairwise-disjoint subsets of {1..D}, with the given sizes (or any
+// sizes when sizes=null), each sum to v? And the minimal total cell count?
+const djMemo = new Map();
+function disjointFeasible(v, k, D, sizes) {
+  const key = v * 1000 + k * 20 + D + ':' + (sizes ? sizes.join(',') : '*');
+  if (djMemo.has(key)) return djMemo.get(key);
+  // enumerate subsets of 1..D summing to v, then pack k disjoint ones
+  const subs = [];
+  (function gen(d, mask, sum, cnt) {
+    if (sum === v) { subs.push({ mask, cnt }); return; }
+    if (d > D || sum > v) return;
+    gen(d + 1, mask, sum, cnt);
+    gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+  })(1, 0, 0, 0);
+  let best = null;   // minimal total count over feasible packings
+  (function pack(idx, used, left, total, sizeIdx) {
+    if (best !== null && total >= best && sizes === null) return;
+    if (left === 0) { if (best === null || total < best) best = total; return; }
+    for (let s2 = idx; s2 < subs.length; s2++) {
+      const sub = subs[s2];
+      if (sub.mask & used) continue;
+      if (sizes && sub.cnt !== sizes[sizes.length - left]) continue;
+      pack(s2 + 1, used | sub.mask, left - 1, total + sub.cnt, sizeIdx);
+    }
+  })(0, 0, k, 0, 0);
+  const res = best === null ? null : best;   // null = infeasible, else min cells
+  djMemo.set(key, res);
+  return res;
+}
+
+// budget-refined per-group sum sets for one line: each group's allowed sums,
+// further limited because all groups share the line's distinct digits
+// (sum of all group sums <= 1+2+...+D), iterated to a fixpoint
+function lineSumSets(st, line) {
+  const maxTotal = st.D * (st.D + 1) / 2;
+  const sets = line.clue.map(tok => allowedSums(st, tok, maxTotal));
+  for (let round = 0; round < 3; round++) {
+    let changed = false;
+    const mins = sets.map(s2 => { let m = Infinity; for (const v of s2) if (v < m) m = v; return m; });
+    for (let g = 0; g < sets.length; g++) {
+      let others = 0;
+      for (let h = 0; h < sets.length; h++) if (h !== g) others += (mins[h] === Infinity ? 0 : mins[h]);
+      const cap = maxTotal - others;
+      for (const v of [...sets[g]]) if (v > cap) { sets[g].delete(v); changed = true; }
+    }
+    if (!changed) break;
+  }
+  return sets;
+}
+
 function tokenLabel(tok) { return typeof tok === 'number' ? (tok < 0 ? '?' : String(tok)) : String(tok).toUpperCase(); }
 function popc(m) { let c = 0; while (m) { c += m & 1; m >>>= 1; } return c; }
 function rc(st, i) { return 'r' + (((i / st.C) | 0) + 1) + 'c' + ((i % st.C) + 1); }
@@ -210,6 +260,113 @@ function ruleUniqueness(st, clues) {
     return { rule: 'Digit uniqueness', cells: hits,
       text: rc(st, i) + ' is a ' + d + ', so no other cell of row ' + (r + 1) + ' or column ' + (c + 1) + ' can hold a ' + d + ' (' + hits.map(j => rc(st, j)).join(', ') + ').',
       apply() { for (const j of hits) filterCand(st, j, ~(1 << d)); } };
+  }
+  return null;
+}
+
+// rule: sum bounds — each group's possible sums, capped because all the
+// groups in a line share its distinct digits (their sums total at most
+// 1+2+...+D), pin the decimal digits of the group's crypto letters
+function ruleSumBounds(st, clues) {
+  const maxTotal = st.D * (st.D + 1) / 2;
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue) continue;
+    let hasLetters = false;
+    for (const tok of line.clue) if (tokenLetters(tok).length) hasLetters = true;
+    if (!hasLetters) continue;
+    const sets = lineSumSets(st, line);
+    for (let g = 0; g < line.clue.length; g++) {
+      const p2 = tokenParse(line.clue[g]);
+      if (!p2.chars || !p2.chars.some(ch => ch.L !== undefined)) continue;
+      if (!sets[g].size) return { rule: 'Sum bounds', contradiction: true, cells: line.cells.slice(),
+        text: line.name + '\u2019s groups cannot all fit within the digit budget 1+2+\u2026+' + st.D + ' = ' + maxTotal + ' \u2014 the position is contradictory.' };
+      const seen = p2.chars.map(() => 0);
+      for (const s of sets[g]) {
+        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
+        if (ds.length !== p2.chars.length) continue;
+        for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+      }
+      const hits = [];
+      for (let q = 0; q < p2.chars.length; q++) {
+        const ch = p2.chars[q];
+        if (ch.L === undefined) continue;
+        const nm = st.letterCand[ch.L] & seen[q];
+        if (nm === 0) return { rule: 'Sum bounds', contradiction: true, cells: [],
+          text: 'Letter ' + String.fromCharCode(65 + ch.L) + ' has no digit compatible with ' + line.name.toLowerCase() + '\u2019s group \u201c' + tokenLabel(line.clue[g]) + '\u201d \u2014 the position is contradictory.' };
+        if (nm !== st.letterCand[ch.L]) hits.push({ L: ch.L, nm });
+      }
+      if (!hits.length) continue;
+      // explain the binding budget when it actually bit
+      let others = 0, otherParts = [];
+      for (let h = 0; h < line.clue.length; h++) if (h !== g) {
+        let mn = Infinity; for (const v of lineSumSets(st, line)[h]) if (v < mn) mn = v;
+        if (mn !== Infinity && mn > 0) { others += mn; otherParts.push(tokenLabel(line.clue[h]) + ' \u2265 ' + mn); }
+      }
+      const capTxt = others > 0
+        ? 'the line\u2019s digits sum to at most ' + maxTotal + ' and its other groups need at least ' + others + ' (' + otherParts.join(', ') + '), so \u201c' + tokenLabel(line.clue[g]) + '\u201d is at most ' + (maxTotal - others)
+        : 'no group can exceed ' + maxTotal + ', the sum of all digits 1\u2026' + st.D;
+      const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
+      return { rule: 'Sum bounds', cells: [],
+        text: 'In ' + line.name.toLowerCase() + ', ' + capTxt + ' \u2014 so ' + desc + '.',
+        apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
+    }
+  }
+  return null;
+}
+
+// rule: equal groups — the same letter token appearing k times in one line
+// means k pairwise-disjoint digit sets with the same sum; feasibility and the
+// line's length restrict that sum
+function ruleEqualGroups(st, clues) {
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || line.clue.length < 2) continue;
+    const byTok = new Map();
+    for (let g = 0; g < line.clue.length; g++) {
+      const tok = line.clue[g];
+      if (typeof tok === 'number') continue;
+      const s2 = String(tok).toUpperCase().trim();
+      if (/[?]/.test(s2) || !/[A-Z]/.test(s2)) continue;   // value must be letter-determined
+      if (!byTok.has(s2)) byTok.set(s2, []);
+      byTok.get(s2).push(g);
+    }
+    for (const [tokStr, gs] of byTok) {
+      const k = gs.length;
+      if (k < 2) continue;
+      const maxTotal = st.D * (st.D + 1) / 2;
+      const set = allowedSums(st, tokStr, maxTotal);
+      // other groups' minimal lengths (1 cell each at minimum) + gaps
+      const otherGroups = line.clue.length - k;
+      const budgetCells = line.cells.length - (line.clue.length - 1) - otherGroups;   // gaps + 1 cell per other group
+      const bad = [];
+      for (const v of set) {
+        const minCells = disjointFeasible(v, k, st.D, null);
+        if (minCells === null || minCells > budgetCells) bad.push(v);
+      }
+      if (!bad.length || bad.length === set.size && set.size === 0) continue;
+      if (bad.length === set.size) return { rule: 'Equal groups', contradiction: true, cells: line.cells.slice(),
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value allows ' + k + ' disjoint sets of digits with that sum to fit \u2014 the position is contradictory.' };
+      if (!bad.length) continue;
+      // map the surviving sums back to letter digits
+      const p2 = tokenParse(tokStr);
+      const survivors = [...set].filter(v => !bad.includes(v));
+      const seen = p2.chars.map(() => 0);
+      for (const s of survivors) {
+        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
+        if (ds.length === p2.chars.length) for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+      }
+      const hits = [];
+      for (let q = 0; q < p2.chars.length; q++) {
+        const ch = p2.chars[q];
+        if (ch.L === undefined) continue;
+        const nm = st.letterCand[ch.L] & seen[q];
+        if (nm !== 0 && nm !== st.letterCand[ch.L]) hits.push({ L: ch.L, nm });
+      }
+      if (!hits.length) continue;
+      const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
+      return { rule: 'Equal groups', cells: [],
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times \u2014 that needs ' + k + ' disjoint sets of digits with the same sum, and with the other groups and gaps only sums ' + survivors.join('/') + ' leave enough room. So ' + desc + '.',
+        apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
+    }
   }
   return null;
 }
@@ -508,8 +665,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleFullLine, ruleLinePlacements, ruleGroupCombos];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleSumBounds, ruleEqualGroups, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleSumBounds, ruleEqualGroups, ruleFullLine, ruleLinePlacements, ruleGroupCombos];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -537,6 +694,8 @@ function sumsComplete(st) {
 
 const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
+  { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
+  { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k pairwise-disjoint digit sets with the same sum \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },
   { name: 'Group combinations', desc: 'A fully-delimited group\u2019s sum restricts which distinct digits its open cells can hold (killer-cage style) \u2014 impossible digits are eliminated.' },
