@@ -65,6 +65,22 @@ let fails = 0;
     if (mv.rule === 'Disjoint sums') sawDisjoint = true;
     if (mv.contradiction) { console.log('FAIL: crypto position hit a contradiction'); fails++; break; }
   }
+  // the user's two non-trial conclusions must arrive before any trial:
+  // r2c1+r2c4 certainly used (sizes-aware placements) and A = 5/6 (letter-
+  // bound line enumeration)
+  {
+    const st2 = S.makeSumsState(8, 8, 6);
+    let mv2, k2 = 0, trial = false, r2ok = false, aOk = false;
+    while (k2++ < 200 && (mv2 = S.takeSumsStep(st2, clues))) {
+      if (/trial/i.test(mv2.rule)) trial = true;
+      if (!r2ok && (st2.cand[8] & 1) === 0 && (st2.cand[11] & 1) === 0) { r2ok = true; if (trial) { console.log('FAIL: r2c1/r2c4 needed a trial'); fails++; } }
+      if (!aOk && S.digitsOf2(st2.letterCand[0]).join('') === '56') { aOk = true; if (trial) { console.log('FAIL: A=5/6 needed a trial'); fails++; } }
+      if (r2ok && aOk) break;
+      if (mv2.contradiction) break;
+    }
+    if (!r2ok || !aOk) { console.log('FAIL: expected non-trial conclusions missing (r2=' + r2ok + ', A=' + aOk + ')'); fails++; }
+    else console.log('ok: r2c1+r2c4 used and A = 5/6 both derived without trials');
+  }
   const truth = { A: 6, B: 1, C: 2, D: 8, E: 0, F: 4, G: 5 };
   let ok = S.sumsComplete(st) && sawPairs && sawDisjoint;
   for (const [name, want] of Object.entries(truth)) if (S.digitsOf2(st.letterCand[name.charCodeAt(0) - 65]).join('') !== String(want)) ok = false;

@@ -167,6 +167,28 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   const maxSum0 = st.D * (st.D + 1) / 2;
   const clue = line.clue ? line.clue.map(tok => allowedSums(st, tok, maxSum0)) : null;
   const clueMax = clue ? clue.map(set => { let m = 0; for (const v of set) if (v > m) m = v; return m; }) : null;
+  const parsedToks = line.clue ? line.clue.map(tokenParse) : null;
+  const letterVal = new Int8Array(26).fill(-1);
+  let digitTaken = 0;
+  function bindClose(gi, sum) {
+    const p2 = parsedToks[gi];
+    if (!p2 || !p2.chars) return [];
+    const ds = String(sum).split('').map(Number);
+    if (ds.length !== p2.chars.length) return null;
+    const bound = [];
+    const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
+    for (let q = 0; q < ds.length; q++) {
+      const ch = p2.chars[q], d = ds[q];
+      if (ch.L === undefined) continue;
+      if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) return bail(); }
+      else {
+        if ((digitTaken & (1 << d)) || !(st.letterCand[ch.L] & (1 << d))) return bail();
+        letterVal[ch.L] = d; digitTaken |= 1 << d; bound.push(ch.L);
+      }
+    }
+    return bound;
+  }
+  function unbindClose(bound) { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } }
   const vals = new Int8Array(n);
   const groupSums = new Int32Array((line.clue || []).length);
   let nodes = 0, overflow = false;
@@ -175,20 +197,30 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     if (overflow) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
-      let g2 = gi;
+      let g2 = gi, bound = null;
       if (run > 0) {
         if (clue && (g2 >= clue.length || !clue[g2].has(run))) return;
+        if (clue) { bound = bindClose(g2, run); if (bound === null) return; }
+        groupSums[g2] = run;
         g2++;
       }
-      if (clue && g2 !== clue.length) return;
+      if (clue && g2 !== clue.length) { if (bound) unbindClose(bound); return; }
       onSolution(vals, groupSums);
+      if (bound) unbindClose(bound);
       return;
     }
     const m = st.cand[line.cells[p]];
     // blank
     if (m & 1) {
       if (run > 0) {
-        if (!clue || (gi < clue.length && clue[gi].has(run))) { vals[p] = 0; groupSums[gi] = run; rec(p + 1, gi + 1, 0, mask); }
+        if (!clue || (gi < clue.length && clue[gi].has(run))) {
+          const bound = clue ? bindClose(gi, run) : [];
+          if (bound !== null) {
+            vals[p] = 0; groupSums[gi] = run;
+            rec(p + 1, gi + 1, 0, mask);
+            unbindClose(bound);
+          }
+        }
       } else { vals[p] = 0; rec(p + 1, gi, 0, mask); }
     }
     // digits
@@ -418,7 +450,7 @@ function ruleLetterPairs(st, clues) {
 
 // exact joint feasibility of one line's groups: pairwise-disjoint digit
 // subsets of 1..D realising each group's sum, within the line's cell budget
-function lineJointFeasible(st, tokens, sets, n, requireVal) {
+function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
   // groups sharing crypto letters have correlated sums: picking a value for a
   // group binds its letters (consistently, all letters distinct), so two 'G'
   // groups must take the SAME sum and 'GH' must agree with them, etc.
@@ -472,6 +504,7 @@ function lineJointFeasible(st, tokens, sets, n, requireVal) {
       if (bound === null) continue;
       for (const sub of subsetsFor(v)) {
         if (sub.mask & used) continue;
+        if (sizes && sub.cnt !== sizes[g]) continue;
         if (cells + sub.cnt > maxCells) continue;
         rec(g + 1, used | sub.mask, cells + sub.cnt);
         if (ok) break;
@@ -578,13 +611,21 @@ function ruleLinePlacements(st, clues) {
       return L;
     });
     const spanStart = new Int32Array(G), spanLen = new Int32Array(G);
+    const sizeFeas = new Map();
     function place(g, from) {
       if (count > 4000) return;
       if (g === G) {
-        for (let p = spanStart[G - 1] === undefined ? 0 : 0; p < n; p++) {}
         // trailing cells must allow blank
         let last = G ? spanStart[G - 1] + spanLen[G - 1] : 0;
         for (let p = last; p < n; p++) if (!(st.cand[line.cells[p]] & 1)) return;
+        // spans' lengths must be jointly realisable: pairwise-disjoint digit
+        // sets of exactly these sizes, letters bound consistently
+        if (G > 0) {
+          const key = spanLen.join(',');
+          let feas = sizeFeas.get(key);
+          if (feas === undefined) { feas = lineJointFeasible(st, line.clue, sumSets, n, null, Array.from(spanLen)); sizeFeas.set(key, feas); }
+          if (!feas) return;
+        }
         count++;
         const inG = new Int8Array(n);
         for (let g2 = 0; g2 < G; g2++) for (let p = spanStart[g2]; p < spanStart[g2] + spanLen[g2]; p++) inG[p] = 1;
