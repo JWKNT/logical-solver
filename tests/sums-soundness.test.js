@@ -108,6 +108,21 @@ let fails = 0;
   if (!eng.complete || eng.solCount < 1) { console.log('FAIL: engine rejects 4? spanning sums with 0'); fails++; }
   else console.log('ok: engine solves a 4? row (' + eng.solCount + ' completions)');
 }
+{
+  // exact-budget row (user's 12x12): ??, BE(=15), ??, ?? must total 45, so each
+  // ?? is exactly 10; with the used/blank state the gaps land uniquely
+  const st = S.makeSumsState(3, 12, 9);
+  S.filterLetter(st, 1, 1 << 1); S.filterLetter(st, 4, 1 << 5);
+  for (const c of [0, 1, 3, 4, 5, 7, 10, 11]) S.filterCand(st, c, ~1);
+  S.filterCand(st, 9, ~((1 << 1) | (1 << 3)));
+  const clues = { rows: [['??', 'BE', '??', '??'], null, null], cols: new Array(12).fill(null) };
+  const mv = S.takeSumsStep(st, clues);
+  const okBlank = st.cand[2] === 1 && st.cand[6] === 1 && st.cand[9] === 1;
+  const okUsed = (st.cand[8] & 1) === 0;
+  if (!mv || mv.rule !== 'Line placements' || !okBlank || !okUsed || !/= 10/.test(mv.text)) {
+    console.log('FAIL: exact-budget row (' + (mv && mv.rule) + ', blanks=' + okBlank + ', used=' + okUsed + ')'); fails++;
+  } else console.log('ok: exact-budget row: ' + mv.text.slice(0, 120));
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {

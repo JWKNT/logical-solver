@@ -5561,7 +5561,7 @@ function ruleLinePlacements(st, clues) {
     // enumerate group spans: positions + lengths, respecting current masks
     const G = line.clue.length;
     const maxSum = st.D * (st.D + 1) / 2;
-    const sumSets = line.clue.map(tok => allowedSums(st, tok, maxSum));
+    const sumSets = lineSumSets(st, line);   // budget-refined: all groups share the line's distinct digits
     if (sumSets.some(s2 => s2.size === 0)) {
       return { rule: 'Line placements', contradiction: true, cells: line.cells.slice(),
         text: line.name + '\u2019s clue ' + line.clue.map(tokenLabel).join(', ') + ' admits no possible sum for one of its groups \u2014 the position is contradictory.' };
@@ -5598,8 +5598,10 @@ function ruleLinePlacements(st, clues) {
         return;
       }
       for (const l of lenOpts[g]) {
-        for (let s0 = from; s0 + l <= n; s0++) {
-          // gap cells before the group must allow blank
+        const minStart = from + (g > 0 ? 1 : 0);   // >= 1 blank between groups
+        for (let s0 = minStart; s0 + l <= n; s0++) {
+          // EVERY cell between the previous group and this one is blank in
+          // this arrangement, including the mandatory separator - check all
           let ok = true;
           for (let p = from; p < s0 && ok; p++) if (!(st.cand[line.cells[p]] & 1)) ok = false;
           if (!ok) continue;   // NOTE: cannot break: a non-blank cell blocks all later starts
@@ -5607,7 +5609,7 @@ function ruleLinePlacements(st, clues) {
           for (let p = s0; p < s0 + l && ok2; p++) if (!(st.cand[line.cells[p]] & ~1)) ok2 = false;
           if (!ok2) continue;
           spanStart[g] = s0; spanLen[g] = l;
-          place(g + 1, s0 + l + 1);
+          place(g + 1, s0 + l);
           if (count > 4000) return;
         }
       }
@@ -5631,7 +5633,9 @@ function ruleLinePlacements(st, clues) {
     if (!mkFilled.length && !mkBlank.length) continue;
     const lenTxt = line.clue.map((tok, g2) => {
       const ls = lenOpts[g2];
-      return '\u201c' + tokenLabel(tok) + '\u201d is ' + (ls.length === 1 ? ls[0] + ' cell' + (ls[0] === 1 ? '' : 's') : ls[0] + '\u2013' + ls[ls.length - 1] + ' cells') + ' long';
+      const ss = [...sumSets[g2]];
+      const sumTxt = ss.length === 1 ? ' = ' + ss[0] : (ss.length <= 3 ? ' = ' + ss.join('/') : '');
+      return '\u201c' + tokenLabel(tok) + '\u201d' + sumTxt + ' is ' + (ls.length === 1 ? ls[0] + ' cell' + (ls[0] === 1 ? '' : 's') : ls[0] + '\u2013' + ls[ls.length - 1] + ' cells') + ' long';
     }).join(', ');
     let windowTxt = '';
     if (G === 1) {
