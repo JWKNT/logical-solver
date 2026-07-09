@@ -501,3 +501,13 @@
   font-family: "Menlo", monospace; font-size: 11px; color: #555; line-height: 1.6;
 }
 .crypto-box-marks span.off { visibility: hidden; }
+
+/* variant sections in the strategies panel */
+.strategies li.variant-bar {
+  list-style: none; margin: 12px 0 4px -18px; padding-top: 8px;
+  border-top: 1px solid var(--grid-line); font-variant: small-caps;
+  letter-spacing: 1px; font-weight: 700; font-size: 13px;
+}
+.strategies li.variant-bar .voff { font-variant: normal; letter-spacing: 0; font-weight: 400; color: #999; font-size: 12px; }
+.strategies li.vdim { opacity: 0.45; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; }

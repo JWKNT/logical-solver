@@ -9,12 +9,23 @@ function sumsWorkerMain() {
 // token: number (exact), or string of [0-9A-Z?]: digits fixed, '?' wildcard,
 // letters crypto variables. A one-char '?' means a single digit 1..9, '??'
 // a two-digit sum, etc. No leading zeros for multi-digit values.
-function compileClue(clue, maxSum, letterIds) {
+function compileClue(clue, maxSum, letterIds, kd) {
   if (!clue) return null;
+  const kdSet = set => {
+    if (!kd || set === null) return set;
+    const out = new Set();
+    for (const v of set) { if (v - 1 >= 1) out.add(v - 1); if (v + 1 <= maxSum) out.add(v + 1); }
+    return out;
+  };
   return clue.map(tok => {
     if (typeof tok === 'number') {
-      if (tok >= 0) return { type: 'exact', v: tok, max: tok, min: tok };
-      // legacy -1: completely unknown sum
+      if (tok >= 0) {
+        if (!kd) return { type: 'exact', v: tok, max: tok, min: tok };
+        const s2 = kdSet(new Set([tok]));
+        let mn = Infinity, mx = 0;
+        for (const v of s2) { if (v < mn) mn = v; if (v > mx) mx = v; }
+        return { type: 'set', set: s2, max: mx, min: mn === Infinity ? 1 : mn };
+      }
       return { type: 'set', set: null, max: maxSum, min: 1 };
     }
     const s = String(tok).toUpperCase().trim();
@@ -31,20 +42,22 @@ function compileClue(clue, maxSum, letterIds) {
       const set = new Set();
       const lo = chars.length === 1 ? 0 : Math.pow(10, chars.length - 1);
       const hi = Math.pow(10, chars.length) - 1;
-      for (let v = Math.max(1, lo); v <= Math.min(hi, maxSum); v++) {
+      // displayed values run one past maxSum under KD (displayed = true + 1)
+      for (let v = Math.max(kd ? 0 : 1, lo); v <= Math.min(hi, maxSum + (kd ? 1 : 0)); v++) {
         const ds = String(v).padStart(chars.length, '0').split('').map(Number);
         if (ds.length !== chars.length) continue;
         let ok = true;
         for (let p = 0; p < chars.length; p++) if (chars[p].d !== undefined && chars[p].d !== ds[p]) ok = false;
         if (ok) set.add(v);
       }
+      const set2 = kdSet(set);
       let mn = Infinity, mx = 0;
-      for (const v of set) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      return { type: 'set', set, max: mx, min: mn === Infinity ? 1 : mn };
+      for (const v of set2) { if (v < mn) mn = v; if (v > mx) mx = v; }
+      return { type: 'set', set: set2, max: mx, min: mn === Infinity ? 1 : mn };
     }
-    return { type: 'letters', chars, len: chars.length,
-      max: Math.min(maxSum, Math.pow(10, chars.length) - 1),
-      min: chars.length === 1 ? 1 : Math.pow(10, chars.length - 1) };
+    const rawMax = Math.min(maxSum, Math.pow(10, chars.length) - 1 + (kd ? 1 : 0));
+    const rawMin = Math.max(1, (chars.length === 1 ? 1 : Math.pow(10, chars.length - 1)) - (kd ? 1 : 0));
+    return { type: 'letters', chars, len: chars.length, kd: !!kd, max: rawMax, min: rawMin };
   });
 }
 
@@ -52,8 +65,8 @@ function makeSolver(cfg) {
   const { R, C, D } = cfg;
   const maxSum = D * (D + 1) / 2;
   const letterIds = [];
-  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds));
-  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds));
+  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
+  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
   const N = R * C;
   const grid = new Int8Array(N).fill(-1);
   const rowMask = new Int32Array(R), colMask = new Int32Array(C);
@@ -79,16 +92,13 @@ function makeSolver(cfg) {
       else if (ch.L !== undefined && letterVal[ch.L] >= 0) d = letterVal[ch.L];
       mx = mx * 10 + d;
     }
+    if (g.kd) mx += 1;   // the displayed value is one off the true sum
     return Math.min(mx, g.max);
   }
 
-  // close a group with sum s against clue group g. Returns null (fail) or an
-  // undo list of letters bound by this closure.
-  function closeGroup(g, s) {
-    if (!g) return [];
-    if (g.type === 'exact') return g.v === s ? [] : null;
-    if (g.type === 'set') return (g.set === null || g.set.has(s)) ? [] : null;
-    const ds = String(s).split('').map(Number);
+  // bind clue group g against displayed value dv; null on mismatch
+  function bindDisplayed(g, dv) {
+    const ds = String(dv).split('').map(Number);
     if (ds.length !== g.len) return null;
     const bound = [];
     for (let p = 0; p < g.len; p++) {
@@ -98,12 +108,43 @@ function makeSolver(cfg) {
         const cur = letterVal[ch.L];
         if (cur >= 0) { if (cur !== d) { undoLetters(bound); return null; } }
         else {
-          if (letterUsed & (1 << d)) { undoLetters(bound); return null; }   // another letter has d
+          if (letterUsed & (1 << d)) { undoLetters(bound); return null; }
           letterVal[ch.L] = d; letterUsed |= 1 << d; bound.push(ch.L);
         }
       }
     }
     return bound;
+  }
+  // every viable way to close group g with TRUE sum s: a list of binding undo
+  // lists. Non-letter groups yield [[]] on match. KD tries s-1 and s+1.
+  function closeOptions(g, s) {
+    if (!g) return [[]];
+    if (g.type === 'exact') return g.v === s ? [[]] : [];
+    if (g.type === 'set') return (g.set === null || g.set.has(s)) ? [[]] : [];
+    const cands = g.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s];   // displayed 0 = true sum 1
+    const out = [];
+    for (const dv of cands) {
+      const b = bindDisplayed(g, dv);
+      if (b !== null) { out.push(b); undoLetters(b); }   // re-bound at use time
+    }
+    return out;
+  }
+  // re-apply a previously discovered binding option (must still be consistent)
+  function applyOption(g, s, wantIdx) {
+    if (!g || g.type !== 'letters') return [];
+    const cands = g.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s];
+    let idx = 0;
+    for (const dv of cands) {
+      const b = bindDisplayed(g, dv);
+      if (b !== null) { if (idx === wantIdx) return b; undoLetters(b); idx++; }
+    }
+    return null;
+  }
+  function closeGroup(g, s) {   // legacy single-option close for non-KD paths
+    const opts = closeOptions(g, s);
+    if (!opts.length) return null;
+    if (!g || g.type !== 'letters') return [];
+    return applyOption(g, s, 0);
   }
   function undoLetters(bound) {
     for (const L of bound) { letterUsed &= ~(1 << letterVal[L]); letterVal[L] = -1; }
@@ -132,7 +173,7 @@ function makeSolver(cfg) {
   }
 
   return { grid, rowMask, colMask, rowGi, rowRun, colGi, colRun, rowClues, colClues,
-    lineFeasible, groupMax, closeGroup, undoLetters, FULL, letterVal, letterIds, maxSum,
+    lineFeasible, groupMax, closeGroup, closeOptions, applyOption, undoLetters, FULL, letterVal, letterIds, maxSum,
     fixed: cfg.fixed || null };
 }
 
@@ -148,31 +189,51 @@ function search(cfg, opts) {
   const letterCand = opts.collect ? new Int32Array(26) : null;
   const post = opts.onSolution || null;
 
+  // iterate every combination of binding options for a list of group closes,
+  // running body() inside each combination (KD makes closes branch)
+  function withCloses(closes, k, body) {
+    if (k === closes.length) { body(); return; }
+    const { g, s } = closes[k];
+    if (!g || g.type !== 'letters') {
+      const opts = S.closeOptions(g, s);
+      if (opts.length) withCloses(closes, k + 1, body);
+      return;
+    }
+    const n2 = S.closeOptions(g, s).length;
+    for (let oi = 0; oi < n2; oi++) {
+      const b = S.applyOption(g, s, oi);
+      if (b === null) continue;
+      withCloses(closes, k + 1, body);
+      S.undoLetters(b);
+      if (timedOut || solCount >= maxSol) return;
+    }
+  }
+
   function rec(i) {
     if (timedOut || solCount >= maxSol) return;
     if ((++nodes & 2047) === 0 && Date.now() > deadline) { timedOut = true; return; }
     if (i === N) {
-      // close pending column groups
-      const undos = [];
+      // close every pending column group (each may branch under KD)
+      const closes = [];
       let ok = true;
-      for (let c = 0; c < C && ok; c++) {
+      for (let c = 0; c < C; c++) {
         const cc = S.colClues[c];
         let gi = S.colGi[c];
         if (S.colRun[c] > 0) {
-          const u = S.closeGroup(cc ? cc[gi] : null, S.colRun[c]);
-          if (u === null || (cc && gi >= cc.length)) { ok = false; break; }
-          undos.push(u); gi++;
+          if (cc && gi >= cc.length) { ok = false; break; }
+          if (cc) closes.push({ g: cc[gi], s: S.colRun[c] });
+          gi++;
         }
         if (cc && gi !== cc.length) { ok = false; break; }
       }
-      if (ok) {
+      if (!ok) return;
+      withCloses(closes, 0, () => {
         solCount++;
         if (!firstSol) { firstSol = Int8Array.from(S.grid); firstLetters = Int8Array.from(S.letterVal); }
         if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
         if (letterCand) for (const L of S.letterIds) if (S.letterVal[L] >= 0) letterCand[L] |= 1 << S.letterVal[L];
         if (post) post(S.grid, S.letterVal);
-      }
-      for (let k = undos.length - 1; k >= 0; k--) S.undoLetters(undos[k]);
+      });
       return;
     }
     const r = (i / C) | 0, c = i % C;
@@ -183,21 +244,34 @@ function search(cfg, opts) {
     else if (cfg.candMask && cfg.candMask[i]) { const m = cfg.candMask[i]; for (let v = 0; v <= D; v++) if ((m >> v) & 1) vals.push(v); }
     else { vals.push(0); for (let v = 1; v <= D; v++) vals.push(v); }
     for (const v of vals) {
-      let undoR = null, undoC = null;
-      let ok = true;
       const sv = { rGi: S.rowGi[r], rRun: S.rowRun[r], cGi: S.colGi[c], cRun: S.colRun[c] };
       if (v === 0) {
+        const closes = [];
+        let ok = true;
         if (S.rowRun[r] > 0) {
           if (rcl && S.rowGi[r] >= rcl.length) ok = false;
-          else { undoR = S.closeGroup(rcl ? rcl[S.rowGi[r]] : null, S.rowRun[r]); if (undoR === null) ok = false; }
-          if (ok) { S.rowGi[r]++; S.rowRun[r] = 0; }
+          else if (rcl) closes.push({ g: rcl[S.rowGi[r]], s: S.rowRun[r] });
         }
         if (ok && S.colRun[c] > 0) {
           if (ccl && S.colGi[c] >= ccl.length) ok = false;
-          else { undoC = S.closeGroup(ccl ? ccl[S.colGi[c]] : null, S.colRun[c]); if (undoC === null) ok = false; }
-          if (ok) { S.colGi[c]++; S.colRun[c] = 0; }
+          else if (ccl) closes.push({ g: ccl[S.colGi[c]], s: S.colRun[c] });
+        }
+        if (ok) {
+          withCloses(closes, 0, () => {
+            if (S.rowRun[r] > 0) { S.rowGi[r]++; S.rowRun[r] = 0; }
+            if (S.colRun[c] > 0) { S.colGi[c]++; S.colRun[c] = 0; }
+            S.grid[i] = v;
+            let fine = true;
+            if (atRowEnd && S.rowRun[r] === 0 && rcl && S.rowGi[r] !== rcl.length) fine = false;
+            if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
+            if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
+            if (fine) rec(i + 1);
+            S.grid[i] = -1;
+            S.rowGi[r] = sv.rGi; S.rowRun[r] = sv.rRun; S.colGi[c] = sv.cGi; S.colRun[c] = sv.cRun;
+          });
         }
       } else {
+        let ok = true;
         if ((S.rowMask[r] & (1 << v)) || (S.colMask[c] & (1 << v))) ok = false;
         if (ok && rcl) {
           if (S.rowGi[r] >= rcl.length) ok = false;
@@ -207,35 +281,34 @@ function search(cfg, opts) {
           if (S.colGi[c] >= ccl.length) ok = false;
           else if (S.colRun[c] + v > S.groupMax(ccl[S.colGi[c]])) ok = false;
         }
-        if (ok) { S.rowMask[r] |= 1 << v; S.colMask[c] |= 1 << v; S.rowRun[r] += v; S.colRun[c] += v; }
-      }
-      if (ok) {
-        S.grid[i] = v;
-        let fine = true;
-        if (atRowEnd) {
-          // close the row's pending group and require the clue exhausted
-          if (S.rowRun[r] > 0) {
-            const rg = rcl ? rcl[S.rowGi[r]] : null;
-            if (rcl && S.rowGi[r] >= rcl.length) fine = false;
-            else {
-              const u = S.closeGroup(rg, S.rowRun[r]);
-              if (u === null) fine = false;
-              else { sv.rowEndUndo = u; S.rowGi[r]++; S.rowRun[r] = 0; }
+        if (ok) {
+          S.rowMask[r] |= 1 << v; S.colMask[c] |= 1 << v;
+          S.rowRun[r] += v; S.colRun[c] += v;
+          S.grid[i] = v;
+          const finish = () => {
+            let fine = true;
+            if (atRowEnd && rcl && S.rowGi[r] !== rcl.length) fine = false;
+            if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
+            if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
+            if (fine) rec(i + 1);
+          };
+          if (atRowEnd && S.rowRun[r] > 0) {
+            // the row's pending group closes here (may branch)
+            if (!(rcl && S.rowGi[r] >= rcl.length)) {
+              const closes = rcl ? [{ g: rcl[S.rowGi[r]], s: S.rowRun[r] }] : [];
+              withCloses(closes, 0, () => {
+                const svR = { gi: S.rowGi[r], run: S.rowRun[r] };
+                S.rowGi[r]++; S.rowRun[r] = 0;
+                finish();
+                S.rowGi[r] = svR.gi; S.rowRun[r] = svR.run;
+              });
             }
-          }
-          if (fine && rcl && S.rowGi[r] !== rcl.length) fine = false;
+          } else finish();
+          S.grid[i] = -1;
+          S.rowMask[r] &= ~(1 << v); S.colMask[c] &= ~(1 << v);
+          S.rowRun[r] = sv.rRun; S.colRun[c] = sv.cRun;
         }
-        if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
-        if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
-        if (fine) rec(i + 1);
-        if (sv.rowEndUndo) S.undoLetters(sv.rowEndUndo);
       }
-      // restore
-      S.grid[i] = -1;
-      if (v > 0 && ok) { S.rowMask[r] &= ~(1 << v); S.colMask[c] &= ~(1 << v); }
-      if (undoR) S.undoLetters(undoR);
-      if (undoC) S.undoLetters(undoC);
-      S.rowGi[r] = sv.rGi; S.rowRun[r] = sv.rRun; S.colGi[c] = sv.cGi; S.colRun[c] = sv.cRun;
       if (timedOut || solCount >= maxSol) return;
     }
   }

@@ -86,6 +86,80 @@ for (let t = 0; t < 40; t++) {
   }
   if (bruteN < 1) { console.log('FAIL: generated puzzle has no solutions?!'); fails++; }
 }
+// Knapp daneben: every clue is one off; brute checks |clue - run| == 1
+function bruteKD(R, C, D, rowClues, colClues) {
+  const g = new Int8Array(R * C);
+  const rm = new Int32Array(R), cm = new Int32Array(C);
+  let count = 0;
+  function lineOk(cells, cl) {
+    let gi = 0, run = 0;
+    const close = () => { if (cl && (gi >= cl.length || (cl[gi] >= 0 && Math.abs(cl[gi] - run) !== 1))) return false; gi++; run = 0; return true; };
+    for (const v of cells) {
+      if (v) run += v;
+      else if (run) { if (!close()) return false; }
+    }
+    if (run) { if (!close()) return false; }
+    return !cl || gi === cl.length;
+  }
+  function rec(i) {
+    if (i === R * C) {
+      for (let r = 0; r < R; r++) if (!lineOk(g.slice(r * C, r * C + C), rowClues[r])) return;
+      for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g[r * C + c]); if (!lineOk(col, colClues[c])) return; }
+      count++;
+      return;
+    }
+    const r = (i / C) | 0, c = i % C;
+    g[i] = 0; rec(i + 1);
+    for (let v = 1; v <= D; v++) {
+      if ((rm[r] & (1 << v)) || (cm[c] & (1 << v))) continue;
+      g[i] = v; rm[r] |= 1 << v; cm[c] |= 1 << v;
+      rec(i + 1);
+      rm[r] &= ~(1 << v); cm[c] &= ~(1 << v);
+    }
+    g[i] = 0;
+  }
+  rec(0);
+  return count;
+}
+for (let t = 0; t < 14; t++) {
+  const R = 3, C = 3 + ((Math.random() * 2) | 0), D = 3 + ((Math.random() * 2) | 0);
+  const g = randGrid(R, C, D);
+  const { rows, cols } = cluesOf(g, R, C, D);
+  // shift every clue by +-1 to make a KD puzzle (displayed = true +- 1)
+  const shift = cl => cl.map(v => Math.random() < 0.5 && v > 1 ? v - 1 : v + 1);
+  const rowClues = rows.map(cl => Math.random() < 0.15 ? null : shift(cl));
+  const colClues = cols.map(cl => Math.random() < 0.15 ? null : shift(cl));
+  const bruteN = bruteKD(R, C, D, rowClues, colClues);
+  const eng = E.runAny({ R, C, D, rowClues, colClues, kd: true, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) { console.log('KD FAIL:', R + 'x' + C, 'D=' + D, 'brute=' + bruteN, 'engine=' + eng.solCount); fails++; }
+  if (bruteN < 1) { console.log('KD FAIL: generated puzzle unsolvable?!'); fails++; }
+}
+// KD + crypto: letters bind to the DISPLAYED (off-by-one) value
+for (let t = 0; t < 6; t++) {
+  const R = 3, C = 3, D = 3 + ((Math.random() * 2) | 0);
+  const g = randGrid(R, C, D);
+  const { rows, cols } = cluesOf(g, R, C, D);
+  const shift = cl => cl.map(v => Math.random() < 0.5 && v > 1 ? v - 1 : v + 1);
+  const rows2 = rows.map(shift), cols2 = cols.map(shift);
+  const digitsSeen = new Set();
+  for (const cl of rows2.concat(cols2)) for (const v of cl) for (const ch of String(v)) digitsSeen.add(+ch);
+  const pool = [...digitsSeen];
+  const chosen = [pool[(Math.random() * pool.length) | 0]];
+  const sub = v => String(v).split('').map(ch => +ch === chosen[0] ? 'A' : ch).join('');
+  const rowClues = rows2.map(cl => cl.map(sub));
+  const colClues = cols2.map(cl => cl.map(sub));
+  let bruteN = 0;
+  for (let d = 0; d <= 9; d++) {
+    const unsub = tok => { const s = String(tok).split('').map(ch => ch === 'A' ? String(d) : ch).join(''); const v = parseInt(s, 10); return String(v).length !== String(tok).length ? NaN : v; };
+    const rcl = rowClues.map(cl => cl.map(unsub));
+    const ccl = colClues.map(cl => cl.map(unsub));
+    if (rcl.some(cl => cl.some(isNaN)) || ccl.some(cl => cl.some(isNaN))) continue;
+    bruteN += bruteKD(R, C, D, rcl, ccl);
+  }
+  const eng = E.runAny({ R, C, D, rowClues, colClues, kd: true, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) { console.log('KD CRYPTO FAIL: brute=' + bruteN, 'engine=' + eng.solCount); fails++; }
+}
+
 // crypto letters: substitute letters into some clue digits and compare against
 // a brute that tries every distinct letter->digit assignment
 for (let t = 0; t < 12; t++) {

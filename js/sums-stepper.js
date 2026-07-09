@@ -9,11 +9,12 @@ function makeSumsState(R, C, D) {
   const full = ((1 << (D + 1)) - 2) | 1;
   return { R, C, D, cand: new Int32Array(R * C).fill(full),
     letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter
+    kd: false,   // Knapp daneben: every clue is one off its true value
     fastLadder: false, noTrial: false };
 }
 function cloneSumsState(st) {
   return { R: st.R, C: st.C, D: st.D, cand: Int32Array.from(st.cand),
-    letterCand: Int32Array.from(st.letterCand),
+    letterCand: Int32Array.from(st.letterCand), kd: st.kd,
     fastLadder: st.fastLadder, noTrial: st.noTrial, __lineCache: st.__lineCache };
 }
 function filterLetter(st, L, keepMask) {
@@ -42,28 +43,34 @@ function tokenLetters(tok) {
   for (const ch of p.chars) if (ch.L !== undefined && !out.includes(ch.L)) out.push(ch.L);
   return out;
 }
+// does displayed value v match the parsed token against current letter cands?
+function displayedMatch(st, p, v) {
+  if (p.exact !== undefined) return v === p.exact;
+  if (p.any) return v >= 0;
+  const n = p.chars.length;
+  const lo = n === 1 ? 0 : Math.pow(10, n - 1);   // a 1-char clue may display 0 (KD)
+  if (v < lo || v > Math.pow(10, n) - 1) return false;
+  const ds = String(v).split('').map(Number);
+  const seen = {};
+  for (let q = 0; q < n; q++) {
+    const ch = p.chars[q], d = ds[q];
+    if (ch.d !== undefined) { if (ch.d !== d) return false; }
+    else if (ch.L !== undefined) {
+      if (!(st.letterCand[ch.L] & (1 << d))) return false;
+      if (seen[ch.L] !== undefined && seen[ch.L] !== d) return false;
+      seen[ch.L] = d;
+    }
+  }
+  return true;
+}
+// displayed values a TRUE sum s can show: s itself normally; s-1 and s+1 in KD
+function displayedOptions(st, s) { return st.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s]; }   // displayed 0 = true sum 1
+
 function allowedSums(st, tok, maxSum) {
   const p = tokenParse(tok);
-  if (p.exact !== undefined) return new Set(p.exact <= maxSum ? [p.exact] : []);
-  if (p.any) { const s2 = new Set(); for (let v = 1; v <= maxSum; v++) s2.add(v); return s2; }
-  const n = p.chars.length;
-  const lo = n === 1 ? 1 : Math.pow(10, n - 1);
-  const hi = Math.pow(10, n) - 1;
   const out = new Set();
-  for (let v = Math.max(1, lo); v <= Math.min(hi, maxSum); v++) {
-    const ds = String(v).split('').map(Number);
-    let ok = true;
-    const seen = {};
-    for (let q = 0; q < n && ok; q++) {
-      const ch = p.chars[q], d = ds[q];
-      if (ch.d !== undefined) { if (ch.d !== d) ok = false; }
-      else if (ch.L !== undefined) {
-        if (!(st.letterCand[ch.L] & (1 << d))) ok = false;
-        else if (seen[ch.L] !== undefined && seen[ch.L] !== d) ok = false;
-        else seen[ch.L] = d;
-      }
-    }
-    if (ok) out.add(v);
+  for (let s = 1; s <= maxSum; s++) {
+    for (const v of displayedOptions(st, s)) if (displayedMatch(st, p, v)) { out.add(s); break; }
   }
   return out;
 }
@@ -115,6 +122,15 @@ function lineSumSets(st, line) {
     if (!changed) break;
   }
   return sets;
+}
+
+function accumulateSeen(st, p, s, seen) {
+  for (const v of displayedOptions(st, s)) {
+    if (!displayedMatch(st, p, v)) continue;
+    const ds = String(v).split('').map(Number);
+    if (ds.length !== seen.length) continue;
+    for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+  }
 }
 
 function tokenLabel(tok) { return typeof tok === 'number' ? (tok < 0 ? '?' : String(tok)) : String(tok).toUpperCase(); }
@@ -170,15 +186,16 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   const parsedToks = line.clue ? line.clue.map(tokenParse) : null;
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0;
-  function bindClose(gi, sum) {
+  function bindDisplayed(gi, v) {
     const p2 = parsedToks[gi];
     if (!p2 || !p2.chars) return [];
-    const ds = String(sum).split('').map(Number);
+    const ds = String(v).split('').map(Number);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
     for (let q = 0; q < ds.length; q++) {
       const ch = p2.chars[q], d = ds[q];
+      if (ch.d !== undefined) { if (ch.d !== d) return bail(); continue; }
       if (ch.L === undefined) continue;
       if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) return bail(); }
       else {
@@ -197,16 +214,25 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     if (overflow || stopped) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
-      let g2 = gi, bound = null;
+      let g2 = gi;
       if (run > 0) {
         if (clue && (g2 >= clue.length || !clue[g2].has(run))) return;
-        if (clue) { bound = bindClose(g2, run); if (bound === null) return; }
         groupSums[g2] = run;
+        if (clue) {
+          if (g2 + 1 !== clue.length) return;
+          for (const dv of displayedOptions(st, run)) {
+            const bound = bindDisplayed(g2, dv);
+            if (bound === null) continue;
+            if (onSolution(vals, groupSums) === true) stopped = true;
+            unbindClose(bound);
+            if (stopped) break;
+          }
+          return;
+        }
         g2++;
       }
-      if (clue && g2 !== clue.length) { if (bound) unbindClose(bound); return; }
+      if (clue && g2 !== clue.length) return;
       if (onSolution(vals, groupSums) === true) stopped = true;
-      if (bound) unbindClose(bound);
       return;
     }
     const m = st.cand[line.cells[p]];
@@ -214,12 +240,16 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     if (m & 1) {
       if (run > 0) {
         if (!clue || (gi < clue.length && clue[gi].has(run))) {
-          const bound = clue ? bindClose(gi, run) : [];
-          if (bound !== null) {
-            vals[p] = 0; groupSums[gi] = run;
-            rec(p + 1, gi + 1, 0, mask);
-            unbindClose(bound);
-          }
+          vals[p] = 0; groupSums[gi] = run;
+          if (clue) {
+            for (const dv of displayedOptions(st, run)) {
+              const bound = bindDisplayed(gi, dv);
+              if (bound === null) continue;
+              rec(p + 1, gi + 1, 0, mask);
+              unbindClose(bound);
+              if (stopped || overflow) break;
+            }
+          } else rec(p + 1, gi + 1, 0, mask);
         }
       } else { vals[p] = 0; rec(p + 1, gi, 0, mask); }
     }
@@ -320,11 +350,7 @@ function ruleSumBounds(st, clues) {
       if (!sets[g].size) return { rule: 'Sum bounds', contradiction: true, cells: line.cells.slice(),
         text: line.name + '\u2019s groups cannot all fit within the digit budget 1+2+\u2026+' + st.D + ' = ' + maxTotal + ' \u2014 the position is contradictory.' };
       const seen = p2.chars.map(() => 0);
-      for (const s of sets[g]) {
-        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
-        if (ds.length !== p2.chars.length) continue;
-        for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
-      }
+      for (const s of sets[g]) accumulateSeen(st, p2, s, seen);
       const hits = [];
       for (let q = 0; q < p2.chars.length; q++) {
         const ch = p2.chars[q];
@@ -357,6 +383,7 @@ function ruleSumBounds(st, clues) {
 // means k pairwise-disjoint digit sets with the same sum; feasibility and the
 // line's length restrict that sum
 function ruleEqualGroups(st, clues) {
+  if (st.kd) return null;   // under Knapp daneben identical clues may differ (each is independently one off)
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue || line.clue.length < 2) continue;
     const byTok = new Map();
@@ -481,10 +508,10 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
   }
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0;
-  function bindToken(g, v) {
+  function bindDisp(g, dv) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
-    const ds = String(v).split('').map(Number);
+    const ds = String(dv).split('').map(Number);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     for (let q = 0; q < ds.length; q++) {
@@ -507,17 +534,19 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
     if (g === G) { ok = true; return; }
     for (const v of lists[g]) {
       if (requireVal && requireVal.g === g && requireVal.v !== v) continue;
-      const bound = bindToken(g, v);
-      if (bound === null) continue;
-      for (const sub of subsetsFor(v)) {
-        if (sub.mask & used) continue;
-        if (sizes && sub.cnt !== sizes[g]) continue;
-        if (cells + sub.cnt > maxCells) continue;
-        rec(g + 1, used | sub.mask, cells + sub.cnt);
-        if (ok) break;
+      for (const dv of displayedOptions(st, v)) {
+        const bound = bindDisp(g, dv);
+        if (bound === null) continue;
+        for (const sub of subsetsFor(v)) {
+          if (sub.mask & used) continue;
+          if (sizes && sub.cnt !== sizes[g]) continue;
+          if (cells + sub.cnt > maxCells) continue;
+          rec(g + 1, used | sub.mask, cells + sub.cnt);
+          if (ok) break;
+        }
+        unbind(bound);
+        if (ok) return;
       }
-      unbind(bound);
-      if (ok) return;
     }
   })(0, 0, 0);
   return ok;
@@ -546,10 +575,7 @@ function ruleDisjointSums(st, clues) {
         text: line.name + '\u2019s groups cannot all take pairwise-different digits at once \u2014 the position is contradictory.' };
       if (surviving.size === sets[g].size) continue;
       const seen = p2.chars.map(() => 0);
-      for (const s of surviving) {
-        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
-        if (ds.length === p2.chars.length) for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
-      }
+      for (const s of surviving) accumulateSeen(st, p2, s, seen);
       const hits = [];
       for (let q = 0; q < p2.chars.length; q++) {
         const ch = p2.chars[q];
@@ -567,8 +593,40 @@ function ruleDisjointSums(st, clues) {
   return null;
 }
 
+// rule (Knapp daneben only): a decided span's off-by-one clue leaves two
+// candidate sums of the same parity; a lone open cell is pinned to two values
+function ruleKDOffByOne(st, clues) {
+  if (!st.kd) return null;
+  for (const line of eachSumsLine(st, clues)) {
+    const ds = decidedSpans(st, line);
+    if (!ds) continue;
+    for (const sp of ds) {
+      const p2 = tokenParse(sp.tok);
+      if (p2.exact === undefined) continue;
+      const open = sp.cells.filter(i => popc(st.cand[i]) > 1);
+      if (open.length !== 1) continue;
+      let fixed = 0;
+      for (const i of sp.cells) fixed += committedDigit(st, i);
+      const t1 = p2.exact - 1 - fixed, t2 = p2.exact + 1 - fixed;
+      let keep = 0;
+      if (t1 >= 1 && t1 <= st.D) keep |= 1 << t1;
+      if (t2 >= 1 && t2 <= st.D) keep |= 1 << t2;
+      const i = open[0];
+      const nm = st.cand[i] & keep & ~1;
+      if (nm === 0) return { rule: 'KD off-by-one', contradiction: true, cells: [i],
+        text: line.name + '\u2019s clue ' + p2.exact + ' is one off, so its group truly sums to ' + (p2.exact - 1) + ' or ' + (p2.exact + 1) + ' \u2014 but ' + rc(st, i) + ' can complete neither.' };
+      if (nm === st.cand[i]) continue;
+      return { rule: 'KD off-by-one', cells: [i],
+        text: line.name + '\u2019s clue ' + p2.exact + ' is one off its true value \u2014 the group sums to ' + (p2.exact - 1) + ' or ' + (p2.exact + 1) + ' (same parity either way)' + (fixed ? ', and ' + fixed + ' is already placed' : '') + ', so ' + rc(st, i) + ' is ' + digitsOf(nm).join(' or ') + '.',
+        apply() { filterCand(st, i, nm); } };
+    }
+  }
+  return null;
+}
+
 // rule: full house — a line whose clue sums total 1+2+..+D must contain every digit
 function ruleFullLine(st, clues) {
+  if (st.kd) return null;   // displayed totals are off by one per group under Knapp daneben
   const fullSum = st.D * (st.D + 1) / 2;
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
@@ -827,29 +885,40 @@ function ruleSpanAlgebra(st, clues) {
     let digitTaken = 0, count = 0, overflow = false;
     const compSpans = comp.map(k => spans[k]);
     function checkSpans(assign, partial) {
+      // recursive over the complete spans so KD's two displayed candidates can
+      // branch per span; bindings accumulate into `partial` on success
+      const complete = [];
       for (const s2 of compSpans) {
         let sum = s2.fixed, all = true;
         for (const i of s2.open) { if (assign.has(i)) sum += assign.get(i); else all = false; }
-        if (!all) continue;
-        // bind letters against the sum
+        if (all) complete.push({ s2, sum });
+      }
+      function tryBind(idx) {
+        if (idx === complete.length) return true;
+        const { s2, sum } = complete[idx];
         const p2 = tokenParse(s2.sp.tok);
-        if (p2.exact !== undefined) { if (p2.exact !== sum) return false; continue; }
-        if (p2.any) continue;
-        const dsx = String(sum).split('').map(Number);
-        if (dsx.length !== p2.chars.length) return false;
-        for (let q = 0; q < dsx.length; q++) {
-          const ch = p2.chars[q], d = dsx[q];
-          if (ch.d !== undefined) { if (ch.d !== d) return false; }
-          else if (ch.L !== undefined) {
-            if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) return false; }
-            else {
-              if ((digitTaken & (1 << d)) || !(st.letterCand[ch.L] & (1 << d))) return false;
-              letterVal[ch.L] = d; digitTaken |= 1 << d; partial.push(ch.L);
+        for (const dv of displayedOptions(st, sum)) {
+          if (p2.exact !== undefined) { if (p2.exact !== dv) continue; if (tryBind(idx + 1)) return true; continue; }
+          if (p2.any) { if (dv >= 1 && tryBind(idx + 1)) return true; continue; }
+          const dsx = String(dv).split('').map(Number);
+          if (dsx.length !== p2.chars.length) continue;
+          const bound = [];
+          let ok2 = true;
+          for (let q = 0; q < dsx.length && ok2; q++) {
+            const ch = p2.chars[q], d = dsx[q];
+            if (ch.d !== undefined) { if (ch.d !== d) ok2 = false; }
+            else if (ch.L !== undefined) {
+              if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) ok2 = false; }
+              else if ((digitTaken & (1 << d)) || !(st.letterCand[ch.L] & (1 << d))) ok2 = false;
+              else { letterVal[ch.L] = d; digitTaken |= 1 << d; bound.push(ch.L); }
             }
           }
+          if (ok2 && tryBind(idx + 1)) { partial.push(...bound); return true; }
+          for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; }
         }
+        return false;
       }
-      return true;
+      return tryBind(0);
     }
     const assign = new Map();
     (function rec(idx) {
@@ -949,11 +1018,7 @@ function ruleLetterDeduction(st, clues) {
       if (!sums.size) continue;
       // per character position: digits actually achieved
       const seen = p2.chars.map(() => 0);
-      for (const s of sums) {
-        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
-        if (ds.length !== p2.chars.length) continue;
-        for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
-      }
+      for (const s of sums) accumulateSeen(st, p2, s, seen);
       const hits = [];
       for (let q = 0; q < p2.chars.length; q++) {
         const ch = p2.chars[q];
@@ -1077,8 +1142,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -1118,6 +1183,7 @@ const SUMS_STRATEGIES = [
   { name: 'Letter deduction', desc: 'The sums a clue group can actually achieve pin the decimal digits its crypto letters can stand for \u2014 impossible digits are removed from the letter\u2019s candidates.' },
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
   { name: 'Letter trial', desc: 'Suppose a nearly-decided cipher letter stood for one of its digits and follow the quick consequences \u2014 a contradiction removes that digit, chain shown.' },
+  { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
 ];
 

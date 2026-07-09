@@ -153,8 +153,15 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 6) | 0);
   const g = randGrid(R, C, D);
   const clues = cluesOf(g, R, C);
+  // every fourth puzzle: Knapp daneben (all clues shifted one off)
+  const kd = puzzles % 4 === 3;
+  if (kd) {
+    const shift = cl => cl.map(v => Math.random() < 0.5 && v > 1 ? v - 1 : v + 1);
+    clues.rows = clues.rows.map(shift);
+    clues.cols = clues.cols.map(shift);
+  }
   // every third puzzle: crypto-substitute 1-2 digits with letters
-  const crypto = puzzles % 3 === 2;
+  const crypto = !kd && puzzles % 3 === 2;
   if (crypto) {
     const digitsSeen = new Set();
     for (const cl of clues.rows.concat(clues.cols)) for (const v of cl) for (const ch of String(v)) digitsSeen.add(+ch);
@@ -169,11 +176,12 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
     cryptoPuzzles++;
   }
   // union of values per cell over ALL solutions
-  const eng = E.runAny({ R, C, D, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+  const eng = E.runAny({ R, C, D, kd, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
   if (!eng.complete) continue;
   puzzles++;
   const truth = eng.cand;   // bitmask per cell
   const st = S.makeSumsState(R, C, D);
+  st.kd = kd;
   let mv, k = 0;
   while (k++ < 800 && (mv = S.takeSumsStep(st, { rows: clues.rows, cols: clues.cols }))) {
     steps++;
@@ -199,6 +207,6 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   }
   if (S.sumsComplete(st)) solved++;
 }
-console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles (' + cryptoPuzzles + ' crypto) \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
+console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles (' + cryptoPuzzles + ' crypto, incl KD) \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS STEPPER TESTS PASSED');
 process.exit(fails ? 1 : 0);
