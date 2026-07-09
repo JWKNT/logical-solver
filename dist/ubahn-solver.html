@@ -5541,7 +5541,7 @@ function comboFeasible(st, s, len, availMask) {
 // enumerate all assignments of one line consistent with the clue, the current
 // candidate masks, and in-line distinctness; call onSolution(values[]) each time.
 // Returns false on node-budget overflow.
-function enumerateSumsLine(st, line, onSolution, nodeCap) {
+function enumerateSumsLine(st, line, onSolution, nodeCap, shapeFilter) {
   const n = line.cells.length;
   const maxSum0 = 0 + st.maxTotal;
   const clue = line.clue ? line.clue.map(tok => allowedSums(st, tok, maxSum0)) : null;
@@ -5604,6 +5604,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     if (overflow || stopped) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
+      if (shapeFilter && !shapeFilter(vals)) return;
       if (rlen > 0) {
         if (!clue) { if (onSolution(vals, groupSums) === true) stopped = true; return; }
         for (const k of closeIdxOptions(run)) {
@@ -5702,13 +5703,40 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   return !overflow;
 }
 
+// reject line fillings whose maximal shaded stretch has no blank-capable
+// neighbour outside the line: a sealed pocket cannot join the one coral
+function makeCoralStretchFilter(st, clues, line) {
+  if (!coralBeyondLine(st, clues, line)) return null;
+  const lineSet = new Set(line.cells);
+  const n = line.cells.length;
+  const escAt = new Uint8Array(n);
+  for (let p = 0; p < n; p++) {
+    for (const j of coralNeighbors(st, line.cells[p])) {
+      if (!lineSet.has(j) && (st.cand[j] & 1)) { escAt[p] = 1; break; }
+    }
+  }
+  return { escAt, fn: vals => {
+    let p = 0;
+    while (p < n) {
+      if (vals[p] !== 0) { p++; continue; }
+      let q = p, esc = false;
+      while (q < n && vals[q] === 0) { if (escAt[q]) esc = true; q++; }
+      if (!esc) return false;
+      p = q;
+    }
+    return true;
+  } };
+}
+
 // fingerprint-cached per-line assignment unions
 function cachedLineUnion(st, clues, line) {
   if (!st.__lineCache) st.__lineCache = new Map();
+  const sf = makeCoralStretchFilter(st, clues, line);
   let h = 2166136261 >>> 0;
   for (const i of line.cells) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; }
   for (const tok of line.clue || []) for (const L of tokenLetters(tok)) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; }
-  const key = line.kind + ':' + line.idx + ':' + h;
+  if (sf) for (let p = 0; p < sf.escAt.length; p++) { h ^= sf.escAt[p] + 7; h = Math.imul(h, 16777619) >>> 0; }
+  const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + h;
   if (st.__lineCache.has(key)) return st.__lineCache.get(key);
   let res = null;
   {
@@ -5727,7 +5755,7 @@ function cachedLineUnion(st, clues, line) {
         return true;
       }
       return false;
-    }, 3000000);
+    }, 3000000, sf ? sf.fn : null);
     if (ok) res = { union, gSums };
   }
   if (st.__lineCache.size > 3000) st.__lineCache.clear();
@@ -6303,6 +6331,106 @@ function ruleCoralConnect(st, clues) {
   return null;
 }
 
+// must this line contain at least one shaded cell? (>= 2 groups force a
+// separator; a single group that cannot span every cell forces one too)
+function lineMustBlank(st, line) {
+  if (!line.clue) return false;
+  if (line.clue.length >= 2) return true;
+  if (line.clue.length === 0) return line.cells.length > 0;   // explicit empty line
+  const n = line.cells.length;
+  if (n > st.cnt.reduce((a, b) => a + b, 0)) return true;   // more cells than values
+  for (const s of allowedSums(st, line.clue[0], st.maxTotal)) {
+    if (comboFeasibleV(st, s, n, 0, 1)) return false;   // the group could fill the line
+  }
+  return true;
+}
+
+// rule (coral): the one coral must place a shaded cell in every line whose
+// clue forces one, all connected - blank-capable pockets that cannot reach
+// such a line hold digits; a lone bridge on every route must be shaded
+function ruleCoralSpine(st, clues) {
+  if (!st.variants.blankConn) return null;
+  const N = st.R * st.C;
+  const canBlank = i => (st.cand[i] & 1) !== 0;
+  // terminal sets: committed blanks (singletons) + must-shaded lines
+  const terminals = [];
+  for (let i = 0; i < N; i++) if (st.cand[i] === 1) terminals.push({ cells: [i], why: rc(st, i) + '\u2019s committed blank' });
+  const lineTerms = [];
+  for (const line of eachSumsLine(st, clues)) {
+    if (!lineMustBlank(st, line)) continue;
+    const T = line.cells.filter(canBlank);
+    if (!T.length) {
+      return { rule: 'Coral spine', contradiction: true, cells: line.cells.slice(),
+        text: line.name + '\u2019s clue forces at least one shaded cell, but no cell of the line can still be shaded.' };
+    }
+    lineTerms.push({ cells: T, why: line.name.toLowerCase() + ' (its clue forces a shaded cell)' });
+  }
+  for (const t of lineTerms) terminals.push(t);
+  if (!terminals.length) return null;   // even one forced-shaded line kills unreachable pockets
+  // components of the blank-capable graph
+  const comp = new Int32Array(N).fill(-1);
+  let nComp = 0;
+  for (let i = 0; i < N; i++) {
+    if (!canBlank(i) || comp[i] >= 0) continue;
+    const stack = [i];
+    comp[i] = nComp;
+    while (stack.length) {
+      const x = stack.pop();
+      for (const j of coralNeighbors(st, x)) if (canBlank(j) && comp[j] < 0) { comp[j] = nComp; stack.push(j); }
+    }
+    nComp++;
+  }
+  const hitsAll = c => terminals.every(t => t.cells.some(i => comp[i] === c));
+  const okComps = [];
+  for (let c = 0; c < nComp; c++) if (hitsAll(c)) okComps.push(c);
+  if (!okComps.length) {
+    return { rule: 'Coral spine', contradiction: true, cells: [],
+      text: 'No connected region of blank-capable cells can reach every line whose clue forces a shaded cell \u2014 the single coral cannot exist.' };
+  }
+  // (a) a blank-capable cell outside every viable component cannot be shaded
+  const hits = [];
+  for (let i = 0; i < N; i++) {
+    if (!canBlank(i) || popc(st.cand[i]) === 1) continue;
+    if (!okComps.includes(comp[i])) hits.push(i);
+  }
+  if (hits.length) {
+    const missed = terminals.find(t => !t.cells.some(i2 => comp[i2] === comp[hits[0]]));
+    return { rule: 'Coral spine', cells: hits.slice(0, 12),
+      text: 'Every shaded cell joins the one coral, which must reach ' + (missed ? missed.why : 'every clued line') + ' \u2014 but ' + hits.slice(0, 6).map(i2 => rc(st, i2)).join(', ') + (hits.length > 6 ? ', \u2026' : '') + ' sit' + (hits.length === 1 ? 's' : '') + ' in a pocket that cannot, so ' + (hits.length === 1 ? 'it holds a digit' : 'they hold digits') + '.',
+      apply() { for (const i2 of hits) filterCand(st, i2, ~1); } };
+  }
+  // (b) cut cells: removing one undecided cell must not sever every viable route
+  if (okComps.length === 1) {
+    for (let x = 0; x < N; x++) {
+      if (!canBlank(x) || popc(st.cand[x]) === 1 || comp[x] !== okComps[0]) continue;
+      const seen = new Int32Array(N).fill(-1);
+      let nc2 = 0;
+      for (let i = 0; i < N; i++) {
+        if (!canBlank(i) || i === x || seen[i] >= 0) continue;
+        const stack = [i];
+        seen[i] = nc2;
+        while (stack.length) {
+          const y = stack.pop();
+          for (const j of coralNeighbors(st, y)) if (canBlank(j) && j !== x && seen[j] < 0) { seen[j] = nc2; stack.push(j); }
+        }
+        nc2++;
+      }
+      let any = false;
+      for (let c = 0; c < nc2 && !any; c++) {
+        let all = true;
+        for (const t of terminals) { if (!t.cells.some(i2 => i2 !== x && seen[i2] === c)) { all = false; break; } }
+        if (all) any = true;
+      }
+      if (!any) {
+        return { rule: 'Coral spine', cells: [x],
+          text: 'Every route the coral could take between the lines that must hold shaded cells passes through ' + rc(st, x) + ' \u2014 so ' + rc(st, x) + ' is shaded.',
+          apply() { filterCand(st, x, 1); } };
+      }
+    }
+  }
+  return null;
+}
+
 // rule (coral): every group of digit cells touches the grid edge — a digit
 // region whose only escape runs through one cell forces that cell used
 function ruleCoralReach(st, clues) {
@@ -6382,6 +6510,26 @@ function ruleFullLine(st, clues) {
 
 // rule: line placements — enumerate the group layouts (spans only) and keep
 // what every layout shares: cells filled in all of them, cells blank in all
+// does the coral certainly extend beyond this line? (another line's clue
+// forces a shaded cell, or a blank is committed outside this line)
+function coralBeyondLine(st, clues, line) {
+  if (!st.variants.blankConn) return false;
+  const inLine = new Set(line.cells);
+  for (let i = 0; i < st.R * st.C; i++) if (st.cand[i] === 1 && !inLine.has(i)) return true;
+  for (const other of eachSumsLine(st, clues)) {
+    if (other.name === line.name || !other.clue) continue;
+    if (other.kind === line.kind) {
+      // parallel lines share no cell: their forced separator lies outside
+      if (other.clue.length >= 2) return true;
+    } else {
+      // a crossing line shares exactly one cell: one separator could sit
+      // there, so only >= 2 forced separators guarantee one outside
+      if (other.clue.length >= 3) return true;
+    }
+  }
+  return false;
+}
+
 function ruleLinePlacements(st, clues) {
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
@@ -6415,12 +6563,34 @@ function ruleLinePlacements(st, clues) {
     });
     const spanStart = new Int32Array(G), spanLen = new Int32Array(G);
     const sizeFeas = new Map();
+    const escapeGate = coralBeyondLine(st, clues, line);
+    const lineSet = new Set(line.cells);
+    let escapeRejects = 0;
     function place(g, from) {
       if (count > 4000) return;
       if (g === G) {
         // trailing cells must allow blank
         let last = G ? spanStart[G - 1] + spanLen[G - 1] : 0;
         for (let p = last; p < n; p++) if (!(st.cand[line.cells[p]] & 1)) return;
+        // coral escape: every maximal shaded stretch of this layout needs a
+        // blank-capable neighbour outside the line, or it is a sealed pocket
+        if (escapeGate) {
+          const inG2 = new Int8Array(n);
+          for (let g3 = 0; g3 < G; g3++) for (let p = spanStart[g3]; p < spanStart[g3] + spanLen[g3]; p++) inG2[p] = 1;
+          let p = 0;
+          while (p < n) {
+            if (inG2[p]) { p++; continue; }
+            let q = p, esc = false;
+            while (q < n && !inG2[q]) {
+              for (const j of coralNeighbors(st, line.cells[q])) {
+                if (!lineSet.has(j) && (st.cand[j] & 1)) { esc = true; break; }
+              }
+              q++;
+            }
+            if (!esc) { escapeRejects++; return; }
+            p = q;
+          }
+        }
         // spans' lengths must be jointly realisable: pairwise-disjoint digit
         // sets of exactly these sizes, letters bound consistently
         if (G > 0) {
@@ -6459,8 +6629,8 @@ function ruleLinePlacements(st, clues) {
         const ss = [...sumSets[g2]];
         return '\u201c' + tokenLabel(tok) + '\u201d = ' + (ss.length <= 4 ? ss.join('/') : ss[0] + '\u2026' + ss[ss.length - 1]) + (ls.length ? ' needing ' + (ls.length === 1 ? ls[0] : ls[0] + '\u2013' + ls[ls.length - 1]) + ' cell' + (ls.length === 1 && ls[0] === 1 ? '' : 's') : ' with no feasible length');
       }).join('; ');
-      return { rule: 'Line placements', contradiction: true, cells: line.cells.slice(),
-        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed.' };
+      return { rule: escapeRejects ? 'Coral escape' : 'Line placements', contradiction: true, cells: line.cells.slice(),
+        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the coral' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed') + '.' };
     }
     if (count > 4000) continue;
     const mkFilled = [], mkBlank = [];
@@ -6485,8 +6655,8 @@ function ruleLinePlacements(st, clues) {
     const bits = [];
     if (mkFilled.length) bits.push('wherever the group' + (G === 1 ? ' slides' : 's slide') + ', ' + mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkFilled.length === 1 ? 'is' : 'are') + ' covered');
     if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' out of reach and blank');
-    return { rule: 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
-      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + ' \u2014 ' + bits.join('; ') + '.'),
+    return { rule: escapeRejects ? 'Coral escape' : 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
+      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + (escapeRejects ? ' \u2014 arrangements leaving a shaded stretch sealed off from the coral (no blank-capable neighbour outside the line) were discarded' : '') + ' \u2014 ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
         for (const p of mkBlank) filterCand(st, line.cells[p], 1);
@@ -6890,8 +7060,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -6936,6 +7106,8 @@ const SUMS_STRATEGIES = [
   { name: 'Coral checkerboard', variant: 'checker', desc: 'With shaded connected and numbers touching the edge, a 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 two diagonal blanks beside a digit force the fourth cell blank.' },
   { name: 'Coral connectivity', variant: 'blankConn', desc: 'All shaded cells form one orthogonally connected group \u2014 a cell that every connection between two shaded parts must pass through is itself blank.' },
   { name: 'Numbers connected', variant: 'numConn', desc: 'All digit cells form one orthogonally connected group \u2014 a cell that every connection between two digit regions must pass through holds a digit.' },
+  { name: 'Coral escape', variant: 'blankConn', desc: 'A line\u2019s shaded cells come in stretches, and each stretch must join the coral through a blank-capable neighbour outside the line \u2014 arrangements that seal a stretch into a pocket are impossible.' },
+  { name: 'Coral spine', variant: 'blankConn', desc: 'The one coral must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
   { name: 'Coral reach', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },

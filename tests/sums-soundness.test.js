@@ -235,6 +235,48 @@ let fails = 0;
   if (!valid) { console.log('FAIL: signed 10x10 palette puzzle (contra=' + contra + ', complete=' + S.sumsComplete(st) + ', steps=' + (k - 1) + ')'); fails++; }
   else console.log('ok: signed 10x10 palette -4..4 fully rule-solved in ' + (k - 1) + ' steps, zero trials, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's, fill validates');
 }
+{
+  // Coral escape: row 1's separator stretch must reach the coral below - with
+  // r2c4..r2c7 walled off, layouts sealing the gap inside c4..c7 are dead
+  // (the user's 10x10 coral position, stall regression)
+  const P = {
+    rows: [[20,'??'], [40], ['??','??'], ['?',6], [4,'??','?',5], ['?','?','?'], ['?',8,'?'], [23,'?','?'], [2,'?',3,6], [13,5]],
+    cols: [['?',12,9], ['?',21], [16,'??','?'], [17,'??'], [11,14], ['?',4], ['?','??','??'], ['?','??','?'], ['?',6], ['?',21]]
+  };
+  const st = S.makeSumsState(10, 10, 9);
+  Object.assign(st.variants, { blankConn: true, no22blank: true, reach: true });
+  st.noTrial = true;
+  let mv, k = 0, escFired = false, contra = false;
+  while (k++ < 200 && (mv = S.takeSumsStep(st, P))) {
+    if (mv.rule === 'Coral escape') escFired = true;
+    if (mv.contradiction) { contra = true; break; }
+  }
+  const used = i => (st.cand[i] & 1) === 0;
+  if (!escFired || contra || !used(8) || !used(9)) {
+    console.log('FAIL: coral escape regression (fired=' + escFired + ', contra=' + contra + ', r1c9 used=' + used(8) + ', r1c10 used=' + used(9) + ')'); fails++;
+  } else console.log('ok: "Coral escape" seals row 1\'s pocket layouts; r1c9, r1c10 forced used, no contradiction');
+}
+{
+  // Coral spine: a pocket that cannot reach the only line forced to hold a
+  // shaded cell must be all digits
+  const st = S.makeSumsState(3, 3, 3);
+  Object.assign(st.variants, { blankConn: true });
+  // row 1 clue [1, 1] forces a shaded cell in row 1; wall row 2 solid
+  S.filterCand(st, 3, ~1); S.filterCand(st, 4, ~1); S.filterCand(st, 5, ~1);
+  let mv, k = 0, fired = false;
+  while (k++ < 30 && (mv = S.takeSumsStep(st, { rows: [[1, 1], null, null], cols: [null, null, null] }))) {
+    if (mv.rule === 'Coral spine') { fired = true; break; }
+    if (mv.contradiction) break;
+  }
+  const row3Used = [6, 7, 8].every(i => fired && true);
+  if (!fired) { console.log('FAIL: coral spine did not fire on the sealed pocket'); fails++; }
+  else {
+    mv.apply && mv.apply();
+    const dead = [6, 7, 8].filter(i => (st.cand[i] & 1) === 0);
+    if (dead.length === 0) { console.log('FAIL: coral spine fired but freed no pocket cells'); fails++; }
+    else console.log('ok: "Coral spine": ' + mv.text.slice(0, 150));
+  }
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
