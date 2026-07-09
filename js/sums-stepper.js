@@ -460,7 +460,7 @@ function makeCoralStretchFilter(st, clues, line) {
 }
 
 // fingerprint-cached per-line assignment unions
-function cachedLineUnion(st, clues, line) {
+function cachedLineUnion(st, clues, line, peekOnly) {
   if (!st.__lineCache) st.__lineCache = new Map();
   const sf = makeCoralStretchFilter(st, clues, line);
   let h = 2166136261 >>> 0;
@@ -469,6 +469,7 @@ function cachedLineUnion(st, clues, line) {
   if (sf) for (let p = 0; p < sf.escAt.length; p++) { h ^= sf.escAt[p] + 7; h = Math.imul(h, 16777619) >>> 0; }
   const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + h;
   if (st.__lineCache.has(key)) return st.__lineCache.get(key);
+  if (peekOnly) return null;   // surface already-computed conclusions only
   let res = null;
   {
     const G = (line.clue || []).length;
@@ -1702,14 +1703,18 @@ function ruleLineAnalysis(st, clues) {
 
 // rule: letter deduction — the sums a clue group can actually achieve, from
 // exact line enumeration, pin the decimal digits its letters can stand for
-function ruleLetterDeduction(st, clues) {
+function ruleLetterDeduction(st, clues) { return letterDeductionCore(st, clues, false); }
+// zero-cost early pass: announce letter resolutions the moment a line's exact
+// enumeration (already computed by Line analysis) pins them - never enumerates
+function ruleLetterEcho(st, clues) { return letterDeductionCore(st, clues, true); }
+function letterDeductionCore(st, clues, peekOnly) {
   if (st.fastLadder) return null;
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     let hasLetters = false;
     for (const tok of line.clue) if (tokenLetters(tok).length) hasLetters = true;
     if (!hasLetters) continue;
-    const res = cachedLineUnion(st, clues, line);
+    const res = cachedLineUnion(st, clues, line, peekOnly);
     if (!res) continue;
     for (let g = 0; g < line.clue.length; g++) {
       const p2 = tokenParse(line.clue[g]);
@@ -1842,8 +1847,57 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
 const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+
+// per line and clue index, the group's sum where it is already exactly
+// determined by committed cells and blanks (for UI display of resolved ?/#).
+// Non-ascending: decided prefix/suffix runs map to indices from either end;
+// ascending: only a fully decided line maps (sorted sums to sorted indices).
+function resolvedClueSums(st, clues) {
+  const out = { rows: (clues.rows || []).map(cl => cl ? cl.map(() => null) : null),
+                cols: (clues.cols || []).map(cl => cl ? cl.map(() => null) : null) };
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || !line.clue.length) continue;
+    const slot = (line.kind === 'row' ? out.rows : out.cols)[line.idx];
+    const cellState = line.cells.map(i => {
+      const m2 = st.cand[i];
+      if (m2 === 1) return { blank: true };
+      const ds = digitsOf(m2);
+      if (!(m2 & 1) && ds.length === 1) return { val: st.pal[ds[0] - 1] };
+      return { open: true };
+    });
+    const fullyDecided = cellState.every(s2 => !s2.open);
+    if (st.variants.asc) {
+      if (!fullyDecided) continue;
+      const sums = [];
+      let run = 0, len = 0;
+      for (const s2 of cellState) { if (s2.blank) { if (len) { sums.push(run); run = 0; len = 0; } } else { run += s2.val; len++; } }
+      if (len) sums.push(run);
+      if (sums.length !== line.clue.length) continue;
+      sums.sort((a, b) => a - b);
+      for (let k = 0; k < sums.length; k++) slot[k] = sums[k];
+      continue;
+    }
+    // prefix: completed runs from the left while cells stay decided
+    let gi = 0, run = 0, len = 0;
+    for (const s2 of cellState) {
+      if (s2.open) { gi = -1; break; }
+      if (s2.blank) { if (len) { if (gi < line.clue.length) slot[gi] = run; gi++; run = 0; len = 0; } }
+      else { run += s2.val; len++; }
+    }
+    if (gi >= 0 && len && gi < line.clue.length) slot[gi] = run;   // line fully decided, last run
+    // suffix: completed runs from the right
+    let gj = line.clue.length - 1; run = 0; len = 0;
+    for (let p = cellState.length - 1; p >= 0; p--) {
+      const s2 = cellState[p];
+      if (s2.open) break;
+      if (s2.blank) { if (len) { if (gj >= 0) slot[gj] = run; gj--; run = 0; len = 0; } }
+      else { run += s2.val; len++; }
+    }
+  }
+  return out;
+}
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -1897,6 +1951,7 @@ const SUMS_STRATEGIES = [
 ];
 
 const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, takeSumsStep, sumsComplete, eachSumsLine, committedDigit, popc, digitsOf, digitsOf2: (m) => { const a = []; for (let d = 0; d <= 9; d++) if (m & (1 << d)) a.push(d); return a; }, tokenLetters, allowedSums, SUMS_STRATEGIES };
+api.resolvedClueSums = resolvedClueSums;
 if (typeof module !== 'undefined') module.exports = api;
 else global.sums = api;
 })(typeof self !== 'undefined' ? self : this);

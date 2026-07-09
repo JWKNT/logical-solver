@@ -141,11 +141,27 @@ function solvedLetterMap() {
 }
 function refreshClueDisplays() {
   const map = solvedLetterMap();
+  const resolved = sums.resolvedClueSums(st, readClues());
+  const origOf = el2 => (el2 ? (el2.dataset.orig !== undefined ? el2.dataset.orig : el2.value) : '').trim();
   document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
     if (document.activeElement === el) return;
     const orig = el.dataset.orig !== undefined ? el.dataset.orig : el.value;
     if (el.dataset.orig === undefined && el.value) el.dataset.orig = el.value;
     if (!orig) { el.classList.remove('resolved'); return; }
+    // a fully determined ?/# (or any unknown-bearing) token shows its true sum
+    const m2 = el.id.match(/^sums(Row|Col)(\d+)_(\d+)$/);
+    if (m2 && /[?#]/.test(orig)) {
+      const kind = m2[1] === 'Row' ? 'rows' : 'cols';
+      const li = +m2[2], slotNo = +m2[3];
+      let tokIdx = 0;
+      for (let g = 0; g < slotNo; g++) if (origOf($('sums' + m2[1] + li + '_' + g))) tokIdx++;
+      const arr = resolved[kind][li];
+      if (arr && arr[tokIdx] !== null && arr[tokIdx] !== undefined) {
+        el.value = String(arr[tokIdx]);
+        el.classList.add('resolved');
+        return;
+      }
+    }
     let out = '', subbed = false;
     for (const ch of orig.toUpperCase()) {
       if (map[ch] !== undefined) { out += map[ch]; subbed = true; }
