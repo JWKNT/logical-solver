@@ -7,6 +7,7 @@ let st = null;              // stepper state (candidate masks)
 let clues = null;           // { rows: [...], cols: [...] } parsed
 let worker = null;
 let stepCounts = new Map();
+let stepNo = 0;
 
 const $ = id => document.getElementById(id);
 const root = $('app-sums');
@@ -20,7 +21,7 @@ function readSlotClue(prefix) {
   const vals = [];
   for (let g = 0; g < G; g++) {
     const el = $(prefix + '_' + g);
-    const t = (el ? el.value : '').trim();
+    const t = (el ? (el.dataset.orig !== undefined ? el.dataset.orig : el.value) : '').trim();
     if (!t) continue;
     if (/^[0-9]+$/.test(t)) { const n = parseInt(t, 10); if (n >= 0) vals.push(n); }
     else if (/^[0-9A-Za-z?]+$/.test(t)) vals.push(t.toUpperCase());
@@ -50,6 +51,7 @@ function buildGrid(keepClues) {
   G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
   st = sums.makeSumsState(R, C, D);
   stepCounts = new Map();
+  stepNo = 0;
   const wrap = $('sumsGridWrap');
   const slotBox = (prefix, vertical) => {
     let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
@@ -66,7 +68,11 @@ function buildGrid(keepClues) {
   }
   html += '</table>';
   wrap.innerHTML = html;
-  for (const id in saved) { const el = $(id); if (el) el.value = saved[id]; }
+  for (const id in saved) { const el = $(id); if (el) { el.value = saved[id]; el.dataset.orig = saved[id]; } }
+  document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
+    el.addEventListener('focus', () => slotFocus(el));
+    el.addEventListener('blur', () => slotBlur(el));
+  });
   renderCells();
   renderLetters();
   buildStrategyPanel();
@@ -89,6 +95,33 @@ function renderCells(hl) {
   }
 }
 
+function solvedLetterMap() {
+  const map = {};
+  for (const L of activeLetters()) {
+    const ds = sums.digitsOf2(st.letterCand[L]);
+    if (ds.length === 1) map[String.fromCharCode(65 + L)] = String(ds[0]);
+  }
+  return map;
+}
+function refreshClueDisplays() {
+  const map = solvedLetterMap();
+  document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
+    if (document.activeElement === el) return;
+    const orig = el.dataset.orig !== undefined ? el.dataset.orig : el.value;
+    if (el.dataset.orig === undefined && el.value) el.dataset.orig = el.value;
+    if (!orig) { el.classList.remove('resolved'); return; }
+    let out = '', subbed = false;
+    for (const ch of orig.toUpperCase()) {
+      if (map[ch] !== undefined) { out += map[ch]; subbed = true; }
+      else out += ch;
+    }
+    if (subbed) { el.value = out; el.classList.add('resolved'); }
+    else { el.value = orig; el.classList.remove('resolved'); }
+  });
+}
+function slotFocus(el) { if (el.dataset.orig !== undefined) { el.value = el.dataset.orig; el.classList.remove('resolved'); } }
+function slotBlur(el) { el.dataset.orig = el.value; refreshClueDisplays(); }
+
 function activeLetters() {
   const set = new Set();
   const cl = clues || readClues();
@@ -100,20 +133,21 @@ function renderLetters(engineCand) {
   const letters = activeLetters();
   if (!letters.length) { box.hidden = true; return; }
   box.hidden = false;
-  let html = '<table class="crypto-table"><tr><th></th>';
-  for (let d = 0; d <= 9; d++) html += '<th>' + d + '</th>';
-  html += '</tr>';
+  let html = '<div class="crypto-boxes">';
   for (const L of letters) {
     const mask = engineCand ? engineCand[L] : st.letterCand[L];
-    html += '<tr><td class="crypto-letter">' + String.fromCharCode(65 + L) + '</td>';
-    for (let d = 0; d <= 9; d++) {
-      const on = mask & (1 << d);
-      const solo = on && sums.popc(mask) === 1;
-      html += '<td class="crypto-digit' + (on ? (solo ? ' solo' : '') : ' off') + '">' + d + '</td>';
+    const ds = sums.digitsOf2(mask);
+    html += '<div class="crypto-box"><div class="crypto-box-letter">' + String.fromCharCode(65 + L) + '</div>';
+    if (ds.length === 1) html += '<div class="crypto-box-solved">' + ds[0] + '</div>';
+    else {
+      html += '<div class="crypto-box-marks">';
+      for (let d = 0; d <= 9; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
+      html += '</div>';
     }
-    html += '</tr>';
+    html += '</div>';
   }
-  box.innerHTML = html + '</table>';
+  box.innerHTML = html + '</div>';
+  refreshClueDisplays();
 }
 
 function buildStrategyPanel() {
@@ -178,18 +212,25 @@ $('sumsStep').onclick = () => {
   clues = readClues();
   const mv = sums.takeSumsStep(st, clues);
   renderLetters();
-  if (!mv) { status('No deduction found \u2014 the ladder is out of ideas here. Try <b>True candidates</b> for the engine\u2019s view.'); return; }
+  if (!mv) {
+    if (sums.sumsComplete(st)) { status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }
+    status('No deduction found \u2014 the ladder is out of ideas here. Try <b>True candidates</b> for the engine\u2019s view.');
+    return;
+  }
+  stepNo++;
   stepCounts.set(mv.rule, (stepCounts.get(mv.rule) || 0) + 1);
   markStrategy(mv.rule);
-  let html = '<b>' + mv.rule + '</b>: ' + esc(mv.text);
+  const head = 'Step ' + stepNo + ' \u2014 <b>' + mv.rule + '</b>: ';
+  let html = head + esc(mv.text);
   if (mv.chain && mv.chain.length) {
-    html = '<b>' + mv.rule + '</b>: ' + esc(mv.chainIntro) + '<ol>' +
+    html = head + esc(mv.chainIntro) + '<ol>' +
       mv.chain.map(m => '<li><b>' + m.rule + '</b>: ' + esc(m.text) + '</li>').join('') + '</ol>' + mv.chainOutro;
   }
-  status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : ''));
+  const done = sums.sumsComplete(st);
+  status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
 };
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); stepCounts = new Map(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 buildGrid();
