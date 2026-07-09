@@ -8,10 +8,15 @@
 </head>
 <body>
 <header>
-  <h1>U-Bahn Solver</h1>
+  <h1 id="siteTitle">Logical Solvers</h1>
+  <nav class="tabs">
+    <button class="tab active" data-app="ubahn">U-Bahn</button>
+    <button class="tab" data-app="sums">Japanese Sums</button>
+  </nav>
 </header>
 
 <main>
+<section id="app-ubahn">
   <div class="toolbar">
     <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="12" value="6"></div>
     <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="12" value="6"></div>
@@ -67,10 +72,52 @@
   </details>
 
 
+</section>
+
+<section id="app-sums" hidden>
+  <div class="toolbar">
+    <label>Rows <input type="number" id="sumsRows" value="6" min="2" max="12"></label>
+    <label>Cols <input type="number" id="sumsCols" value="6" min="2" max="12"></label>
+    <label>Digits 1..<input type="number" id="sumsDigits" value="5" min="2" max="9"></label>
+    <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
+    <span class="sep"></span>
+    <button id="sumsBuild">Resize</button>
+    <button id="sumsSolve" class="primary">Solve</button>
+    <button id="sumsCands" class="primary">True candidates</button>
+    <button id="sumsStep">Take step</button>
+    <button id="sumsReset">Reset steps</button>
+    <button id="sumsClear" class="danger">Clear all</button>
+  </div>
+  <div class="board-row">
+    <div class="board-col">
+      <div class="board-wrap"><div id="sumsGridWrap"></div></div>
+      <div class="status" id="sumsStatus"></div>
+      <div class="legend">Digits 1..D, at most once per row and column. A clue lists each group’s sum in reading order; groups are separated by at least one blank cell. <code>?</code> = a group of unknown sum; a blank clue box = unclued line.</div>
+    </div>
+    <aside class="strategies-side">
+      <details class="strategies" open>
+        <summary>Step deduction types</summary>
+        <div class="stratNote">The ideas <b>Take step</b> tries, simplest first.</div>
+        <ol id="sumsStrats"></ol>
+      </details>
+    </aside>
+  </div>
+</section>
 </main>
 
 <script src="js/engine.js"></script>
 <script src="js/stepper.js"></script>
 <script src="js/app.js"></script>
+<script src="js/sums-engine.js"></script>
+<script src="js/sums-stepper.js"></script>
+<script src="js/sums-app.js"></script>
+<script>
+// tab switching (no URL change)
+document.querySelectorAll('.tabs .tab').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b === btn));
+  document.getElementById('app-ubahn').hidden = btn.dataset.app !== 'ubahn';
+  document.getElementById('app-sums').hidden = btn.dataset.app !== 'sums';
+}));
+</script>
 </body>
 </html>

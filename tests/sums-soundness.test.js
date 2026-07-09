@@ -1,0 +1,58 @@
+// Japanese Sums stepper soundness: on random puzzles, every candidate a step
+// eliminates must be absent from every solution's value at that cell.
+const E = require('../js/sums-engine.js');
+const S = require('../js/sums-stepper.js');
+
+function randGrid(R, C, D) {
+  const g = new Int8Array(R * C);
+  const rm = new Int32Array(R), cm = new Int32Array(C);
+  for (let i = 0; i < R * C; i++) {
+    const r = (i / C) | 0, c = i % C;
+    const opts = [0, 0];   // bias toward blanks a bit
+    for (let v = 1; v <= D; v++) if (!(rm[r] & (1 << v)) && !(cm[c] & (1 << v))) opts.push(v);
+    const v = opts[(Math.random() * opts.length) | 0];
+    g[i] = v;
+    if (v) { rm[r] |= 1 << v; cm[c] |= 1 << v; }
+  }
+  return g;
+}
+function cluesOf(g, R, C) {
+  const rows = [], cols = [];
+  for (let r = 0; r < R; r++) { const cl = []; let run = 0; for (let c = 0; c < C; c++) { const v = g[r * C + c]; if (v) run += v; else if (run) { cl.push(run); run = 0; } } if (run) cl.push(run); rows.push(cl); }
+  for (let c = 0; c < C; c++) { const cl = []; let run = 0; for (let r = 0; r < R; r++) { const v = g[r * C + c]; if (v) run += v; else if (run) { cl.push(run); run = 0; } } if (run) cl.push(run); cols.push(cl); }
+  return { rows, cols };
+}
+
+let fails = 0, steps = 0, trialSteps = 0, solved = 0, puzzles = 0;
+const t00 = Date.now();
+while (puzzles < 24 && Date.now() - t00 < 200000) {
+  const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 3) | 0);
+  const g = randGrid(R, C, D);
+  const clues = cluesOf(g, R, C);
+  // union of values per cell over ALL solutions
+  const eng = E.runAny({ R, C, D, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+  if (!eng.complete) continue;
+  puzzles++;
+  const truth = eng.cand;   // bitmask per cell
+  const st = S.makeSumsState(R, C, D);
+  let mv, k = 0;
+  while (k++ < 800 && (mv = S.takeSumsStep(st, { rows: clues.rows, cols: clues.cols }))) {
+    steps++;
+    if (mv.chain) {
+      trialSteps++;
+      if (!mv.chain.length || !mv.chain[mv.chain.length - 1].contradiction) { console.log('FAIL: trial without complete chain'); fails++; }
+    }
+    if (mv.contradiction) { console.log('FAIL: contradiction on a solvable puzzle:', mv.text.slice(0, 120)); fails++; break; }
+    // soundness: no cell may have lost a value that some solution uses
+    for (let i = 0; i < R * C; i++) {
+      if (truth[i] & ~st.cand[i]) {
+        console.log('FAIL: unsound elimination at cell', i, 'rule [' + mv.rule + ']:', mv.text.slice(0, 140));
+        fails++; k = 9999; break;
+      }
+    }
+  }
+  if (S.sumsComplete(st)) solved++;
+}
+console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
+console.log(fails ? fails + ' FAILURES' : 'ALL SUMS STEPPER TESTS PASSED');
+process.exit(fails ? 1 : 0);

@@ -439,3 +439,28 @@
       color: var(--amber);
       font-weight: 600;
   }
+/* ---- tabs ---- */
+.tabs { margin-left: auto; display: flex; gap: 6px; }
+.tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
+.tabs .tab.active { border-bottom-color: var(--ink); font-weight: 700; }
+.tabs .tab:hover:not(.active) { background: #f2f2f2; }
+
+/* ---- japanese sums ---- */
+.sums-grid { border-collapse: collapse; }
+.sums-grid td { padding: 0; }
+.sums-cell {
+  width: 52px; height: 52px; border: 1px solid var(--grid-line);
+  text-align: center; vertical-align: middle; background: var(--board);
+}
+.sums-cell.hl { background: #f4f0e2; outline: 2px solid #c9b97a; outline-offset: -2px; }
+.sums-digit { font-size: 26px; font-weight: 700; font-family: "Menlo", "Consolas", monospace; }
+.sums-blank { font-size: 20px; color: #999; }
+.sums-cands { font-size: 11px; color: #777; letter-spacing: 1px; font-family: "Menlo", monospace; word-break: break-all; padding: 2px; display: inline-block; max-width: 48px; }
+.sums-clue-col input, .sums-clue-row input {
+  border: 1px solid #e0e0e0; background: #fbfbfb; font-family: "Menlo", monospace;
+  font-size: 12px; font-weight: 700; color: var(--ink); text-align: center; padding: 3px 2px;
+}
+.sums-clue-col input { width: 50px; margin: 0 1px 4px; }
+.sums-clue-row input { width: 84px; margin-right: 4px; text-align: right; }
+.sums-corner { border: none; }
+.sums-grid tr:first-child td, .sums-clue-row { border: none; background: none; }
