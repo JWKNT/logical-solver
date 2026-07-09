@@ -68,7 +68,7 @@ function tokenLetters(tok) {
 function displayedMatch(st, p, v) {
   if (p.exact !== undefined) return v === p.exact;
   if (p.any) return true;
-  if (p.neg) { if (v > 0) return false; v = -v; }
+  if (p.neg) { if (v >= 0) return false; v = -v; }   // '-?' and kin are strictly negative
   else if (v < 0) return false;
   const n = p.chars.length;
   const lo = n === 1 ? 0 : Math.pow(10, n - 1);   // a 1-char clue may display 0 (KD)

@@ -446,16 +446,24 @@
 .tabs .tab:hover:not(.active) { background: #f2f2f2; }
 
 /* ---- japanese sums ---- */
-.sums-grid { border-collapse: collapse; }
+.sums-grid { border-collapse: collapse;   table-layout: fixed;
+}
 .sums-grid td { padding: 0; }
 .sums-cell {
-  width: 52px; height: 52px; border: 1px solid var(--grid-line);
+  width: 52px; height: 52px; min-width: 52px; max-width: 52px;
+  border: 1px solid var(--grid-line);
   text-align: center; vertical-align: middle; background: var(--board);
+  overflow: hidden; padding: 0; box-sizing: border-box;
 }
 .sums-cell.hl { background: #f4f0e2; outline: 2px solid #c9b97a; outline-offset: -2px; }
 .sums-digit { font-size: 26px; font-weight: 700; font-family: "Menlo", "Consolas", monospace; }
 .sums-blank { font-size: 20px; color: #999; }
-.sums-cands { font-size: 11px; color: #777; letter-spacing: 1px; font-family: "Menlo", monospace; word-break: break-all; padding: 2px; display: inline-block; max-width: 48px; }
+.sums-cands {
+  font-size: 10px; color: #777; letter-spacing: 0; line-height: 1.2;
+  font-family: "Menlo", monospace; word-break: break-all;
+  display: block; max-width: 50px; max-height: 50px; overflow: hidden;
+  padding: 1px; margin: 0 auto; box-sizing: border-box;
+}
 .sums-clue-col input, .sums-clue-row input {
   border: 1px solid #e0e0e0; background: #fbfbfb; font-family: "Menlo", monospace;
   font-size: 12px; font-weight: 700; color: var(--ink); text-align: center; padding: 3px 2px;

@@ -9,7 +9,8 @@ function sumsWorkerMain() {
 // token: number (exact), or string of [0-9A-Z?]: digits fixed, '?' wildcard,
 // letters crypto variables. A one-char '?' means a single digit 1..9, '??'
 // a two-digit sum, etc. No leading zeros for multi-digit values.
-function compileClue(clue, maxSum, letterIds, kd) {
+function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk) {
+  minSumRef = minSumRef || 0;
   if (!clue) return null;
   const kdSet = set => {
     if (!kd || set === null) return set;
@@ -44,7 +45,9 @@ function compileClue(clue, maxSum, letterIds, kd) {
       const lo = chars.length === 1 ? 0 : Math.pow(10, chars.length - 1);
       const hi = Math.pow(10, chars.length) - 1;
       // displayed values run one past maxSum under KD (displayed = true + 1)
-      for (let v = Math.max(kd ? 0 : 1, lo); v <= Math.min(hi, Math.abs(neg ? -1e9 : maxSum) + (kd ? 1 : 0)); v++) {
+      const vlo = Math.max((kd || (zeroOk && !neg)) ? 0 : 1, lo);
+      for (let v = vlo; v <= Math.min(hi, Math.abs(neg ? -1e9 : maxSum) + (kd ? 1 : 0)); v++) {
+        if (neg && v === 0) continue;   // '-?' and kin are strictly negative
         const ds = String(v).padStart(chars.length, '0').split('').map(Number);
         if (ds.length !== chars.length) continue;
         let ok = true;
@@ -80,8 +83,8 @@ function makeSolver(cfg) {
   const maxSum = pal.reduce((a, v, k) => a + (v > 0 ? v * cnt[k] : 0), 0);
   const minSum = pal.reduce((a, v, k) => a + (v < 0 ? v * cnt[k] : 0), 0);
   const letterIds = [];
-  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
-  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
+  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
+  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
   const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
     cfg.coral ? { blankConn: true, no22blank: true, asc: true, reach: true } : null,
     cfg.variants || null);
