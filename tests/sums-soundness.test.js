@@ -328,6 +328,23 @@ let fails = 0;
   if (!saw || vals20 !== 'b12') { console.log('FAIL: Sum cap (saw=' + saw + ', r3c1=' + vals20 + ')'); fails++; }
   else console.log('ok: \"Sum cap\": ascending last-token 9 pins the 7\u2019s neighbours to 1/2/blank');
 }
+{
+  // ascending Group combinations: a delimited 3-run holding a 6 in a column
+  // whose largest clue is 9 forces its open cells to {1,2}
+  const st = S.makeSumsState(10, 10, 9);
+  st.variants.asc = true;
+  const cols = Array(10).fill(null);
+  cols[8] = ['#', 9, 9];
+  S.filterCand(st, 8, 1); S.filterCand(st, 48, 1);
+  S.filterCand(st, 18, 1 << 6); S.filterCand(st, 28, ~1); S.filterCand(st, 38, ~1);
+  S.filterCand(st, 58, ~1); S.filterCand(st, 68, 1);
+  S.filterCand(st, 78, ~1); S.filterCand(st, 88, 1); S.filterCand(st, 98, 1);
+  let mv, k = 0;
+  while (k++ < 15 && (mv = S.takeSumsStep(st, { rows: Array(10).fill(null), cols }))) if (mv.contradiction) break;
+  const v = i => S.digitsOf(st.cand[i]).map(x => st.pal[x - 1]).join('');
+  if (v(28) !== '12' || v(38) !== '12') { console.log('FAIL: asc combos 6-1-2 (r3c9=' + v(28) + ', r4c9=' + v(38) + ')'); fails++; }
+  else console.log('ok: ascending combos: 3-run with a 6 under cap 9 pins its mates to {1,2}');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {

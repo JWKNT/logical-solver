@@ -119,7 +119,13 @@
       <div class="board-wrap"><div id="sumsGridWrap"></div></div>
       <div class="status" id="sumsStatus"></div>
       <div id="sumsLetters" hidden></div>
-      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros; <code>#</code> = a group of any sum; the <i>Values</i> field replaces digits 1…D with a custom palette (e.g. <code>1,2,3,4,5,5,6,7,9,9</code>: no 8s, two 5s and two 9s per line; negatives and double-digit values work, and clue sums may then be negative, written like <code>-7</code>). Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
+      <details class="help">
+        <summary>Rules &amp; notation</summary>
+        <p>Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</p>
+        <p><code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits); <code>#</code> = a group of any sum. Letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros.</p>
+        <p>The <i>Custom values</i> field replaces digits 1…D with a palette, e.g. <code>1,2,3,4,5,5,6,7,9,9</code>: no 8s, two 5s and two 9s per line. Negatives and double-digit values work; clue sums may then be negative, written like <code>-7</code>.</p>
+        <p>Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge.</p>
+      </details>
     </div>
     <aside class="strategies-side">
       <details class="strategies" open>

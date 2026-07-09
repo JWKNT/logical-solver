@@ -888,6 +888,7 @@ function ruleDisjointSums(st, clues) {
 // candidate sums of the same parity; a lone open cell is pinned to two values
 function ruleKDOffByOne(st, clues) {
   if (!st.kd) return null;
+  if (st.variants.asc) return null;   // needs the run-to-token mapping
   for (const line of eachSumsLine(st, clues)) {
     const ds = decidedSpans(st, line);
     if (!ds) continue;
@@ -1510,13 +1511,14 @@ function decidedSpans(st, line) {
     else return null;   // an undecided cell outside any committed run
   }
   if (runs.length !== line.clue.length) return null;
-  if (st.variants.asc) return null;   // group order unknown: runs cannot be mapped to clue indices
+  // under ascending clues, runs cannot be mapped to indices - mark tok null so
+  // callers reason with the union of all token sums instead
+  if (st.variants.asc) return runs.map(([a, b]) => ({ a, b, tok: null, cells: line.cells.slice(a, b) }));
   return runs.map(([a, b], g) => ({ a, b, tok: line.clue[g], cells: line.cells.slice(a, b) }));
 }
 
 // rule: group combinations — a fully-delimited group's sum restricts its digit set
 function ruleGroupCombos(st, clues) {
-  if (st.variants.asc) return null;   // runs cannot be matched to clue groups in order
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     const n = line.cells.length;
@@ -1538,9 +1540,12 @@ function ruleGroupCombos(st, clues) {
     // match runs to clue groups only when counts pin the correspondence:
     // all groups delimited -> runs.length === clue.length, in order
     if (runs.length !== line.clue.length) continue;
+    // ascending clues: the run-to-token mapping is unknown, so each run may
+    // take any token's sums (the asc-refined union)
+    const ascUnion = st.variants.asc ? (() => { const u = new Set(); for (const s2 of lineSumSets(st, line)) for (const v of s2) u.add(v); return u; })() : null;
     for (let g = 0; g < runs.length; g++) {
       const [a, b] = runs[g], L = b - a;
-      const sumSet = allowedSums(st, line.clue[g], maxSum);
+      const sumSet = ascUnion || allowedSums(st, line.clue[g], maxSum);
       let fixedSum = 0, fixedPack = 0;
       const open = [];
       for (let q = a; q < b; q++) {
@@ -1585,6 +1590,7 @@ function ruleGroupCombos(st, clues) {
 // cells and the letters. This is the human \u201cadd the rows, subtract the
 // columns\u201d technique.
 function ruleSpanAlgebra(st, clues) {
+  if (st.variants.asc) return null;   // needs the run-to-token mapping
   const maxSum = 0 + st.maxTotal;
   const spans = [];
   for (const line of eachSumsLine(st, clues)) {
