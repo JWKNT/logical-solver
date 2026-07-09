@@ -993,16 +993,24 @@ function ruleCellTrial(st, clues) {
   // hypothesis, and a quick contradiction removes the digit for good
   const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 4);
   act.sort((a, b) => popc(st.letterCand[a]) - popc(st.letterCand[b]));
-  const lDeadline = Date.now() + 1500;
-  for (const L of act) {
-    if (Date.now() > lDeadline) break;
-    for (const d of digitsOf2(st.letterCand[L])) {
+  // two tiers: a cheap fast-ladder sweep over every hypothesis, then full
+  // ghosts (line analysis included) with a budget that scales to the grid
+  const hyps = [];
+  for (const L of act) for (const d of digitsOf2(st.letterCand[L])) hyps.push({ L, d });
+  const big = st.R * st.C > 100 || st.D >= 8;
+  const tiers = [
+    { fast: true, deadline: Date.now() + 2000, steps: 20, list: hyps },
+    { fast: false, deadline: Date.now() + (big ? 10000 : 4000), steps: 30, list: hyps },
+  ];
+  for (const tier of tiers) {
+    for (const { L, d } of tier.list) {
+      if (Date.now() > tier.deadline) break;
       const ghost = cloneSumsState(st);
-      ghost.fastLadder = false; ghost.noTrial = true; ghost.__lineCache = undefined;
+      ghost.fastLadder = tier.fast; ghost.noTrial = true; ghost.__lineCache = undefined;
       try { filterLetter(ghost, L, 1 << d); } catch (e) { continue; }
       const chain = [];
       let contra = null;
-      for (let k = 0; k < 25 && !contra; k++) {
+      for (let k = 0; k < tier.steps && !contra; k++) {
         let mv = null;
         try { mv = takeSumsStep(ghost, clues); } catch (e) { break; }
         if (!mv) break;
@@ -1025,18 +1033,23 @@ function ruleCellTrial(st, clues) {
     if (pc >= 2 && pc <= 3) cands.push(i);
   }
   cands.sort((a, b) => popc(st.cand[a]) - popc(st.cand[b]));
-  const deadline = Date.now() + 2000;
-  for (const i of cands.slice(0, 40)) {
-    if (Date.now() > deadline) break;
+  const big2 = st.R * st.C > 100 || st.D >= 8;
+  const tiers2 = [
+    { fast: true, deadline: Date.now() + 2500, steps: 20, list: cands.slice(0, 60) },
+    { fast: false, deadline: Date.now() + (big2 ? 12000 : 4000), steps: 30, list: cands.slice(0, 14) },
+  ];
+  for (const tier of tiers2) {
+  for (const i of tier.list) {
+    if (Date.now() > tier.deadline) break;
     for (let v = 0; v <= st.D; v++) {
       if (!(st.cand[i] & (1 << v))) continue;
       const ghost = cloneSumsState(st);
-      ghost.fastLadder = false; ghost.noTrial = true;
+      ghost.fastLadder = tier.fast; ghost.noTrial = true;
       ghost.__lineCache = undefined;
       try { filterCand(ghost, i, 1 << v); } catch (e) { continue; }
       const chain = [];
       let contra = null;
-      for (let k = 0; k < 25 && !contra; k++) {
+      for (let k = 0; k < tier.steps && !contra; k++) {
         let mv = null;
         try { mv = takeSumsStep(ghost, clues); } catch (e) { break; }
         if (!mv) break;
@@ -1052,6 +1065,7 @@ function ruleCellTrial(st, clues) {
           apply() { filterCand(st, i, ~(1 << v)); } };
       }
     }
+  }
   }
   return null;
 }
