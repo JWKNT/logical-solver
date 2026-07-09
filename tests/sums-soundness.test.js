@@ -277,6 +277,20 @@ let fails = 0;
     else console.log('ok: "Coral spine": ' + mv.text.slice(0, 150));
   }
 }
+{
+  // multiplicity-aware Equal groups: palette 1,2,3,4,5,5,6,7,8,9,9 - four 'U'
+  // groups with U=5 pack as {5},{5},{1,4},{2,3} using both 5-copies; the old
+  // strictly-disjoint packer falsely eliminated 5
+  const values = [1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 9];
+  const st = S.makeSumsState(13, 13, 0, values);
+  const cols = Array(13).fill(null);
+  cols[7] = ['U', 'U', 'U', 'U', 'WU'];
+  let mv, k = 0, contra = false;
+  while (k++ < 40 && (mv = S.takeSumsStep(st, { rows: Array(13).fill(null), cols }))) if (mv.contradiction) { contra = true; break; }
+  const uc = st.letterCand['U'.charCodeAt(0) - 65];
+  if (contra || !(uc & (1 << 5))) { console.log('FAIL: doubled-values Equal groups (contra=' + contra + ', U mask=' + uc.toString(2) + ')'); fails++; }
+  else console.log('ok: four U-groups with doubled 5s keep U=5 ({5},{5},{1,4},{2,3})');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
@@ -339,7 +353,7 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
     clues.cols = clues.cols.map(shift);
   }
   // every third puzzle: crypto-substitute 1-2 digits with letters
-  const crypto = !kd && puzzles % 3 === 2;
+  const crypto = !kd && !coral && puzzles % 3 === 2;   // palettes and crypto DO combine
   if (crypto) {
     const digitsSeen = new Set();
     for (const cl of clues.rows.concat(clues.cols)) for (const v of cl) for (const ch of String(v)) digitsSeen.add(+ch);

@@ -522,7 +522,7 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group { display: inline-flex; gap: 10px; flex-wrap: wrap; padding: 2px 8px; border-left: 1px solid var(--grid-line); }
 .variant-group .chk { font-size: 13px; }
 
-/* ---------------- dark mode ---------------- */
+/* ---------------- dim (dark) mode ---------------- */
 #themeToggle {
   margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
   background: none; border: 1px solid var(--grid-line); border-radius: 3px;
@@ -530,29 +530,41 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 }
 #themeToggle:hover { border-color: var(--ink); }
 html.dark {
-  --ink: #d8d4cc;
-  --platform: #1c1c1e;
-  --board: #232326;
-  --grid-line: #4a4a4e;
-  --shaded: #0a0a0a;
-  --tint-used: #2e3442;
-  --line-maybe: #5a5a5e;
+  --ink: #cfccc4;
+  --platform: #2b2b2f;
+  --board: #313136;
+  --grid-line: #55555b;
+  --shaded: #17171a;
+  --tint-used: #3a4150;
+  --line-maybe: #66666c;
 }
-html.dark body { background: #161618; color: #d8d4cc; }
-html.dark header, html.dark main { background: #161618; }
-html.dark h1, html.dark h2, html.dark h3 { color: #e4e0d8; }
+html.dark body { background: #26262a; color: #cfccc4; }
+html.dark header, html.dark main { background: #26262a; }
+html.dark h1, html.dark h2, html.dark h3 { color: #ddd9d0; }
 html.dark input, html.dark button, html.dark select {
-  background: #232326; color: #d8d4cc; border-color: #4a4a4e;
+  background: #313136; color: #cfccc4; border-color: #55555b;
 }
-html.dark .tab { color: #b8b4ac; }
-html.dark .tab.active { color: #e4e0d8; border-color: #e4e0d8; }
-html.dark .sums-cands { color: #9a96a0; }
-html.dark .sums-blank { color: #777; }
-html.dark .strategies li.variant-bar .voff { color: #777; }
-html.dark .sums-clue-col input, html.dark .sums-clue-row input { background: #202024; border-color: #3a3a3e; }
-html.dark #sumsStatus, html.dark #status { background: #1e1e22; border-color: #4a4a4e; }
-html.dark .legend, html.dark .sdesc { color: #a8a4a0; }
-html.dark a { color: #8fa8d0; }
+html.dark .tab { color: #a8a4a0; }
+html.dark .tab.active { color: #ddd9d0; border-color: #ddd9d0; }
+html.dark .sums-cands { color: #96939c; }
+html.dark .sums-blank { color: #7a7a80; }
+html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
+html.dark #sumsStatus, html.dark #status { background: #2d2d32; border-color: #55555b; }
+html.dark .legend, html.dark .sdesc { color: #9c9894; }
+html.dark a { color: #93aacd; }
+/* the formerly-glaring light elements, dimmed to sit in the theme */
+html.dark .sums-slots input { background: #37373c; border-color: #4c4c52; color: #cfccc4; }
+html.dark .sums-slots input:focus { border-color: #8a8a90; }
+html.dark .sums-slots input.resolved { color: #d89090; border-color: #7a4848; }
+html.dark .sums-cell.hl { background: #4a4433; outline-color: #8a7c4a; }
+html.dark .crypto-box-letter { background: #3a3a40; }
+html.dark .crypto-letter { background: #3a3a40; }
+html.dark .crypto-digit.off { color: #5c5c62; background: #2c2c30; }
+html.dark .crypto-digit.solo { background: #37453a; }
+html.dark .crypto-table th { color: #8a8a90; }
+html.dark .status .bad { color: #e08a8a; }
+html.dark .status .warn { color: #d0aa60; }
+html.dark #themeToggle { border-color: #55555b; }
 
 /* ---------------- bespoke checkboxes ---------------- */
 label.chk input[type="checkbox"], .variant-group input[type="checkbox"] {

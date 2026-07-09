@@ -529,7 +529,7 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group { display: inline-flex; gap: 10px; flex-wrap: wrap; padding: 2px 8px; border-left: 1px solid var(--grid-line); }
 .variant-group .chk { font-size: 13px; }
 
-/* ---------------- dark mode ---------------- */
+/* ---------------- dim (dark) mode ---------------- */
 #themeToggle {
   margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
   background: none; border: 1px solid var(--grid-line); border-radius: 3px;
@@ -537,29 +537,41 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 }
 #themeToggle:hover { border-color: var(--ink); }
 html.dark {
-  --ink: #d8d4cc;
-  --platform: #1c1c1e;
-  --board: #232326;
-  --grid-line: #4a4a4e;
-  --shaded: #0a0a0a;
-  --tint-used: #2e3442;
-  --line-maybe: #5a5a5e;
+  --ink: #cfccc4;
+  --platform: #2b2b2f;
+  --board: #313136;
+  --grid-line: #55555b;
+  --shaded: #17171a;
+  --tint-used: #3a4150;
+  --line-maybe: #66666c;
 }
-html.dark body { background: #161618; color: #d8d4cc; }
-html.dark header, html.dark main { background: #161618; }
-html.dark h1, html.dark h2, html.dark h3 { color: #e4e0d8; }
+html.dark body { background: #26262a; color: #cfccc4; }
+html.dark header, html.dark main { background: #26262a; }
+html.dark h1, html.dark h2, html.dark h3 { color: #ddd9d0; }
 html.dark input, html.dark button, html.dark select {
-  background: #232326; color: #d8d4cc; border-color: #4a4a4e;
+  background: #313136; color: #cfccc4; border-color: #55555b;
 }
-html.dark .tab { color: #b8b4ac; }
-html.dark .tab.active { color: #e4e0d8; border-color: #e4e0d8; }
-html.dark .sums-cands { color: #9a96a0; }
-html.dark .sums-blank { color: #777; }
-html.dark .strategies li.variant-bar .voff { color: #777; }
-html.dark .sums-clue-col input, html.dark .sums-clue-row input { background: #202024; border-color: #3a3a3e; }
-html.dark #sumsStatus, html.dark #status { background: #1e1e22; border-color: #4a4a4e; }
-html.dark .legend, html.dark .sdesc { color: #a8a4a0; }
-html.dark a { color: #8fa8d0; }
+html.dark .tab { color: #a8a4a0; }
+html.dark .tab.active { color: #ddd9d0; border-color: #ddd9d0; }
+html.dark .sums-cands { color: #96939c; }
+html.dark .sums-blank { color: #7a7a80; }
+html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
+html.dark #sumsStatus, html.dark #status { background: #2d2d32; border-color: #55555b; }
+html.dark .legend, html.dark .sdesc { color: #9c9894; }
+html.dark a { color: #93aacd; }
+/* the formerly-glaring light elements, dimmed to sit in the theme */
+html.dark .sums-slots input { background: #37373c; border-color: #4c4c52; color: #cfccc4; }
+html.dark .sums-slots input:focus { border-color: #8a8a90; }
+html.dark .sums-slots input.resolved { color: #d89090; border-color: #7a4848; }
+html.dark .sums-cell.hl { background: #4a4433; outline-color: #8a7c4a; }
+html.dark .crypto-box-letter { background: #3a3a40; }
+html.dark .crypto-letter { background: #3a3a40; }
+html.dark .crypto-digit.off { color: #5c5c62; background: #2c2c30; }
+html.dark .crypto-digit.solo { background: #37453a; }
+html.dark .crypto-table th { color: #8a8a90; }
+html.dark .status .bad { color: #e08a8a; }
+html.dark .status .warn { color: #d0aa60; }
+html.dark #themeToggle { border-color: #55555b; }
 
 /* ---------------- bespoke checkboxes ---------------- */
 label.chk input[type="checkbox"], .variant-group input[type="checkbox"] {
@@ -5417,7 +5429,7 @@ function disjointFeasible(st, v, k, sizes) {
         if (clash) continue;
       }
       if (sizes && sub.cnt !== sizes[sizes.length - leftG]) continue;
-      packRec(s2 + 1, used + sub.pack, leftG - 1, total + sub.cnt);
+      packRec(s2, used + sub.pack, leftG - 1, total + sub.cnt);   // same subset may repeat under multiplicities
     }
   })(0, 0, k, 0);
   const res = best === null ? null : best;
@@ -5833,7 +5845,7 @@ function ruleSumBounds(st, clues) {
 }
 
 // rule: equal groups — the same letter token appearing k times in one line
-// means k pairwise-disjoint digit sets with the same sum; feasibility and the
+// means k separate digit sets with the same sum (each value within its per-line multiplicity); feasibility and the
 // line's length restrict that sum
 function ruleEqualGroups(st, clues) {
   if (st.kd) return null;   // under Knapp daneben identical clues may differ (each is independently one off)
@@ -5863,7 +5875,7 @@ function ruleEqualGroups(st, clues) {
       }
       if (!bad.length || bad.length === set.size && set.size === 0) continue;
       if (bad.length === set.size) return { rule: 'Equal groups', contradiction: true, cells: line.cells.slice(),
-        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value allows ' + k + ' disjoint sets of digits with that sum to fit \u2014 the position is contradictory.' };
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value lets ' + k + ' separate groups of digits with that sum to fit \u2014 the position is contradictory.' };
       if (!bad.length) continue;
       // map the surviving sums back to letter digits
       const p2 = tokenParse(tokStr);
@@ -5883,7 +5895,7 @@ function ruleEqualGroups(st, clues) {
       if (!hits.length) continue;
       const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
       return { rule: 'Equal groups', cells: [],
-        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times \u2014 that needs ' + k + ' disjoint sets of digits with the same sum, and with the other groups and gaps only sums ' + survivors.join('/') + ' leave enough room. So ' + desc + '.',
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times \u2014 that needs ' + k + ' separate digit groups with the same sum (each value within its per-line count), and with the other groups and gaps only sums ' + survivors.join('/') + ' leave enough room. So ' + desc + '.',
         apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
     }
   }
@@ -6145,7 +6157,7 @@ function ruleDisjointSums(st, clues) {
       if (!hits.length) continue;
       const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
       return { rule: 'Disjoint sums', cells: [],
-        text: line.name + '\u2019s ' + line.clue.length + ' groups (' + line.clue.map(tokenLabel).join(', ') + ') need pairwise-disjoint sets of the digits 1\u2026' + st.D + ', all fitting in ' + n + ' cells with gaps between \u2014 for \u201c' + tokenLabel(line.clue[g]) + '\u201d only ' + [...surviving].join('/') + ' can be realised alongside the others. So ' + desc + '.',
+        text: line.name + '\u2019s ' + line.clue.length + ' groups (' + line.clue.map(tokenLabel).join(', ') + ') need digit sets sharing the line\u2019s value budget, all fitting in ' + n + ' cells with gaps between \u2014 for \u201c' + tokenLabel(line.clue[g]) + '\u201d only ' + [...surviving].join('/') + ' can be realised alongside the others. So ' + desc + '.',
         apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
     }
   }
@@ -7091,7 +7103,7 @@ const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
   { name: 'Letter pairs', desc: 'Two (or three) crypto letters confined to the same two (or three) digits use them all up \u2014 those digits leave every other letter (naked pairs, sudoku-style).' },
-  { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k pairwise-disjoint digit sets with the same sum \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
+  { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k separate digit sets with the same sum (each value within its per-line multiplicity) \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
   { name: 'Disjoint sums', desc: 'All of a line\u2019s groups need pairwise-disjoint sets of the digits 1\u2026D, fitting in the line with gaps \u2014 a group sum no joint assignment can realise alongside the others is impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },

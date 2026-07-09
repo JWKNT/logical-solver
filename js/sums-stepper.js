@@ -148,7 +148,7 @@ function disjointFeasible(st, v, k, sizes) {
         if (clash) continue;
       }
       if (sizes && sub.cnt !== sizes[sizes.length - leftG]) continue;
-      packRec(s2 + 1, used + sub.pack, leftG - 1, total + sub.cnt);
+      packRec(s2, used + sub.pack, leftG - 1, total + sub.cnt);   // same subset may repeat under multiplicities
     }
   })(0, 0, k, 0);
   const res = best === null ? null : best;
@@ -564,7 +564,7 @@ function ruleSumBounds(st, clues) {
 }
 
 // rule: equal groups — the same letter token appearing k times in one line
-// means k pairwise-disjoint digit sets with the same sum; feasibility and the
+// means k separate digit sets with the same sum (each value within its per-line multiplicity); feasibility and the
 // line's length restrict that sum
 function ruleEqualGroups(st, clues) {
   if (st.kd) return null;   // under Knapp daneben identical clues may differ (each is independently one off)
@@ -594,7 +594,7 @@ function ruleEqualGroups(st, clues) {
       }
       if (!bad.length || bad.length === set.size && set.size === 0) continue;
       if (bad.length === set.size) return { rule: 'Equal groups', contradiction: true, cells: line.cells.slice(),
-        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value allows ' + k + ' disjoint sets of digits with that sum to fit \u2014 the position is contradictory.' };
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value lets ' + k + ' separate groups of digits with that sum to fit \u2014 the position is contradictory.' };
       if (!bad.length) continue;
       // map the surviving sums back to letter digits
       const p2 = tokenParse(tokStr);
@@ -614,7 +614,7 @@ function ruleEqualGroups(st, clues) {
       if (!hits.length) continue;
       const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
       return { rule: 'Equal groups', cells: [],
-        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times \u2014 that needs ' + k + ' disjoint sets of digits with the same sum, and with the other groups and gaps only sums ' + survivors.join('/') + ' leave enough room. So ' + desc + '.',
+        text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times \u2014 that needs ' + k + ' separate digit groups with the same sum (each value within its per-line count), and with the other groups and gaps only sums ' + survivors.join('/') + ' leave enough room. So ' + desc + '.',
         apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
     }
   }
@@ -876,7 +876,7 @@ function ruleDisjointSums(st, clues) {
       if (!hits.length) continue;
       const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
       return { rule: 'Disjoint sums', cells: [],
-        text: line.name + '\u2019s ' + line.clue.length + ' groups (' + line.clue.map(tokenLabel).join(', ') + ') need pairwise-disjoint sets of the digits 1\u2026' + st.D + ', all fitting in ' + n + ' cells with gaps between \u2014 for \u201c' + tokenLabel(line.clue[g]) + '\u201d only ' + [...surviving].join('/') + ' can be realised alongside the others. So ' + desc + '.',
+        text: line.name + '\u2019s ' + line.clue.length + ' groups (' + line.clue.map(tokenLabel).join(', ') + ') need digit sets sharing the line\u2019s value budget, all fitting in ' + n + ' cells with gaps between \u2014 for \u201c' + tokenLabel(line.clue[g]) + '\u201d only ' + [...surviving].join('/') + ' can be realised alongside the others. So ' + desc + '.',
         apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
     }
   }
@@ -1822,7 +1822,7 @@ const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
   { name: 'Letter pairs', desc: 'Two (or three) crypto letters confined to the same two (or three) digits use them all up \u2014 those digits leave every other letter (naked pairs, sudoku-style).' },
-  { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k pairwise-disjoint digit sets with the same sum \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
+  { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k separate digit sets with the same sum (each value within its per-line multiplicity) \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
   { name: 'Disjoint sums', desc: 'All of a line\u2019s groups need pairwise-disjoint sets of the digits 1\u2026D, fitting in the line with gaps \u2014 a group sum no joint assignment can realise alongside the others is impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },
