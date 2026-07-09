@@ -33,6 +33,7 @@ function compileClue(clue, maxSum, letterIds, kd) {
     let hasLetter = false;
     for (const ch of s) {
       if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
+      else if (ch === '#') return { type: 'set', set: null, max: maxSum, min: 1 };
       else if (ch === '?') chars.push({ q: true });
       else if (ch >= 'A' && ch <= 'Z') { chars.push({ L: ch.charCodeAt(0) - 65 }); hasLetter = true; if (!letterIds.includes(ch.charCodeAt(0) - 65)) letterIds.push(ch.charCodeAt(0) - 65); }
     }
@@ -67,7 +68,10 @@ function makeSolver(cfg) {
   const letterIds = [];
   const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
   const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
-  const coral = !!cfg.coral;
+  const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
+    cfg.coral ? { blankConn: true, no22blank: true, asc: true, reach: true } : null,
+    cfg.variants || null);
+  const coral = V.asc;   // 'coral' below = unordered ascending clues
   const N = R * C;
   const grid = new Int8Array(N).fill(-1);
   const rowMask = new Int32Array(R), colMask = new Int32Array(C);
@@ -212,7 +216,7 @@ function makeSolver(cfg) {
 
   return { grid, rowMask, colMask, rowUsed, colUsed, rowRun, colRun, rowVals, colVals,
     rowClues, colClues, closeList, applyClose, undoClose, lineFeasible, lineDone,
-    groupMaxUnused, undoLetters, FULL, letterVal, letterIds, maxSum, coral, popcnt,
+    groupMaxUnused, undoLetters, FULL, letterVal, letterIds, maxSum, coral, V, popcnt,
     fixed: cfg.fixed || null };
 }
 
@@ -227,12 +231,38 @@ function search(cfg, opts) {
   const cand = opts.collect ? new Int32Array(N) : null;
   const letterCand = opts.collect ? new Int32Array(26) : null;
   const post = opts.onSolution || null;
-  const coral = S.coral;
+  const V = S.V;
   const rowUsedRef = Array.from({ length: R }, (_, r) => ({ get m() { return S.rowUsed[r]; }, set m(v) { S.rowUsed[r] = v; } }));
   const colUsedRef = Array.from({ length: C }, (_, c) => ({ get m() { return S.colUsed[c]; }, set m(v) { S.colUsed[c] = v; } }));
 
   // coral shape: no blank 2x2 (checked incrementally), blanks connected, and
   // every filled component touches the grid edge (checked on completion)
+  function connectedOk(isMember) {
+    let start = -1, total = 0;
+    for (let i = 0; i < N; i++) if (isMember(i)) { total++; if (start < 0) start = i; }
+    if (total === 0) return true;
+    const seen = new Uint8Array(N);
+    const stack = [start];
+    seen[start] = 1;
+    let cnt = 0;
+    while (stack.length) {
+      const i = stack.pop(); cnt++;
+      const r = (i / C) | 0, c = i % C;
+      for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const r2 = r + dr, c2 = c + dc;
+        if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+        const j = r2 * C + c2;
+        if (!seen[j] && isMember(j)) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    return cnt === total;
+  }
+  function shapeOk() {
+    if (V.blankConn && !connectedOk(i => S.grid[i] === 0)) return false;
+    if (V.numConn && !connectedOk(i => S.grid[i] > 0)) return false;
+    if (!V.reach) return true;
+    return reachOk();
+  }
   function coralOk() {
     // blanks connected
     let start = -1, blanks = 0;
@@ -254,6 +284,9 @@ function search(cfg, opts) {
       }
       if (cnt !== blanks) return false;
     }
+    return true;
+  }
+  function reachOk() {
     // filled components reach the edge
     const seenF = new Uint8Array(N);
     const stackF = [];
@@ -302,7 +335,7 @@ function search(cfg, opts) {
       withCloses(closes, 0, () => {
         // all clue lists must be exhausted
         for (let c = 0; c < C; c++) { const cc = S.colClues[c]; if (cc && S.popcnt(S.colUsed[c]) !== cc.length) return; }
-        if (coral && !coralOk()) return;
+        if (!shapeOk()) return;
         solCount++;
         if (!firstSol) { firstSol = Int8Array.from(S.grid); firstLetters = Int8Array.from(S.letterVal); }
         if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
@@ -321,8 +354,8 @@ function search(cfg, opts) {
     for (const v of vals) {
       const svRRun = S.rowRun[r], svCRun = S.colRun[c];
       if (v === 0) {
-        // coral: forbid a 2x2 of blanks
-        if (coral && r > 0 && c > 0 && S.grid[i - 1] === 0 && S.grid[i - C] === 0 && S.grid[i - C - 1] === 0) continue;
+        // forbid a 2x2 of blanks when the variant demands it
+        if (V.no22blank && r > 0 && c > 0 && S.grid[i - 1] === 0 && S.grid[i - C] === 0 && S.grid[i - C - 1] === 0) continue;
         const closes = [];
         if (S.rowRun[r] > 0) closes.push({ clue: rcl, usedRef: rowUsedRef[r], vals: S.rowVals[r], s: S.rowRun[r] });
         if (S.colRun[c] > 0) closes.push({ clue: ccl, usedRef: colUsedRef[c], vals: S.colVals[c], s: S.colRun[c] });
@@ -344,6 +377,7 @@ function search(cfg, opts) {
         if (ok && rcl && S.popcnt(S.rowUsed[r]) >= rcl.length && S.rowRun[r] === 0) ok = false;
         if (ok && ccl && S.colRun[c] + v > S.groupMaxUnused(ccl, S.colUsed[c])) ok = false;
         if (ok && ccl && S.popcnt(S.colUsed[c]) >= ccl.length && S.colRun[c] === 0) ok = false;
+        if (ok && V.no22num && r > 0 && c > 0 && S.grid[i - 1] > 0 && S.grid[i - C] > 0 && S.grid[i - C - 1] > 0) ok = false;
         if (ok) {
           S.rowMask[r] |= 1 << v; S.colMask[c] |= 1 << v;
           S.rowRun[r] += v; S.colRun[c] += v;

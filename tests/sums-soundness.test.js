@@ -151,14 +151,14 @@ let fails = 0;
   // coral checkerboard: r1c1, r2c2 blank + r1c2 digit -> r2c1 blank; and the
   // full checkerboard is a contradiction
   const st = S.makeSumsState(3, 3, 3);
-  st.coral = true;
+  Object.assign(st.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   S.filterCand(st, 0, 1); S.filterCand(st, 4, 1); S.filterCand(st, 1, ~1);
   const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
   if (!mv || mv.rule !== 'Coral checkerboard' || st.cand[3] !== 1) {
     console.log('FAIL: checkerboard deduction (' + (mv && mv.rule) + ', r2c1=' + st.cand[3] + ')'); fails++;
   } else console.log('ok: "Coral checkerboard": ' + mv.text.slice(0, 120));
   const st2 = S.makeSumsState(3, 3, 3);
-  st2.coral = true;
+  Object.assign(st2.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   S.filterCand(st2, 0, 1); S.filterCand(st2, 4, 1); S.filterCand(st2, 1, ~1); S.filterCand(st2, 3, ~1);
   const mv2 = S.takeSumsStep(st2, { rows: [null, null, null], cols: [null, null, null] });
   if (!mv2 || !mv2.contradiction || mv2.rule !== 'Coral checkerboard') { console.log('FAIL: checkerboard contradiction (' + (mv2 && mv2.rule) + ')'); fails++; }
@@ -236,7 +236,7 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   const truth = eng.cand;   // bitmask per cell
   const st = S.makeSumsState(R, C, D);
   st.kd = kd;
-  st.coral = coral;
+  if (coral) Object.assign(st.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   let mv, k = 0;
   let prevHash = null;
   const hashState = () => { let h = 2166136261 >>> 0; for (let i = 0; i < st.cand.length; i++) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; } for (let L = 0; L < 26; L++) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; } return h; };

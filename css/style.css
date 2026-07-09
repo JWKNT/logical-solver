@@ -511,3 +511,5 @@
 .strategies li.variant-bar .voff { font-variant: normal; letter-spacing: 0; font-weight: 400; color: #999; font-size: 12px; }
 .strategies li.vdim { opacity: 0.45; }
 label.chk { display: inline-flex; align-items: center; gap: 5px; }
+.variant-group { display: inline-flex; gap: 10px; flex-wrap: wrap; padding: 2px 8px; border-left: 1px solid var(--grid-line); }
+.variant-group .chk { font-size: 13px; }

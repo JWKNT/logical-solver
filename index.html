@@ -81,8 +81,15 @@
     <label>Digits 1..<input type="number" id="sumsDigits" value="6" min="2" max="9"></label>
     <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="6"></label>
     <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
-    <label class="chk"><input type="checkbox" id="sumsCoral"> Coral</label>
-    <label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label>
+    <span class="variant-group">
+      <label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label>
+      <label class="chk"><input type="checkbox" id="sumsVBlankConn"> Shaded connected</label>
+      <label class="chk"><input type="checkbox" id="sumsVNo22Num"> No 2×2 numbers</label>
+      <label class="chk"><input type="checkbox" id="sumsVNo22Blank"> No 2×2 shaded</label>
+      <label class="chk"><input type="checkbox" id="sumsVAsc"> Ascending clues</label>
+      <label class="chk"><input type="checkbox" id="sumsVReach"> Numbers reach edge</label>
+      <label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label>
+    </span>
     <span class="sep"></span>
     <button id="sumsBuild">Resize</button>
     <button id="sumsSolve" class="primary">Solve</button>
@@ -96,7 +103,7 @@
       <div class="board-wrap"><div id="sumsGridWrap"></div></div>
       <div class="status" id="sumsStatus"></div>
       <div id="sumsLetters" hidden></div>
-      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
+      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros; <code>#</code> = a group of any sum. Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
     </div>
     <aside class="strategies-side">
       <details class="strategies" open>
