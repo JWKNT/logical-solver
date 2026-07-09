@@ -164,14 +164,56 @@ let fails = 0;
   if (!mv2 || !mv2.contradiction || mv2.rule !== 'Coral checkerboard') { console.log('FAIL: checkerboard contradiction (' + (mv2 && mv2.rule) + ')'); fails++; }
   else console.log('ok: checkerboard contradiction detected');
 }
+{
+  // the user's example palette: 1,2,3,4,5,5,6,7,9,9 - no 8s, two 5s and two
+  // 9s per line. A 4-cell group summing 28 = 5+5+9+9 uniquely.
+  const values = [1, 2, 3, 4, 5, 5, 6, 7, 9, 9];
+  const st = S.makeSumsState(2, 4, 0, values);
+  if (st.pal.includes(8)) { console.log('FAIL: 8 in palette'); fails++; }
+  let mv, k = 0;
+  while (k++ < 60 && (mv = S.takeSumsStep(st, { rows: [[31], null], cols: [null, null, null, null] }))) {
+    if (mv.contradiction) { console.log('FAIL: palette 31 contradiction: ' + mv.text.slice(0, 100)); fails++; break; }
+  }
+  // 31 over this palette in 4 cells is uniquely 6+7+9+9
+  let want = 0;
+  for (const v of [6, 7, 9]) want |= 1 << (st.pal.indexOf(v) + 1);
+  const okAll = [0, 1, 2, 3].every(i => (st.cand[i] & 1) === 0 && (st.cand[i] & ~want) === 0);
+  if (!okAll) { console.log('FAIL: palette 31 should pin all four cells to {6,7,9}: ' + [0,1,2,3].map(i => st.cand[i]).join(',')); fails++; }
+  else console.log('ok: custom palette 1,2,3,4,5,5,6,7,9,9 - clue 31 pins a 4-cell group to 6+7+9+9');
+}
+{
+  // negative palette end-to-end: engine truth vs stepper on a tiny puzzle
+  const values = [-2, 1, 3, 4];
+  const R = 3, C = 3;
+  const rows = [[3, 4], [-2], [8]], cols = [null, [4], null];
+  const eng = E.runAny({ R, C, values, rowClues: rows, colClues: cols, mode: 'candidates', timeLimit: 10000, maxSolutions: 1e9 });
+  if (!eng.complete || !eng.solCount) console.log('note: negative scenario unsolvable (' + eng.solCount + '), skipping');
+  else {
+    const st = S.makeSumsState(R, C, 0, values);
+    let mv, k = 0, bad = false;
+    while (k++ < 200 && (mv = S.takeSumsStep(st, { rows, cols }))) {
+      if (mv.contradiction) { console.log('FAIL: negative palette contradiction on solvable: ' + mv.text.slice(0, 100)); fails++; bad = true; break; }
+      for (let i = 0; i < R * C; i++) if (eng.cand[i] & ~st.cand[i]) { console.log('FAIL: negative palette unsound at cell ' + i + ' [' + mv.rule + ']'); fails++; bad = true; k = 999; break; }
+    }
+    if (!bad) console.log('ok: negative palette [-2,1,3,4] stepper sound vs engine truth');
+  }
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
   const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 6) | 0);
   const g = randGrid(R, C, D);
   const clues = cluesOf(g, R, C);
+  // every fifth puzzle: a custom value palette (values with doubles)
+  const paletteCase = puzzles % 5 === 4;
+  let values = null;
+  if (paletteCase) {
+    const pool = [1, 2, 3, 4, 5, 6, 7, 9, 11].sort(() => Math.random() - 0.5).slice(0, D);
+    values = [...pool];
+    values.push(pool[(Math.random() * pool.length) | 0]);   // one double
+  }
   // every sixth puzzle: coral (ascending clues + shape constraints)
-  const coral = puzzles % 6 === 5;
+  const coral = !paletteCase && puzzles % 6 === 5;
   if (coral) {
     // regenerate until the grid satisfies the coral shape
     let ok2 = false;
@@ -230,11 +272,46 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
     cryptoPuzzles++;
   }
   // union of values per cell over ALL solutions
-  const eng = E.runAny({ R, C, D, kd, coral, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
-  if (!eng.complete) continue;
+  if (paletteCase) {
+    // regenerate the grid under the palette's per-line counts
+    const byVal = new Map();
+    for (const v of values) byVal.set(v, (byVal.get(v) || 0) + 1);
+    const pal = [...byVal.keys()].sort((a, b) => a - b), cnt2 = pal.map(v => byVal.get(v));
+    const M = pal.length;
+    const rcU = Array.from({ length: R }, () => new Int8Array(M));
+    const ccU = Array.from({ length: C }, () => new Int8Array(M));
+    for (let i = 0; i < R * C; i++) {
+      const r = (i / C) | 0, c = i % C;
+      const opts = [0, 0];
+      for (let k2 = 1; k2 <= M; k2++) if (rcU[r][k2 - 1] < cnt2[k2 - 1] && ccU[c][k2 - 1] < cnt2[k2 - 1]) opts.push(k2);
+      const k2 = opts[(Math.random() * opts.length) | 0];
+      g[i] = k2 === 0 ? 0 : pal[k2 - 1];
+      if (k2) { rcU[r][k2 - 1]++; ccU[c][k2 - 1]++; }
+    }
+    const mk = (get, n, len) => {
+      const out = [];
+      for (let a = 0; a < n; a++) {
+        const cl = []; let run = 0, ln = 0;
+        for (let b = 0; b < len; b++) { const v = get(a, b); if (v !== 0) { run += v; ln++; } else if (ln) { cl.push(run); run = 0; ln = 0; } }
+        if (ln) cl.push(run);
+        out.push(Math.random() < 0.2 ? null : cl);
+      }
+      return out;
+    };
+    clues.rows = mk((r, c) => g[r * C + c], R, C);
+    clues.cols = mk((c, r) => g[r * C + c], C, R);
+    if (kd) {
+      // the earlier KD shift touched the clues we just replaced - reapply
+      const shift = cl => cl && cl.map(v => Math.random() < 0.5 && v > 1 ? v - 1 : v + 1);
+      clues.rows = clues.rows.map(shift);
+      clues.cols = clues.cols.map(shift);
+    }
+  }
+  const eng = E.runAny({ R, C, D, values, kd, coral, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount === 0) continue;   // skip timeouts and (defensively) unsolvable generations
   puzzles++;
   const truth = eng.cand;   // bitmask per cell
-  const st = S.makeSumsState(R, C, D);
+  const st = S.makeSumsState(R, C, D, values);
   st.kd = kd;
   if (coral) Object.assign(st.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   let mv, k = 0;
@@ -252,7 +329,7 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
       trialSteps++;
       if (!mv.chain.length || !mv.chain[mv.chain.length - 1].contradiction) { console.log('FAIL: trial without complete chain'); fails++; }
     }
-    if (mv.contradiction) { console.log('FAIL: contradiction on a solvable puzzle:', mv.text.slice(0, 120)); fails++; break; }
+    if (mv.contradiction) { console.log('FAIL: contradiction on a solvable puzzle:', mv.text.slice(0, 120)); console.log('  REPRO:', JSON.stringify({ R, C, D, values, kd, coral, rows: clues.rows, cols: clues.cols })); fails++; break; }
     // soundness: no cell may have lost a value that some solution uses
     for (let i = 0; i < R * C; i++) {
       if (truth[i] & ~st.cand[i]) {

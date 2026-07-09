@@ -3,6 +3,24 @@
 'use strict';
 
 let R = 8, C = 8, D = 6, G = 3;   // G = clue slots per line
+let VALUES = null;   // custom value palette (null = digits 1..D)
+function parseValues() {
+  const txt = $('sumsValues').value.trim();
+  if (!txt) return null;
+  const parts = txt.split(/[,;\s]+/).filter(Boolean);
+  const vals = [];
+  for (const p of parts) {
+    const v = parseInt(p, 10);
+    if (!Number.isInteger(v) || String(v) !== p.replace(/^\+/, '')) return { error: '\u201c' + p + '\u201d is not a whole number' };
+    vals.push(v);
+  }
+  if (new Set(vals).size > 15) return { error: 'at most 15 distinct values' };
+  const byVal = new Map();
+  for (const v of vals) byVal.set(v, (byVal.get(v) || 0) + 1);
+  for (const [v, c2] of byVal) if (c2 > 3) return { error: 'a value can repeat at most 3 times (' + v + ' appears ' + c2 + '\u00d7)' };
+  if (byVal.has(0)) return { error: '0 cannot be a placeable value (blank cells are the zeros)' };
+  return { values: vals };
+}
 let st = null;              // stepper state (candidate masks)
 let clues = null;           // { rows: [...], cols: [...] } parsed
 let worker = null;
@@ -52,7 +70,9 @@ function buildGrid(keepClues) {
   C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 8));
   D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 6));
   G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
-  st = sums.makeSumsState(R, C, D);
+  const pv = parseValues();
+  VALUES = pv && !pv.error ? pv.values : null;
+  st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map();
@@ -91,12 +111,13 @@ function renderCells(hl) {
     const m = st.cand[i];
     td.className = 'sums-cell' + (hlSet.has(i) ? ' hl' : '');
     if (m === 1) { td.className += ' shaded'; td.innerHTML = ''; continue; }
-    const ds = sums.digitsOf(m);
+    const ds = sums.digitsOf(m).map(k => st.pal[k - 1]);
     if (ds.length === 1 && !(m & 1)) { td.innerHTML = '<span class="sums-digit">' + ds[0] + '</span>'; continue; }
     if (!(m & 1)) td.className += ' used';   // certainly holds a digit
-    const full = ((1 << (D + 1)) - 2) | 1;
+    const full = ((1 << (st.D + 1)) - 2) | 1;
     if (m === full) { td.innerHTML = ''; continue; }
-    td.innerHTML = '<span class="sums-cands">' + (m & 1 ? '\u00b7' : '') + ds.join('') + '</span>';
+    const plain = st.pal.every((v, q) => v === q + 1) && st.pal.length <= 9;
+    td.innerHTML = '<span class="sums-cands">' + (m & 1 ? '\u00b7' : '') + ds.join(plain ? '' : ' ') + '</span>';
   }
 }
 
@@ -207,9 +228,9 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 $('sumsBuild').onclick = () => buildGrid(true);
 $('sumsSolve').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
     if (!res.firstSol) { status(res.timedOut ? '<span class="warn">No solution found within the time limit.</span>' : '<span class="bad">No solution exists.</span>'); return; }
-    st = sums.makeSumsState(R, C, D);
+    st = sums.makeSumsState(R, C, D, VALUES || undefined);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
     if (res.firstLetters) for (let L = 0; L < 26; L++) if (res.firstLetters[L] >= 0) st.letterCand[L] = 1 << res.firstLetters[L];
     renderCells();
@@ -220,13 +241,13 @@ $('sumsSolve').onclick = () => {
 };
 $('sumsCands').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
     if (!res.cand || res.solCount === 0) { status(res.timedOut ? '<span class="warn">Timed out before finding solutions.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     if (!res.complete) {
       status('<span class="warn">Search truncated</span> after ' + res.solCount.toLocaleString() + ' solutions (' + ms + ' ms) \u2014 the grid is too underconstrained for exact candidates, so no marks were drawn (a partial union would be misleading). Add clues or raise the time limit.');
       return;
     }
-    st = sums.makeSumsState(R, C, D);
+    st = sums.makeSumsState(R, C, D, VALUES || undefined);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
     if (res.letterCand) for (const L of res.letterIds || []) if (res.letterCand[L]) st.letterCand[L] = res.letterCand[L];
     renderCells();
@@ -256,7 +277,7 @@ $('sumsStep').onclick = () => {
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
 };
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); st.kd = $('sumsKD').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 const VARIANT_BOXES = [
@@ -270,7 +291,7 @@ function readVariants() {
   return out;
 }
 function variantChanged(msg) {
-  st = sums.makeSumsState(R, C, D);
+  st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map(); stepNo = 0;
@@ -281,6 +302,14 @@ $('sumsKD').addEventListener('change', () => variantChanged($('sumsKD').checked
   ? '<b>Knapp daneben</b> on: every clue is one off its true value (a 10 is really 9 or 11).'
   : 'Knapp daneben off: clues are exact again.'));
 for (const [id] of VARIANT_BOXES) $(id).addEventListener('change', () => variantChanged('Shape/order rules updated.'));
+
+$('sumsValues').addEventListener('change', () => {
+  const pv2 = parseValues();
+  if (pv2 && pv2.error) { status('Custom values: ' + pv2.error); return; }
+  buildGrid(true);
+  status(pv2 ? 'Custom values <b>' + pv2.values.join(', ') + '</b> \u2014 each row/column may use each value up to its listed multiplicity. Marks reset, clues kept.'
+             : 'Standard digits 1\u2026' + D + ' restored. Marks reset, clues kept.');
+});
 
 buildGrid();
 })();

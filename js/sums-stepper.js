@@ -5,16 +5,32 @@
 (function (global) {
 'use strict';
 
-function makeSumsState(R, C, D) {
-  const full = ((1 << (D + 1)) - 2) | 1;
-  return { R, C, D, cand: new Int32Array(R * C).fill(full),
+function makeSumsState(R, C, D, values) {
+  // value palette: distinct values + per-line multiplicities (default 1..D once)
+  let pal, cnt;
+  if (values && values.length) {
+    const byVal = new Map();
+    for (const v of values) byVal.set(v, (byVal.get(v) || 0) + 1);
+    pal = [...byVal.keys()].sort((a, b) => a - b);
+    cnt = pal.map(v => Math.min(3, byVal.get(v)));
+  } else {
+    pal = []; cnt = [];
+    for (let d = 1; d <= D; d++) { pal.push(d); cnt.push(1); }
+  }
+  const M = pal.length;
+  const full = ((1 << (M + 1)) - 2) | 1;
+  return { R, C, D: M, pal, cnt,
+    maxTotal: pal.reduce((a, v, k) => a + (v > 0 ? v * cnt[k] : 0), 0),
+    minTotal: pal.reduce((a, v, k) => a + (v < 0 ? v * cnt[k] : 0), 0),
+    cand: new Int32Array(R * C).fill(full),
     letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter
     kd: false,   // Knapp daneben: every clue is one off its true value
     variants: { numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
     fastLadder: false, noTrial: false };
 }
 function cloneSumsState(st) {
-  return { R: st.R, C: st.C, D: st.D, cand: Int32Array.from(st.cand),
+  return { R: st.R, C: st.C, D: st.D, pal: st.pal, cnt: st.cnt, maxTotal: st.maxTotal, minTotal: st.minTotal,
+    cand: Int32Array.from(st.cand),
     letterCand: Int32Array.from(st.letterCand), kd: st.kd, variants: Object.assign({}, st.variants),
     fastLadder: st.fastLadder, noTrial: st.noTrial, __lineCache: st.__lineCache };
 }
@@ -26,8 +42,11 @@ function filterLetter(st, L, keepMask) {
 // token -> the set of sums it can currently take (an OVERAPPROXIMATION for
 // letter tokens: per-character candidate masks, intra-token repeats honoured)
 function tokenParse(tok) {
-  if (typeof tok === 'number') return tok >= 0 ? { exact: tok } : { any: true };
-  const s = String(tok).toUpperCase().trim();
+  if (typeof tok === 'number') return { exact: tok };
+  let s = String(tok).toUpperCase().trim();
+  let neg = false;
+  if (s[0] === '-') { neg = true; s = s.slice(1); }
+  if (/^[0-9]+$/.test(s)) return { exact: (neg ? -1 : 1) * parseInt(s, 10) };
   const chars = [];
   for (const ch of s) {
     if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
@@ -36,7 +55,7 @@ function tokenParse(tok) {
     else if (ch >= 'A' && ch <= 'Z') chars.push({ L: ch.charCodeAt(0) - 65 });
   }
   if (!chars.length) return { any: true };
-  return { chars };
+  return { chars, neg };
 }
 function tokenLetters(tok) {
   const p = tokenParse(tok);
@@ -48,7 +67,9 @@ function tokenLetters(tok) {
 // does displayed value v match the parsed token against current letter cands?
 function displayedMatch(st, p, v) {
   if (p.exact !== undefined) return v === p.exact;
-  if (p.any) return v >= 0;
+  if (p.any) return true;
+  if (p.neg) { if (v > 0) return false; v = -v; }
+  else if (v < 0) return false;
   const n = p.chars.length;
   const lo = n === 1 ? 0 : Math.pow(10, n - 1);   // a 1-char clue may display 0 (KD)
   if (v < lo || v > Math.pow(10, n) - 1) return false;
@@ -67,41 +88,63 @@ function displayedMatch(st, p, v) {
 }
 // displayed values a TRUE sum s can show: s itself normally; s-1 and s+1 in KD
 function displayedOptions(st, s) { return st.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s]; }   // displayed 0 = true sum 1
+const DS_CACHE = new Map();
+function digitsOfValue(v) {
+  let a = DS_CACHE.get(v);
+  if (!a) { a = String(Math.abs(v)).split('').map(Number); if (DS_CACHE.size < 20000) DS_CACHE.set(v, a); }
+  return a;
+}
 
 function allowedSums(st, tok, maxSum) {
   const p = tokenParse(tok);
   const out = new Set();
-  for (let s = 1; s <= maxSum; s++) {
+  const lo2 = Math.min(1, st.minTotal);
+  for (let s = lo2; s <= maxSum; s++) {
+    if (s === 0) continue;   // a group has at least one cell; sum 0 only via exact cancellation
     for (const v of displayedOptions(st, s)) if (displayedMatch(st, p, v)) { out.add(s); break; }
   }
+  // a zero-sum group (exact cancellation) is only expressible as '#' or a literal 0
+  if (st.minTotal < 0 && (p.any || p.exact === 0)) out.add(0);
   return out;
 }
 // can k pairwise-disjoint subsets of {1..D}, with the given sizes (or any
 // sizes when sizes=null), each sum to v? And the minimal total cell count?
 const djMemo = new Map();
-function disjointFeasible(v, k, D, sizes) {
-  const key = v * 1000 + k * 20 + D + ':' + (sizes ? sizes.join(',') : '*');
+function disjointFeasible(st, v, k, sizes) {
+  const key = v + '|' + k + '|' + (sizes ? sizes.join(',') : '*') + '|' + st.pal.join(',') + '|' + st.cnt.join(',');
   if (djMemo.has(key)) return djMemo.get(key);
-  // enumerate subsets of 1..D summing to v, then pack k disjoint ones
   const subs = [];
-  (function gen(d, mask, sum, cnt) {
-    if (sum === v) { subs.push({ mask, cnt }); return; }
-    if (d > D || sum > v) return;
-    gen(d + 1, mask, sum, cnt);
-    gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+  (function gen(d, pack, sum, cntN) {
+    if (d > st.pal.length) return;
+    if (st.pal[0] > 0 && sum >= v) return;
+    gen(d + 1, pack, sum, cntN);
+    const left = st.cnt[d - 1] - ((pack >> (2 * (d - 1))) & 3);
+    if (left > 0) {
+      const s2 = sum + st.pal[d - 1], p2 = pack + (1 << (2 * (d - 1)));
+      if (s2 === v) subs.push({ pack: p2, cnt: cntN + 1 });
+      gen(d, p2, s2, cntN + 1);
+    }
   })(1, 0, 0, 0);
-  let best = null;   // minimal total count over feasible packings
-  (function pack(idx, used, left, total, sizeIdx) {
+  let best = null;
+  (function packRec(idx, used, leftG, total) {
     if (best !== null && total >= best && sizes === null) return;
-    if (left === 0) { if (best === null || total < best) best = total; return; }
+    if (leftG === 0) { if (best === null || total < best) best = total; return; }
     for (let s2 = idx; s2 < subs.length; s2++) {
       const sub = subs[s2];
-      if (sub.mask & used) continue;
-      if (sizes && sub.cnt !== sizes[sizes.length - left]) continue;
-      pack(s2 + 1, used | sub.mask, left - 1, total + sub.cnt, sizeIdx);
+      if (st.__uni === true) { if (sub.pack & used) continue; }
+      else {
+        let clash = false;
+        for (let k2 = 1; k2 <= st.pal.length; k2++) {
+          const a2 = (sub.pack >> (2 * (k2 - 1))) & 3, b2 = (used >> (2 * (k2 - 1))) & 3;
+          if (a2 + b2 > st.cnt[k2 - 1]) { clash = true; break; }
+        }
+        if (clash) continue;
+      }
+      if (sizes && sub.cnt !== sizes[sizes.length - leftG]) continue;
+      packRec(s2 + 1, used + sub.pack, leftG - 1, total + sub.cnt);
     }
-  })(0, 0, k, 0, 0);
-  const res = best === null ? null : best;   // null = infeasible, else min cells
+  })(0, 0, k, 0);
+  const res = best === null ? null : best;
   djMemo.set(key, res);
   return res;
 }
@@ -110,7 +153,7 @@ function disjointFeasible(v, k, D, sizes) {
 // further limited because all groups share the line's distinct digits
 // (sum of all group sums <= 1+2+...+D), iterated to a fixpoint
 function lineSumSets(st, line) {
-  const maxTotal = st.D * (st.D + 1) / 2;
+  const maxTotal = 0 + st.maxTotal;
   const sets = line.clue.map(tok => allowedSums(st, tok, maxTotal));
   for (let round = 0; round < 3; round++) {
     let changed = false;
@@ -142,7 +185,7 @@ function lineSumSets(st, line) {
 function accumulateSeen(st, p, s, seen) {
   for (const v of displayedOptions(st, s)) {
     if (!displayedMatch(st, p, v)) continue;
-    const ds = String(v).split('').map(Number);
+    const ds = digitsOfValue(v);
     if (ds.length !== seen.length) continue;
     for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
   }
@@ -152,6 +195,12 @@ function tokenLabel(tok) { return typeof tok === 'number' ? (tok < 0 ? '?' : Str
 function popc(m) { let c = 0; while (m) { c += m & 1; m >>>= 1; } return c; }
 function rc(st, i) { return 'r' + (((i / st.C) | 0) + 1) + 'c' + ((i % st.C) + 1); }
 function digitsOf(mask) { const a = []; for (let d = 1; d < 31; d++) if (mask & (1 << d)) a.push(d); return a; }
+function valOf(st, k) { return st.pal[k - 1]; }
+function uniformPal(st) {
+  if (st.__uni === undefined) st.__uni = st.cnt.every(c => c === 1);
+  return st.__uni;   // all multiplicities 1: 2-bit pack fields are 0/1, & is exact
+}
+function valuesOf(st, mask) { return digitsOf(mask).map(k => st.pal[k - 1]); }
 function committedDigit(st, i) { const m = st.cand[i]; return (m & 1) === 0 && popc(m) === 1 ? digitsOf(m)[0] : 0; }
 
 function filterCand(st, i, keepMask) {
@@ -175,19 +224,42 @@ function eachSumsLine(st, clues) {
 
 // exact digit-combination feasibility: can `len` distinct digits from `avail`
 // (a bitmask over 1..D) sum to `s`? Memoised.
-const comboMemo = new Map();
-function comboFeasible(s, len, avail) {
+// can `len` cells take values from the remaining palette (2-bit count pack,
+// or a plain availability bitmask when st has all-1 counts) summing to s?
+const PAL_MEMO = new WeakMap();   // per-palette memo, numeric keys
+function comboFeasibleV(st, s, len, availPack, fromK) {
   if (len === 0) return s === 0;
-  if (s <= 0) return false;
-  const key = ((s * 16 + len) << 10) | avail;   // avail needs 10 bits (digits up to 9)
-  if (comboMemo.has(key)) return comboMemo.get(key);
+  let slots = PAL_MEMO.get(st.pal);
+  if (!slots) { slots = []; PAL_MEMO.set(st.pal, slots); }
+  const slot = len * 32 + fromK;
+  let memo = slots[slot];
+  if (!memo) memo = slots[slot] = new Map();
+  // pack bits below fromK can never be picked again - canonicalize them away
+  const keyPack = fromK > 1 ? availPack & ~((1 << (2 * (fromK - 1))) - 1) : availPack;
+  // (s offset) * 2^30 + pack stays well inside double precision
+  const key = s >= -32000 && s <= 32000
+    ? (s + 32768) * 1073741824 + keyPack
+    : s + '|' + keyPack;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit;
   let ok = false;
-  for (let d = 1; d < 31 && !ok; d++) {
-    if (!(avail & (1 << d)) || d > s) continue;
-    if (comboFeasible(s - d, len - 1, avail & ~((1 << (d + 1)) - 1))) ok = true;   // pick ascending to dedupe
+  for (let k = fromK; k <= st.pal.length && !ok; k++) {
+    const left = st.cnt[k - 1] - ((availPack >> (2 * (k - 1))) & 3);
+    if (left <= 0) continue;
+    // same value may repeat up to its count, but combinations stay ascending
+    if (comboFeasibleV(st, s - st.pal[k - 1], len - 1, availPack + (1 << (2 * (k - 1))), k)) ok = true;
   }
-  comboMemo.set(key, ok);
+  memo.set(key, ok);
   return ok;
+}
+function maskToPack(st, availMask) {
+  // availMask bit k set = value index k fully available; else exhausted
+  let pack = 0;
+  for (let k = 1; k <= st.pal.length; k++) if (!(availMask & (1 << k))) pack += st.cnt[k - 1] << (2 * (k - 1));
+  return pack;
+}
+function comboFeasible(st, s, len, availMask) {
+  return comboFeasibleV(st, s, len, maskToPack(st, availMask), 1);
 }
 
 // enumerate all assignments of one line consistent with the clue, the current
@@ -195,7 +267,7 @@ function comboFeasible(s, len, avail) {
 // Returns false on node-budget overflow.
 function enumerateSumsLine(st, line, onSolution, nodeCap) {
   const n = line.cells.length;
-  const maxSum0 = st.D * (st.D + 1) / 2;
+  const maxSum0 = 0 + st.maxTotal;
   const clue = line.clue ? line.clue.map(tok => allowedSums(st, tok, maxSum0)) : null;
   const clueMax = clue ? clue.map(set => { let m = 0; for (const v of set) if (v > m) m = v; return m; }) : null;
   const parsedToks = line.clue ? line.clue.map(tokenParse) : null;
@@ -226,7 +298,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   function bindDisplayed(gi, v) {
     const p2 = parsedToks[gi];
     if (!p2 || !p2.chars) return [];
-    const ds = String(v).split('').map(Number);
+    const ds = digitsOfValue(v);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
@@ -245,16 +317,17 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   function unbindClose(bound) { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } }
   const vals = new Int8Array(n);
   const K = (line.clue || []).length;
+  const sortedClue = clue ? clue.map(s2 => Int32Array.from([...s2].sort((a, b) => a - b))) : null;
   const groupSums = new Int32Array(K);
   const chosen = new Int32Array(K);
   let usedIdx = 0;
   let nodes = 0, overflow = false, stopped = false;
   const cap = nodeCap || 400000;
-  function rec(p, gi, run, mask) {
+  function rec(p, gi, run, pack, rlen) {
     if (overflow || stopped) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
-      if (run > 0) {
+      if (rlen > 0) {
         if (!clue) { if (onSolution(vals, groupSums) === true) stopped = true; return; }
         for (const k of closeIdxOptions(run)) {
           if ((usedIdx | (1 << k)) !== (1 << K) - 1) continue;
@@ -277,7 +350,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     const m = st.cand[line.cells[p]];
     // blank
     if (m & 1) {
-      if (run > 0) {
+      if (rlen > 0) {
         vals[p] = 0;
         if (clue) {
           for (const k of closeIdxOptions(run)) {
@@ -285,41 +358,70 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
               const bound = bindDisplayed(k, dv);
               if (bound === null) continue;
               usedIdx |= 1 << k; chosen[k] = run; groupSums[k] = run;
-              rec(p + 1, gi + 1, 0, mask);
+              rec(p + 1, gi + 1, 0, pack, 0);
               usedIdx &= ~(1 << k); chosen[k] = 0;
               unbindClose(bound);
               if (stopped || overflow) break;
             }
             if (stopped || overflow) break;
           }
-        } else rec(p + 1, gi + 1, 0, mask);
-      } else { vals[p] = 0; rec(p + 1, gi, 0, mask); }
+        } else rec(p + 1, gi + 1, 0, pack, 0);
+      } else { vals[p] = 0; rec(p + 1, gi, 0, pack, 0); }
     }
-    // digits
+    // values
+    let posW = 0, negW = 0, minPos = Infinity, nx = 0;
+    if (clue) {
+      for (let k2 = 1; k2 <= st.pal.length; k2++) {
+        const left = st.cnt[k2 - 1] - ((pack >> (2 * (k2 - 1))) & 3);
+        if (left <= 0) continue;
+        const pv = st.pal[k2 - 1];
+        if (pv > 0) { posW += pv * left; if (pv < minPos) minPos = pv; } else negW += pv * left;
+      }
+      nx = nextIdx();
+    }
+    const setReach = (k, target, lo2, hi2) => {
+      if (clue[k].has(target)) return true;
+      if (lo2 === hi2 && lo2 === target) return false;   // no capacity left
+      const arr = sortedClue[k];
+      let a = 0, b = arr.length;
+      while (a < b) { const m2 = (a + b) >> 1; if (arr[m2] < lo2) a = m2 + 1; else b = m2; }
+      return a < arr.length && arr[a] <= hi2;
+    };
     for (let d = 1; d <= st.D; d++) {
-      if (!(m & (1 << d)) || (mask & (1 << d))) continue;
+      if (!(m & (1 << d))) continue;
+      if (((pack >> (2 * (d - 1))) & 3) >= st.cnt[d - 1]) continue;   // multiplicity spent
+      const dv = st.pal[d - 1];
       if (clue) {
-        if (usedIdx === (1 << K) - 1 && run === 0) continue;
-        const avail = ~(mask | (1 << d)) & ((1 << (st.D + 1)) - 2);
-        let reach = false;
-        for (let k = 0; k < K && !reach; k++) {
-          if (usedIdx & (1 << k)) continue;
-          if (!st.variants.asc && k !== nextIdx()) break;
-          if (clue[k].has(run + d)) { reach = true; break; }
-          for (const t of clue[k]) if (t > run + d && comboFeasibleUB(t - run - d, avail)) { reach = true; break; }
+        if (usedIdx === (1 << K) - 1 && rlen === 0) continue;
+        const target = run + dv;
+        const hi2 = target + posW - (dv > 0 ? dv : 0);
+        // with no negatives left, any extension adds at least the smallest
+        // remaining positive value (the old distinct-digit lower bound)
+        let mp = minPos;
+        if (minPos === dv && st.cnt[d - 1] - ((pack >> (2 * (d - 1))) & 3) <= 1) {
+          mp = Infinity;   // consuming the last copy of the minimum: find the next
+          for (let k2 = 1; k2 <= st.pal.length; k2++) {
+            if (k2 === d) continue;
+            const left2 = st.cnt[k2 - 1] - ((pack >> (2 * (k2 - 1))) & 3);
+            if (left2 > 0 && st.pal[k2 - 1] > 0 && st.pal[k2 - 1] < mp) mp = st.pal[k2 - 1];
+          }
         }
+        const lo2 = negW < 0 ? target + negW - (dv < 0 ? dv : 0) : target + (mp === Infinity ? 1e9 : mp);
+        let reach = false;
+        if (st.variants.asc) {
+          for (let k = 0; k < K && !reach; k++) {
+            if (usedIdx & (1 << k)) continue;
+            reach = setReach(k, target, lo2, hi2);
+          }
+        } else if (nx < K) reach = setReach(nx, target, lo2, hi2);
         if (!reach) continue;
       }
       vals[p] = d;
-      rec(p + 1, gi, run + d, mask | (1 << d));
+      rec(p + 1, gi, run + dv, pack + (1 << (2 * (d - 1))), rlen + 1);
     }
   }
-  function comboFeasibleUB(s, avail) {   // any number of distinct digits: s <= sum(avail) and s >= min avail
-    let tot = 0, mn = 99;
-    for (let d = 1; d <= st.D; d++) if (avail & (1 << d)) { tot += d; if (d < mn) mn = d; }
-    return s <= tot && (s === 0 || s >= mn);
-  }
-  rec(0, 0, 0, 0);
+
+  rec(0, 0, 0, 0, 0);
   return !overflow;
 }
 
@@ -360,26 +462,30 @@ function cachedLineUnion(st, clues, line) {
 
 // rule: digit uniqueness — a placed digit cannot repeat in its row or column
 function ruleUniqueness(st, clues) {
-  for (let i = 0; i < st.R * st.C; i++) {
-    const d = committedDigit(st, i);
-    if (!d) continue;
-    const r = (i / st.C) | 0, c = i % st.C;
-    const hits = [];
-    for (let c2 = 0; c2 < st.C; c2++) { const j = r * st.C + c2; if (j !== i && (st.cand[j] & (1 << d))) hits.push(j); }
-    for (let r2 = 0; r2 < st.R; r2++) { const j = r2 * st.C + c; if (j !== i && (st.cand[j] & (1 << d))) hits.push(j); }
-    if (!hits.length) continue;
-    return { rule: 'Digit uniqueness', cells: hits,
-      text: rc(st, i) + ' is a ' + d + ', so no other cell of row ' + (r + 1) + ' or column ' + (c + 1) + ' can hold a ' + d + ' (' + hits.map(j => rc(st, j)).join(', ') + ').',
-      apply() { for (const j of hits) filterCand(st, j, ~(1 << d)); } };
+  // a value fully used up in a line (its multiplicity reached by committed
+  // cells) leaves every other cell of that line
+  for (const line of eachSumsLine(st, clues)) {
+    for (let k = 1; k <= st.pal.length; k++) {
+      let committed = 0;
+      for (const i of line.cells) { const d = committedDigit(st, i); if (d === k) committed++; }
+      if (committed < st.cnt[k - 1]) continue;
+      const hits = line.cells.filter(i => committedDigit(st, i) !== k && (st.cand[i] & (1 << k)));
+      if (!hits.length) continue;
+      const v = st.pal[k - 1];
+      return { rule: 'Digit uniqueness', cells: hits,
+        text: line.name + ' already holds ' + (st.cnt[k - 1] === 1 ? 'a ' + v : st.cnt[k - 1] + ' ' + v + 's') + ' \u2014 the value ' + v + ' appears at most ' + (st.cnt[k - 1] === 1 ? 'once' : st.cnt[k - 1] + ' times') + ' per line, so ' + hits.map(i => rc(st, i)).join(', ') + ' cannot hold it.',
+        apply() { for (const i of hits) filterCand(st, i, ~(1 << k)); } };
+    }
   }
   return null;
 }
+
 
 // rule: sum bounds — each group's possible sums, capped because all the
 // groups in a line share its distinct digits (their sums total at most
 // 1+2+...+D), pin the decimal digits of the group's crypto letters
 function ruleSumBounds(st, clues) {
-  const maxTotal = st.D * (st.D + 1) / 2;
+  const maxTotal = 0 + st.maxTotal;
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     let hasLetters = false;
@@ -440,14 +546,14 @@ function ruleEqualGroups(st, clues) {
     for (const [tokStr, gs] of byTok) {
       const k = gs.length;
       if (k < 2) continue;
-      const maxTotal = st.D * (st.D + 1) / 2;
+      const maxTotal = 0 + st.maxTotal;
       const set = allowedSums(st, tokStr, maxTotal);
       // other groups' minimal lengths (1 cell each at minimum) + gaps
       const otherGroups = line.clue.length - k;
       const budgetCells = line.cells.length - (line.clue.length - 1) - otherGroups;   // gaps + 1 cell per other group
       const bad = [];
       for (const v of set) {
-        const minCells = disjointFeasible(v, k, st.D, null);
+        const minCells = disjointFeasible(st, v, k, null);
         if (minCells === null || minCells > budgetCells) bad.push(v);
       }
       if (!bad.length || bad.length === set.size && set.size === 0) continue;
@@ -540,21 +646,27 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
   function subsetsFor(v) {
     if (subsBydum.has(v)) return subsBydum.get(v);
     const out = [];
-    (function gen(d, mask, sum, cnt) {
-      if (sum === v) { out.push({ mask, cnt }); return; }
-      if (d > st.D || sum > v) return;
-      gen(d + 1, mask, sum, cnt);
-      gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+    (function gen(d, pack, sum, cnt) {
+      if (d > st.D) return;
+      if (st.pal[0] > 0 && sum >= v) return;   // positive-only overshoot prune
+      gen(d + 1, pack, sum, cnt);
+      const left = st.cnt[d - 1] - ((pack >> (2 * (d - 1))) & 3);
+      if (left > 0) {
+        const s2 = sum + st.pal[d - 1], p2 = pack + (1 << (2 * (d - 1)));
+        if (s2 === v) out.push({ mask: p2, cnt: cnt + 1 });   // push in the take branch only
+        gen(d, p2, s2, cnt + 1);
+      }
     })(1, 0, 0, 0);
     subsBydum.set(v, out);
     return out;
   }
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0;
+  const uni = uniformPal(st);
   function bindDisp(g, dv) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
-    const ds = String(dv).split('').map(Number);
+    const ds = digitsOfValue(dv);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     for (let q = 0; q < ds.length; q++) {
@@ -581,10 +693,19 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
         const bound = bindDisp(g, dv);
         if (bound === null) continue;
         for (const sub of subsetsFor(v)) {
-          if (sub.mask & used) continue;
+          if (uni) { if (sub.mask & used) continue; }
+        else {
+          let clash = false;
+          for (let k2 = 1; k2 <= st.pal.length; k2++) {
+            const a2 = (sub.mask >> (2 * (k2 - 1))) & 3, b2 = (used >> (2 * (k2 - 1))) & 3;
+            if (a2 + b2 > st.cnt[k2 - 1]) { clash = true; break; }
+          }
+          if (clash) continue;
+        }
+        // packs compatible
           if (sizes && sub.cnt !== sizes[g]) continue;
           if (cells + sub.cnt > maxCells) continue;
-          rec(g + 1, used | sub.mask, cells + sub.cnt);
+          rec(g + 1, used + sub.mask, cells + sub.cnt);
           if (ok) break;
         }
         unbind(bound);
@@ -606,14 +727,20 @@ function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0, ok = false;
   const subsMemo = new Map();
+  const uni2 = uniformPal(st);
   function subsetsFor(v) {
     if (subsMemo.has(v)) return subsMemo.get(v);
     const out = [];
-    (function gen(d, mask, sum, cnt) {
-      if (sum === v) { out.push({ mask, cnt }); return; }
-      if (d > st.D || sum > v) return;
-      gen(d + 1, mask, sum, cnt);
-      gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+    (function gen(d, pack, sum, cnt) {
+      if (d > st.D) return;
+      if (st.pal[0] > 0 && sum >= v) return;   // positive-only overshoot prune
+      gen(d + 1, pack, sum, cnt);
+      const left = st.cnt[d - 1] - ((pack >> (2 * (d - 1))) & 3);
+      if (left > 0) {
+        const s2 = sum + st.pal[d - 1], p2 = pack + (1 << (2 * (d - 1)));
+        if (s2 === v) out.push({ mask: p2, cnt: cnt + 1 });   // push in the take branch only
+        gen(d, p2, s2, cnt + 1);
+      }
     })(1, 0, 0, 0);
     subsMemo.set(v, out);
     return out;
@@ -621,7 +748,7 @@ function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
   function bindDisp(g, dv) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
-    const ds = String(dv).split('').map(Number);
+    const ds = digitsOfValue(dv);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
@@ -647,17 +774,26 @@ function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
         const bound = bindDisp(k, dv);
         if (bound === null) continue;
         for (const sub of subsetsFor(v)) {
-          if (sub.mask & used) continue;
+          if (uniformPal(st)) { if (sub.mask & used) continue; }
+        else {
+          let clash = false;
+          for (let k2 = 1; k2 <= st.pal.length; k2++) {
+            const a2 = (sub.mask >> (2 * (k2 - 1))) & 3, b2 = (used >> (2 * (k2 - 1))) & 3;
+            if (a2 + b2 > st.cnt[k2 - 1]) { clash = true; break; }
+          }
+          if (clash) continue;
+        }
+        // packs compatible
           if (cells + sub.cnt > maxCells) continue;
           if (sizes) {
             // claim a span slot of exactly this size
             let placed = false;
             for (let sp = 0; sp < sizes.length && !placed; sp++) {
               if ((spanUsed & (1 << sp)) || sizes[sp] !== sub.cnt) continue;
-              rec(k + 1, used | sub.mask, cells + sub.cnt, spanUsed | (1 << sp), v);
+              rec(k + 1, used + sub.mask, cells + sub.cnt, spanUsed | (1 << sp), v);
               placed = true;   // identical sizes are interchangeable
             }
-          } else rec(k + 1, used | sub.mask, cells + sub.cnt, 0, v);
+          } else rec(k + 1, used + sub.mask, cells + sub.cnt, 0, v);
           if (ok) break;
         }
         unbind(bound);
@@ -722,11 +858,10 @@ function ruleKDOffByOne(st, clues) {
       const open = sp.cells.filter(i => popc(st.cand[i]) > 1);
       if (open.length !== 1) continue;
       let fixed = 0;
-      for (const i of sp.cells) fixed += committedDigit(st, i);
+      for (const i of sp.cells) { const dd = committedDigit(st, i); if (dd) fixed += st.pal[dd - 1]; }
       const t1 = p2.exact - 1 - fixed, t2 = p2.exact + 1 - fixed;
       let keep = 0;
-      if (t1 >= 1 && t1 <= st.D) keep |= 1 << t1;
-      if (t2 >= 1 && t2 <= st.D) keep |= 1 << t2;
+      for (let k2 = 1; k2 <= st.pal.length; k2++) if (st.pal[k2 - 1] === t1 || st.pal[k2 - 1] === t2) keep |= 1 << k2;
       const i = open[0];
       const nm = st.cand[i] & keep & ~1;
       if (nm === 0) return { rule: 'KD off-by-one', contradiction: true, cells: [i],
@@ -936,7 +1071,7 @@ function ruleCoralReach(st, clues) {
 // rule: full house — a line whose clue sums total 1+2+..+D must contain every digit
 function ruleFullLine(st, clues) {
   if (st.kd) return null;   // displayed totals are off by one per group under Knapp daneben
-  const fullSum = st.D * (st.D + 1) / 2;
+  const fullSum = st.maxTotal + st.minTotal;   // sum of the entire palette
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     const parsed = line.clue.map(tokenParse);
@@ -944,15 +1079,19 @@ function ruleFullLine(st, clues) {
     const tot = parsed.reduce((a, p) => a + p.exact, 0);
     if (tot !== fullSum) continue;
     for (let d = 1; d <= st.D; d++) {
+      const need = st.cnt[d - 1];
       const homes = line.cells.filter(i => st.cand[i] & (1 << d));
-      if (homes.length === 1 && popc(st.cand[homes[0]]) > 1) {
-        return { rule: 'Full line', cells: homes,
-          text: line.name + '\u2019s sums total ' + tot + ' = 1+2+\u2026+' + st.D + ', so every digit appears in it \u2014 and ' + d + ' fits only at ' + rc(st, homes[0]) + '.',
-          apply() { filterCand(st, homes[0], 1 << d); } };
-      }
-      if (homes.length === 0) {
+      const v = st.pal[d - 1];
+      if (homes.length < need) {
         return { rule: 'Full line', contradiction: true, cells: line.cells.slice(),
-          text: line.name + '\u2019s sums total ' + tot + ', so every digit must appear \u2014 but ' + d + ' has no place left.' };
+          text: line.name + '\u2019s sums total ' + tot + ' \u2014 the whole palette \u2014 so every value appears fully, but ' + v + ' needs ' + need + ' place' + (need > 1 ? 's' : '') + ' and has only ' + homes.length + '.' };
+      }
+      if (homes.length === need) {
+        const hits = homes.filter(i => popc(st.cand[i]) > 1);
+        if (!hits.length) continue;
+        return { rule: 'Full line', cells: hits,
+          text: line.name + '\u2019s sums total ' + tot + ' = the whole palette, so every value appears in it \u2014 and ' + v + ' fits only at ' + homes.map(i => rc(st, i)).join(', ') + '.',
+          apply() { for (const i of hits) filterCand(st, i, 1 << d); } };
       }
     }
   }
@@ -969,7 +1108,7 @@ function ruleLinePlacements(st, clues) {
     let count = 0;
     // enumerate group spans: positions + lengths, respecting current masks
     const G = line.clue.length;
-    const maxSum = st.D * (st.D + 1) / 2;
+    const maxSum = 0 + st.maxTotal;
     const tokenSets = lineSumSets(st, line);   // budget-refined, per clue token
     let sumSets = tokenSets;
     if (st.variants.asc) {
@@ -984,9 +1123,10 @@ function ruleLinePlacements(st, clues) {
     }
     const lenOpts = sumSets.map(set => {
       const L = [];
-      for (let l = 1; l <= st.D && l <= n; l++) {
+      const capLen = st.cnt.reduce((a, b) => a + b, 0);
+      for (let l = 1; l <= capLen && l <= n; l++) {
         let any = false;
-        for (const s of set) if (comboFeasible(s, l, ((1 << (st.D + 1)) - 2))) { any = true; break; }
+        for (const s of set) if (comboFeasible(st, s, l, ((1 << (st.D + 1)) - 2))) { any = true; break; }
         if (any) L.push(l);
       }
       return L;
@@ -1103,7 +1243,7 @@ function ruleGroupCombos(st, clues) {
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     const n = line.cells.length;
-    const maxSum = st.D * (st.D + 1) / 2;
+    const maxSum = 0 + st.maxTotal;
     // find maximal runs of cells committed non-blank, delimited by committed blanks/edges
     const runs = [];
     let p = 0;
@@ -1124,11 +1264,17 @@ function ruleGroupCombos(st, clues) {
     for (let g = 0; g < runs.length; g++) {
       const [a, b] = runs[g], L = b - a;
       const sumSet = allowedSums(st, line.clue[g], maxSum);
-      let fixedSum = 0, fixedMask = 0;
+      let fixedSum = 0, fixedPack = 0;
       const open = [];
       for (let q = a; q < b; q++) {
         const d = committedDigit(st, line.cells[q]);
-        if (d) { fixedSum += d; fixedMask |= 1 << d; } else open.push(q);
+        if (d) { fixedSum += st.pal[d - 1]; fixedPack += 1 << (2 * (d - 1)); } else open.push(q);
+      }
+      // committed cells elsewhere in the line consume multiplicity too
+      for (let q = 0; q < line.cells.length; q++) {
+        if (q >= a && q < b) continue;
+        const d = committedDigit(st, line.cells[q]);
+        if (d && ((fixedPack >> (2 * (d - 1))) & 3) < st.cnt[d - 1]) fixedPack += 1 << (2 * (d - 1));
       }
       if (!open.length) continue;
       const m = open.length;
@@ -1137,9 +1283,10 @@ function ruleGroupCombos(st, clues) {
         let bad = 0;
         for (let d = 1; d <= st.D; d++) {
           if (!(st.cand[line.cells[q]] & (1 << d))) continue;
-          const avail = ~(fixedMask | (1 << d)) & ((1 << (st.D + 1)) - 2);
+          if (((fixedPack >> (2 * (d - 1))) & 3) >= st.cnt[d - 1]) { bad |= 1 << d; continue; }
+          const avail = fixedPack + (1 << (2 * (d - 1)));
           let any = false;
-          for (const s of sumSet) { const rem = s - fixedSum; if (d <= rem && comboFeasible(rem - d, m - 1, avail)) { any = true; break; } }
+          for (const s of sumSet) { const rem = s - fixedSum; if (comboFeasibleV(st, rem - valOf(st, d), m - 1, avail, 1)) { any = true; break; } }
           if (!any) bad |= 1 << d;
         }
         if (bad) elim.push({ q, bad });
@@ -1161,7 +1308,7 @@ function ruleGroupCombos(st, clues) {
 // cells and the letters. This is the human \u201cadd the rows, subtract the
 // columns\u201d technique.
 function ruleSpanAlgebra(st, clues) {
-  const maxSum = st.D * (st.D + 1) / 2;
+  const maxSum = 0 + st.maxTotal;
   const spans = [];
   for (const line of eachSumsLine(st, clues)) {
     const ds = decidedSpans(st, line);
@@ -1170,7 +1317,7 @@ function ruleSpanAlgebra(st, clues) {
       const open = sp.cells.filter(i => popc(st.cand[i]) > 1);
       if (!open.length) continue;
       let fixed = 0, fixedMask = 0;
-      for (const i of sp.cells) { const d = committedDigit(st, i); if (d) { fixed += d; fixedMask |= 1 << d; } }
+      for (const i of sp.cells) { const d = committedDigit(st, i); if (d) { fixed += st.pal[d - 1]; fixedMask |= 1 << d; } }
       spans.push({ line, sp, open, fixed, fixedMask, sums: allowedSums(st, sp.tok, maxSum) });
     }
   }
@@ -1208,7 +1355,7 @@ function ruleSpanAlgebra(st, clues) {
       const complete = [];
       for (const s2 of compSpans) {
         let sum = s2.fixed, all = true;
-        for (const i of s2.open) { if (assign.has(i)) sum += assign.get(i); else all = false; }
+        for (const i of s2.open) { if (assign.has(i)) sum += st.pal[assign.get(i) - 1]; else all = false; }
         if (all) complete.push({ s2, sum });
       }
       function tryBind(idx) {
@@ -1250,13 +1397,13 @@ function ruleSpanAlgebra(st, clues) {
       const i = cells[idx];
       for (let d = 1; d <= st.D; d++) {
         if (!(st.cand[i] & (1 << d))) continue;
-        // in-line distinctness against committed digits and other comp cells
+        // in-line multiplicity against committed cells and other comp cells
         const r = (i / st.C) | 0, c = i % st.C;
-        let clash = false;
-        for (const [j, v] of assign) if (v === d && (((j / st.C) | 0) === r || (j % st.C) === c)) { clash = true; break; }
-        if (!clash) for (let c2 = 0; c2 < st.C && !clash; c2++) { const j = r * st.C + c2; if (j !== i && committedDigit(st, j) === d) clash = true; }
-        if (!clash) for (let r2 = 0; r2 < st.R && !clash; r2++) { const j = r2 * st.C + c; if (j !== i && committedDigit(st, j) === d) clash = true; }
-        if (clash) continue;
+        let inRow = 0, inCol = 0;
+        for (const [j, v] of assign) if (v === d) { if (((j / st.C) | 0) === r) inRow++; if ((j % st.C) === c) inCol++; }
+        for (let c2 = 0; c2 < st.C; c2++) { const j = r * st.C + c2; if (j !== i && committedDigit(st, j) === d) inRow++; }
+        for (let r2 = 0; r2 < st.R; r2++) { const j = r2 * st.C + c; if (j !== i && committedDigit(st, j) === d) inCol++; }
+        if (inRow >= st.cnt[d - 1] || inCol >= st.cnt[d - 1]) continue;
         assign.set(i, d);
         const bound = [];
         if (checkSpans(assign, bound)) rec(idx + 1);

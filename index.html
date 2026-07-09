@@ -80,6 +80,7 @@
     <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="12"></label>
     <label>Digits 1..<input type="number" id="sumsDigits" value="6" min="2" max="9"></label>
     <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="6"></label>
+    <label>Values <input type="text" id="sumsValues" placeholder="e.g. 1,2,3,4,5,5" size="15" title="Custom value palette: comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed. Empty = digits 1..D."></label>
     <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
     <span class="variant-group">
       <label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label>
@@ -103,7 +104,7 @@
       <div class="board-wrap"><div id="sumsGridWrap"></div></div>
       <div class="status" id="sumsStatus"></div>
       <div id="sumsLetters" hidden></div>
-      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros; <code>#</code> = a group of any sum. Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
+      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros; <code>#</code> = a group of any sum; the <i>Values</i> field replaces digits 1…D with a custom palette (e.g. <code>1,2,3,4,5,5,6,7,9,9</code>: no 8s, two 5s and two 9s per line; negatives and double-digit values work, and clue sums may then be negative, written like <code>-7</code>). Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
     </div>
     <aside class="strategies-side">
       <details class="strategies" open>

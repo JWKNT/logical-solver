@@ -329,5 +329,175 @@ for (let t = 0; t < 20; t++) {
   }
   if (bruteN < 1) { console.log('CORAL FAIL: generated puzzle unsolvable'); fails++; }
 }
+// custom value palettes: arbitrary values (negative/double-digit) with
+// per-line multiplicities; grid stores palette indices, sums use values
+function brutePalette(R, C, pal, cnt, rowClues, colClues) {
+  const M = pal.length;
+  const g = new Int8Array(R * C);   // 0 = blank, k = palette index
+  const rc2 = Array.from({ length: R }, () => new Int8Array(M));
+  const cc2 = Array.from({ length: C }, () => new Int8Array(M));
+  let count = 0;
+  function lineOk(cells, cl) {
+    const sums = []; let run = 0, len = 0;
+    for (const k of cells) {
+      if (k) { run += pal[k - 1]; len++; }
+      else if (len) { sums.push(run); run = 0; len = 0; }
+    }
+    if (len) sums.push(run);
+    if (!cl) return true;
+    if (sums.length !== cl.length) return false;
+    for (let q = 0; q < cl.length; q++) if (cl[q] !== sums[q]) return false;
+    return true;
+  }
+  function rec(i) {
+    if (i === R * C) {
+      for (let r = 0; r < R; r++) if (!lineOk(g.slice(r * C, (r + 1) * C), rowClues[r])) return;
+      for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g[r * C + c]); if (!lineOk(col, colClues[c])) return; }
+      count++;
+      return;
+    }
+    const r = (i / C) | 0, c = i % C;
+    g[i] = 0; rec(i + 1);
+    for (let k = 1; k <= M; k++) {
+      if (rc2[r][k - 1] >= cnt[k - 1] || cc2[c][k - 1] >= cnt[k - 1]) continue;
+      g[i] = k; rc2[r][k - 1]++; cc2[c][k - 1]++;
+      rec(i + 1);
+      rc2[r][k - 1]--; cc2[c][k - 1]--;
+    }
+    g[i] = 0;
+  }
+  rec(0);
+  return count;
+}
+for (let t = 0; t < 16; t++) {
+  const R = 3, C = 3, useNeg = t % 2 === 0;
+  // random palette: 3 distinct values, one may repeat
+  const poolBase = useNeg ? [-3, -2, -1, 1, 2, 4, 5, 7, 12] : [1, 2, 3, 5, 6, 9, 11];
+  const pool = [...poolBase].sort(() => Math.random() - 0.5).slice(0, 3).sort((a, b) => a - b);
+  const values = [...pool];
+  if (Math.random() < 0.7) values.push(pool[(Math.random() * pool.length) | 0]);   // a double
+  const byVal = new Map();
+  for (const v of values) byVal.set(v, (byVal.get(v) || 0) + 1);
+  const pal = [...byVal.keys()].sort((a, b) => a - b);
+  const cnt = pal.map(v => byVal.get(v));
+  const M = pal.length;
+  // random legal grid
+  const g = new Int8Array(R * C);
+  const rc2 = Array.from({ length: R }, () => new Int8Array(M));
+  const cc2 = Array.from({ length: C }, () => new Int8Array(M));
+  for (let i = 0; i < R * C; i++) {
+    const r = (i / C) | 0, c = i % C;
+    const opts = [0, 0];
+    for (let k = 1; k <= M; k++) if (rc2[r][k - 1] < cnt[k - 1] && cc2[c][k - 1] < cnt[k - 1]) opts.push(k);
+    const k = opts[(Math.random() * opts.length) | 0];
+    g[i] = k;
+    if (k) { rc2[r][k - 1]++; cc2[c][k - 1]++; }
+  }
+  const mkClues = (get, n, len) => {
+    const out = [];
+    for (let a = 0; a < n; a++) {
+      const cl = []; let run = 0, ln = 0;
+      for (let b = 0; b < len; b++) { const k = get(a, b); if (k) { run += pal[k - 1]; ln++; } else if (ln) { cl.push(run); run = 0; ln = 0; } }
+      if (ln) cl.push(run);
+      out.push(Math.random() < 0.2 ? null : cl);
+    }
+    return out;
+  };
+  const rowClues = mkClues((r, c) => g[r * C + c], R, C);
+  const colClues = mkClues((c, r) => g[r * C + c], C, R);
+  const bruteN = brutePalette(R, C, pal, cnt, rowClues, colClues);
+  const eng = E.runAny({ R, C, values, rowClues, colClues, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) {
+    console.log('PALETTE FAIL: values=[' + values.join(',') + '] rows=' + JSON.stringify(rowClues) + ' cols=' + JSON.stringify(colClues) + ' brute=' + bruteN + ' engine=' + eng.solCount);
+    fails++;
+  }
+  if (bruteN < 1) { console.log('PALETTE FAIL: unsolvable generated puzzle'); fails++; }
+}
+// custom value palettes: multiplicities, negatives, zero/negative group sums
+function brutePal(R, C, values, rowClues, colClues) {
+  const byVal = new Map();
+  for (const v of values) byVal.set(v, (byVal.get(v) || 0) + 1);
+  const pal = [...byVal.keys()].sort((a, b) => a - b);
+  const cnt = pal.map(v => byVal.get(v));
+  const M = pal.length;
+  const g = new Int8Array(R * C);   // 0 blank, k = palette index
+  const rUse = Array.from({ length: R }, () => new Int8Array(M));
+  const cUse = Array.from({ length: C }, () => new Int8Array(M));
+  let count = 0;
+  function lineOk(cells, cl) {
+    const sums = []; let run = 0, len = 0;
+    for (const k of cells) {
+      if (k) { run += pal[k - 1]; len++; }
+      else if (len) { sums.push(run); run = 0; len = 0; }
+    }
+    if (len) sums.push(run);
+    if (!cl) return true;
+    if (sums.length !== cl.length) return false;
+    for (let q = 0; q < cl.length; q++) if (cl[q] !== sums[q]) return false;
+    return true;
+  }
+  function rec(i) {
+    if (i === R * C) {
+      for (let r = 0; r < R; r++) if (!lineOk(g.slice(r * C, (r + 1) * C), rowClues[r])) return;
+      for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g[r * C + c]); if (!lineOk(col, colClues[c])) return; }
+      count++;
+      return;
+    }
+    const r = (i / C) | 0, c = i % C;
+    g[i] = 0; rec(i + 1);
+    for (let k = 1; k <= M; k++) {
+      if (rUse[r][k - 1] >= cnt[k - 1] || cUse[c][k - 1] >= cnt[k - 1]) continue;
+      g[i] = k; rUse[r][k - 1]++; cUse[c][k - 1]++;
+      rec(i + 1);
+      rUse[r][k - 1]--; cUse[c][k - 1]--;
+    }
+    g[i] = 0;
+  }
+  rec(0);
+  return count;
+}
+const palettes = [
+  [1, 2, 2, 3],           // a doubled value
+  [1, 2, 3, 4, 5, 5],     // doubled high value
+  [-2, 1, 3, 4],          // a negative (zero/negative sums possible)
+  [-3, -1, 2, 5, 5],      // negatives + double
+  [10, 11, 12],           // double-digit values
+];
+for (let t = 0; t < 15; t++) {
+  const values = palettes[t % palettes.length];
+  const byVal = new Map();
+  for (const v of values) byVal.set(v, (byVal.get(v) || 0) + 1);
+  const pal = [...byVal.keys()].sort((a, b) => a - b);
+  const cnt = pal.map(v => byVal.get(v));
+  const R = 3, C = 3;
+  // random grid respecting the palette
+  const g = new Int8Array(R * C);
+  const rUse = Array.from({ length: R }, () => new Int8Array(pal.length));
+  const cUse = Array.from({ length: C }, () => new Int8Array(pal.length));
+  for (let i = 0; i < R * C; i++) {
+    const r = (i / C) | 0, c = i % C;
+    const opts = [0, 0];
+    for (let k = 1; k <= pal.length; k++) if (rUse[r][k - 1] < cnt[k - 1] && cUse[c][k - 1] < cnt[k - 1]) opts.push(k);
+    const k = opts[(Math.random() * opts.length) | 0];
+    g[i] = k;
+    if (k) { rUse[r][k - 1]++; cUse[c][k - 1]++; }
+  }
+  const lineClue = cells => {
+    const sums = []; let run = 0, len = 0;
+    for (const k of cells) { if (k) { run += pal[k - 1]; len++; } else if (len) { sums.push(run); run = 0; len = 0; } }
+    if (len) sums.push(run);
+    return sums;
+  };
+  const rowClues = [], colClues = [];
+  for (let r = 0; r < R; r++) rowClues.push(Math.random() < 0.15 ? null : lineClue(g.slice(r * C, (r + 1) * C)));
+  for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g[r * C + c]); colClues.push(Math.random() < 0.15 ? null : lineClue(col)); }
+  const bruteN = brutePal(R, C, values, rowClues, colClues);
+  const eng = E.runAny({ R, C, values, rowClues, colClues, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) {
+    console.log('PALETTE FAIL: values=' + JSON.stringify(values), 'rows=' + JSON.stringify(rowClues), 'cols=' + JSON.stringify(colClues), 'brute=' + bruteN, 'engine=' + eng.solCount);
+    fails++;
+  }
+  if (bruteN < 1) { console.log('PALETTE FAIL: generated puzzle unsolvable'); fails++; }
+}
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS ENGINE TESTS PASSED');
 process.exit(fails ? 1 : 0);
