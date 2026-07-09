@@ -91,6 +91,23 @@ let fails = 0;
   if (!ok) { console.log('FAIL: crypto position not solved (pairs=' + sawPairs + ', disjoint=' + sawDisjoint + ', complete=' + S.sumsComplete(st) + ')'); fails++; }
   else console.log('ok: 8x8 crypto position fully solved in ' + (k - 1) + ' steps, ZERO trials (pairs + disjoint sums + span algebra)');
 }
+{
+  // trailing '?' may be 0: '4?' and 'H?' (H=4) both admit 40; '?0' admits
+  // 10/20/30/40; only the leading position is implicitly nonzero
+  const st = S.makeSumsState(3, 12, 9);
+  S.filterLetter(st, 7, 1 << 4);
+  const s1 = [...S.allowedSums(st, '4?', 45)];
+  const s2 = [...S.allowedSums(st, 'H?', 45)];
+  const s3 = [...S.allowedSums(st, '?0', 45)];
+  if (!s1.includes(40) || !s2.includes(40) || JSON.stringify(s3) !== JSON.stringify([10, 20, 30, 40])) {
+    console.log('FAIL: trailing-zero patterns wrong (4?=' + s1 + ' | H?=' + s2 + ' | ?0=' + s3 + ')'); fails++;
+  } else console.log('ok: trailing ? admits 0 (4? and H? include 40; ?0 = 10/20/30/40)');
+  // engine agrees: a group summing 40 under clue '4?' is solvable
+  const eng = E.runAny({ R: 1, C: 9, D: 9, mode: 'count', timeLimit: 5000, maxSolutions: 1e9,
+    rowClues: [['4?']], colClues: new Array(9).fill(null) });
+  if (!eng.complete || eng.solCount < 1) { console.log('FAIL: engine rejects 4? spanning sums with 0'); fails++; }
+  else console.log('ok: engine solves a 4? row (' + eng.solCount + ' completions)');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {

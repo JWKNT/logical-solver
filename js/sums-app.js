@@ -43,7 +43,10 @@ function status(html) { $('sumsStatus').innerHTML = html; }
 function buildGrid(keepClues) {
   const saved = {};
   if (keepClues) {
-    document.querySelectorAll('#sumsGridWrap input').forEach(el => { if (el.value) saved[el.id] = el.value; });
+    document.querySelectorAll('#sumsGridWrap input').forEach(el => {
+      const orig = el.dataset.orig !== undefined ? el.dataset.orig : el.value;
+      if (orig) saved[el.id] = orig;
+    });
   }
   R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 8));
   C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 8));

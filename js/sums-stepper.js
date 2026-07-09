@@ -649,8 +649,13 @@ function ruleLinePlacements(st, clues) {
     }
     place(0, 0);
     if (count === 0) {
+      const why = line.clue.map((tok, g2) => {
+        const ls = lenOpts[g2];
+        const ss = [...sumSets[g2]];
+        return '\u201c' + tokenLabel(tok) + '\u201d = ' + (ss.length <= 4 ? ss.join('/') : ss[0] + '\u2026' + ss[ss.length - 1]) + (ls.length ? ' needing ' + (ls.length === 1 ? ls[0] : ls[0] + '\u2013' + ls[ls.length - 1]) + ' cell' + (ls.length === 1 && ls[0] === 1 ? '' : 's') : ' with no feasible length');
+      }).join('; ');
       return { rule: 'Line placements', contradiction: true, cells: line.cells.slice(),
-        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits the current grid \u2014 the position is contradictory.' };
+        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed.' };
     }
     if (count > 4000) continue;
     const mkFilled = [], mkBlank = [];
