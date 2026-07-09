@@ -54,6 +54,7 @@ function buildGrid(keepClues) {
   G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
   st = sums.makeSumsState(R, C, D);
   st.kd = $('sumsKD').checked;
+  st.coral = $('sumsCoral').checked;
   stepCounts = new Map();
   stepNo = 0;
   const wrap = $('sumsGridWrap');
@@ -165,13 +166,18 @@ function buildStrategyPanel() {
     return li;
   };
   for (const s of sums.SUMS_STRATEGIES.filter(s2 => !s2.variant)) ol.appendChild(mk(s));
-  const kdRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant === 'kd');
-  if (kdRules.length) {
+  const variants = [
+    { key: 'coral', label: 'Coral', on: $('sumsCoral').checked },
+    { key: 'kd', label: 'Knapp daneben', on: $('sumsKD').checked },
+  ];
+  for (const v of variants) {
+    const rules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant === v.key);
+    if (!rules.length) continue;
     const bar = document.createElement('li');
-    bar.className = 'variant-bar' + ($('sumsKD').checked ? ' on' : '');
-    bar.innerHTML = 'Knapp daneben' + ($('sumsKD').checked ? '' : ' <span class="voff">(off)</span>');
+    bar.className = 'variant-bar' + (v.on ? ' on' : '');
+    bar.innerHTML = v.label + (v.on ? '' : ' <span class="voff">(off)</span>');
     ol.appendChild(bar);
-    for (const s of kdRules) { const li = mk(s); if (!$('sumsKD').checked) li.className = 'vdim'; ol.appendChild(li); }
+    for (const s of rules) { const li = mk(s); if (!v.on) li.className = 'vdim'; ol.appendChild(li); }
   }
 }
 function markStrategy(name) {
@@ -194,7 +200,7 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 $('sumsBuild').onclick = () => buildGrid(true);
 $('sumsSolve').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, coral: $('sumsCoral').checked, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
     if (!res.firstSol) { status(res.timedOut ? '<span class="warn">No solution found within the time limit.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     st = sums.makeSumsState(R, C, D);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
@@ -207,7 +213,7 @@ $('sumsSolve').onclick = () => {
 };
 $('sumsCands').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, coral: $('sumsCoral').checked, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
     if (!res.cand || res.solCount === 0) { status(res.timedOut ? '<span class="warn">Timed out before finding solutions.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     if (!res.complete) {
       status('<span class="warn">Search truncated</span> after ' + res.solCount.toLocaleString() + ' solutions (' + ms + ' ms) \u2014 the grid is too underconstrained for exact candidates, so no marks were drawn (a partial union would be misleading). Add clues or raise the time limit.');
@@ -243,18 +249,23 @@ $('sumsStep').onclick = () => {
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
 };
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); st.kd = $('sumsKD').checked; stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); st.kd = $('sumsKD').checked; st.coral = $('sumsCoral').checked; stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
-$('sumsKD').addEventListener('change', () => {
+function variantChanged(msg) {
   st = sums.makeSumsState(R, C, D);
   st.kd = $('sumsKD').checked;
+  st.coral = $('sumsCoral').checked;
   stepCounts = new Map(); stepNo = 0;
   renderCells(); renderLetters(); buildStrategyPanel();
-  status($('sumsKD').checked
-    ? '<b>Knapp daneben</b> on: every clue is one off its true value (a 10 is really 9 or 11). Marks reset.'
-    : 'Knapp daneben off: clues are exact again. Marks reset.');
-});
+  status(msg + ' Marks reset.');
+}
+$('sumsKD').addEventListener('change', () => variantChanged($('sumsKD').checked
+  ? '<b>Knapp daneben</b> on: every clue is one off its true value (a 10 is really 9 or 11).'
+  : 'Knapp daneben off: clues are exact again.'));
+$('sumsCoral').addEventListener('change', () => variantChanged($('sumsCoral').checked
+  ? '<b>Coral</b> on: each line\u2019s clues are ascending, not in reading order; the blanks form one connected coral with no 2\u00d72, and every digit region touches the edge.'
+  : 'Coral off: clues are in reading order again.'));
 
 buildGrid();
 })();

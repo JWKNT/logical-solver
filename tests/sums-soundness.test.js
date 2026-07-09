@@ -153,8 +153,45 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 6) | 0);
   const g = randGrid(R, C, D);
   const clues = cluesOf(g, R, C);
+  // every sixth puzzle: coral (ascending clues + shape constraints)
+  const coral = puzzles % 6 === 5;
+  if (coral) {
+    // regenerate until the grid satisfies the coral shape
+    let ok2 = false;
+    for (let a = 0; a < 4000 && !ok2; a++) {
+      const g2 = randGrid(R, C, D);
+      const N2 = R * C;
+      let blanks = 0, start = -1, shape = true;
+      for (let i = 0; i < N2; i++) if (g2[i] === 0) { blanks++; if (start < 0) start = i; }
+      for (let r = 0; r + 1 < R && shape; r++) for (let c = 0; c + 1 < C && shape; c++)
+        if (g2[r * C + c] === 0 && g2[r * C + c + 1] === 0 && g2[(r + 1) * C + c] === 0 && g2[(r + 1) * C + c + 1] === 0) shape = false;
+      if (shape && blanks > 0) {
+        const seen = new Uint8Array(N2); const st2 = [start]; seen[start] = 1; let cnt = 0;
+        while (st2.length) { const i = st2.pop(); cnt++; const r = (i / C) | 0, c = i % C;
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) { const r2 = r + dr, c2 = c + dc;
+            if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue; const j = r2 * C + c2;
+            if (!seen[j] && g2[j] === 0) { seen[j] = 1; st2.push(j); } } }
+        if (cnt !== blanks) shape = false;
+      }
+      if (shape) {
+        const seenF = new Uint8Array(N2); const stF = [];
+        for (let i = 0; i < N2; i++) { const r = (i / C) | 0, c = i % C;
+          if (g2[i] > 0 && (r === 0 || c === 0 || r === R - 1 || c === C - 1)) { seenF[i] = 1; stF.push(i); } }
+        while (stF.length) { const i = stF.pop(); const r = (i / C) | 0, c = i % C;
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) { const r2 = r + dr, c2 = c + dc;
+            if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue; const j = r2 * C + c2;
+            if (!seenF[j] && g2[j] > 0) { seenF[j] = 1; stF.push(j); } } }
+        for (let i = 0; i < N2; i++) if (g2[i] > 0 && !seenF[i]) shape = false;
+      }
+      if (shape) { g.set(g2); ok2 = true; }
+    }
+    if (!ok2) continue;
+    const c2 = cluesOf(g, R, C);
+    clues.rows = c2.rows.map(cl => [...cl].sort((a, b) => a - b));
+    clues.cols = c2.cols.map(cl => [...cl].sort((a, b) => a - b));
+  }
   // every fourth puzzle: Knapp daneben (all clues shifted one off)
-  const kd = puzzles % 4 === 3;
+  const kd = !coral && puzzles % 4 === 3;
   if (kd) {
     const shift = cl => cl.map(v => Math.random() < 0.5 && v > 1 ? v - 1 : v + 1);
     clues.rows = clues.rows.map(shift);
@@ -176,12 +213,13 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
     cryptoPuzzles++;
   }
   // union of values per cell over ALL solutions
-  const eng = E.runAny({ R, C, D, kd, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+  const eng = E.runAny({ R, C, D, kd, coral, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
   if (!eng.complete) continue;
   puzzles++;
   const truth = eng.cand;   // bitmask per cell
   const st = S.makeSumsState(R, C, D);
   st.kd = kd;
+  st.coral = coral;
   let mv, k = 0;
   while (k++ < 800 && (mv = S.takeSumsStep(st, { rows: clues.rows, cols: clues.cols }))) {
     steps++;

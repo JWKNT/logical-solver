@@ -67,36 +67,23 @@ function makeSolver(cfg) {
   const letterIds = [];
   const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
   const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd));
+  const coral = !!cfg.coral;
   const N = R * C;
   const grid = new Int8Array(N).fill(-1);
   const rowMask = new Int32Array(R), colMask = new Int32Array(C);
-  const rowGi = new Int32Array(R), rowRun = new Int32Array(R);
-  const colGi = new Int32Array(C), colRun = new Int32Array(C);
+  // unified line state: which clue indices are used + the value each took
+  const rowUsed = new Int32Array(R), colUsed = new Int32Array(C);
+  const rowRun = new Int32Array(R), colRun = new Int32Array(C);
+  const rowVals = rowClues.map(cl => cl ? new Int8Array(cl.length) : null);
+  const colVals = colClues.map(cl => cl ? new Int8Array(cl.length) : null);
   const FULL = (1 << (D + 1)) - 2;
-  // crypto letter state
   const letterVal = new Int8Array(26).fill(-1);
-  let letterUsed = 0;   // digits 0-9 taken by letters
+  let letterUsed = 0;
 
+  function popcnt(m) { let c = 0; while (m) { c += m & 1; m >>>= 1; } return c; }
   function maxSumOf(mask) { let s = 0; for (let d = D; d >= 1; d--) if (mask & (1 << d)) s += d; return s; }
   function minAvail(mask) { for (let d = 1; d <= D; d++) if (mask & (1 << d)) return d; return 0; }
 
-  function groupMax(g) {
-    if (!g) return maxSum;
-    if (g.type !== 'letters') return g.max;
-    // tighten by bound letters
-    let mx = 0;
-    for (let p = 0; p < g.len; p++) {
-      const ch = g.chars[p];
-      let d = 9;
-      if (ch.d !== undefined) d = ch.d;
-      else if (ch.L !== undefined && letterVal[ch.L] >= 0) d = letterVal[ch.L];
-      mx = mx * 10 + d;
-    }
-    if (g.kd) mx += 1;   // the displayed value is one off the true sum
-    return Math.min(mx, g.max);
-  }
-
-  // bind clue group g against displayed value dv; null on mismatch
   function bindDisplayed(g, dv) {
     const ds = String(dv).split('').map(Number);
     if (ds.length !== g.len) return null;
@@ -115,65 +102,117 @@ function makeSolver(cfg) {
     }
     return bound;
   }
-  // every viable way to close group g with TRUE sum s: a list of binding undo
-  // lists. Non-letter groups yield [[]] on match. KD tries s-1 and s+1.
-  function closeOptions(g, s) {
-    if (!g) return [[]];
-    if (g.type === 'exact') return g.v === s ? [[]] : [];
-    if (g.type === 'set') return (g.set === null || g.set.has(s)) ? [[]] : [];
-    const cands = g.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s];   // displayed 0 = true sum 1
-    const out = [];
-    for (const dv of cands) {
-      const b = bindDisplayed(g, dv);
-      if (b !== null) { out.push(b); undoLetters(b); }   // re-bound at use time
-    }
-    return out;
-  }
-  // re-apply a previously discovered binding option (must still be consistent)
-  function applyOption(g, s, wantIdx) {
-    if (!g || g.type !== 'letters') return [];
-    const cands = g.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s];
-    let idx = 0;
-    for (const dv of cands) {
-      const b = bindDisplayed(g, dv);
-      if (b !== null) { if (idx === wantIdx) return b; undoLetters(b); idx++; }
-    }
-    return null;
-  }
-  function closeGroup(g, s) {   // legacy single-option close for non-KD paths
-    const opts = closeOptions(g, s);
-    if (!opts.length) return null;
-    if (!g || g.type !== 'letters') return [];
-    return applyOption(g, s, 0);
-  }
   function undoLetters(bound) {
     for (const L of bound) { letterUsed &= ~(1 << letterVal[L]); letterVal[L] = -1; }
   }
-
-  function lineFeasible(clue, gi, run, left, avail) {
-    if (!clue) return true;
-    if (run > 0) {
-      if (gi >= clue.length) return false;
-      const g = clue[gi];
-      const gm = groupMax(g);
-      if (run > gm) return false;
-      if (run < g.min || run < gm) {
-        // may need to extend; ensure it's possible when it must
-        if (run < g.min) {
-          if (left <= 0) return false;
-          if (run + maxSumOf(avail) < g.min) return false;
-          if (minAvail(avail) === 0) return false;
-        }
-      }
-    }
-    let cellsNeeded = (run > 0 && clue[gi] && run < clue[gi].min) ? 1 : 0;
-    for (let g2 = gi + (run > 0 ? 1 : 0); g2 < clue.length; g2++) cellsNeeded += 2;
-    if (run === 0 && gi < clue.length && cellsNeeded >= 2) cellsNeeded -= 1;
-    return cellsNeeded <= left;
+  function groupMatchOptions(g, s) {
+    // ways one clue group can absorb TRUE sum s: list of displayed values
+    if (g.type === 'exact') return g.v === s ? [g.v] : [];
+    if (g.type === 'set') return (g.set === null || g.set.has(s)) ? [s] : [];
+    const cands = g.kd ? [s - 1, s + 1].filter(v => v >= 0) : [s];
+    return cands;   // viability of letter binding checked at bind time
   }
 
-  return { grid, rowMask, colMask, rowGi, rowRun, colGi, colRun, rowClues, colClues,
-    lineFeasible, groupMax, closeGroup, closeOptions, applyOption, undoLetters, FULL, letterVal, letterIds, maxSum,
+  // every viable close of TRUE sum s in this line: pick an unused clue index
+  // (any index under coral, the next-in-order index otherwise), a displayed
+  // value its token matches, and (coral) keep the values ascending by index
+  function closeList(clue, used, vals, s) {
+    if (!clue) return [{ k: -1, dv: 0 }];
+    const out = [];
+    const idxs = [];
+    if (coral) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) idxs.push(k); }
+    else { const k = popcnt(used); if (k < clue.length) idxs.push(k); }
+    for (const k of idxs) {
+      const g = clue[k];
+      for (const dv of groupMatchOptions(g, s)) {
+        if (coral) {
+          let ok = true;
+          for (let k2 = 0; k2 < clue.length && ok; k2++) {
+            if (!(used & (1 << k2)) || k2 === k) continue;
+            if (k2 < k && vals[k2] > s) ok = false;
+            if (k2 > k && vals[k2] < s) ok = false;
+          }
+          if (!ok) continue;
+        }
+        out.push({ k, dv, g });
+      }
+    }
+    return out;
+  }
+  function applyClose(clue, usedRef, vals, s, opt) {
+    // returns undo record or null (letter binding may fail)
+    if (!clue) return { bound: [] };
+    let bound = [];
+    if (opt.g.type === 'letters') {
+      bound = bindDisplayed(opt.g, opt.dv);
+      if (bound === null) return null;
+    }
+    usedRef.m |= 1 << opt.k;
+    vals[opt.k] = s;
+    return { bound, k: opt.k };
+  }
+  function undoClose(clue, usedRef, vals, rec2) {
+    if (!clue) return;
+    undoLetters(rec2.bound);
+    usedRef.m &= ~(1 << rec2.k);
+    vals[rec2.k] = 0;
+  }
+
+  function groupMaxUnused(clue, used) {
+    if (!clue) return maxSum;
+    let mx = 0;
+    if (coral) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mx = Math.max(mx, groupMaxOf(clue[k])); }
+    else { const k = popcnt(used); if (k < clue.length) mx = groupMaxOf(clue[k]); }
+    return mx;
+  }
+  function groupMaxOf(g) {
+    if (g.type !== 'letters') return g.max;
+    let mx = 0;
+    for (let p = 0; p < g.len; p++) {
+      const ch = g.chars[p];
+      let d = 9;
+      if (ch.d !== undefined) d = ch.d;
+      else if (ch.L !== undefined && letterVal[ch.L] >= 0) d = letterVal[ch.L];
+      mx = mx * 10 + d;
+    }
+    if (g.kd) mx += 1;
+    return Math.min(mx, g.max);
+  }
+  function groupMinNext(clue, used) {
+    if (!clue) return 1;
+    if (coral) { let mn = Infinity; for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mn = Math.min(mn, clue[k].min); return mn === Infinity ? 1 : mn; }
+    const k = popcnt(used);
+    return k < clue.length ? clue[k].min : 1;
+  }
+
+  function lineFeasible(clue, used, run, left, avail) {
+    if (!clue) return true;
+    const usedN = popcnt(used);
+    if (run > 0) {
+      if (usedN >= clue.length) return false;
+      const gm = groupMaxUnused(clue, used);
+      if (run > gm) return false;
+      const gmin = groupMinNext(clue, used);
+      if (run < gmin) {
+        if (left <= 0) return false;
+        if (run + maxSumOf(avail) < gmin) return false;
+        if (minAvail(avail) === 0) return false;
+      }
+    }
+    const pending = run > 0 ? 1 : 0;
+    let cellsNeeded = (run > 0 && run < groupMinNext(clue, used)) ? 1 : 0;
+    for (let g2 = usedN + pending; g2 < clue.length; g2++) cellsNeeded += 2;
+    if (run === 0 && usedN < clue.length && cellsNeeded >= 2) cellsNeeded -= 1;
+    return cellsNeeded <= left;
+  }
+  function lineDone(clue, used, run) {
+    if (!clue) return run === 0 || true;
+    return run === 0 && popcnt(used) === clue.length;
+  }
+
+  return { grid, rowMask, colMask, rowUsed, colUsed, rowRun, colRun, rowVals, colVals,
+    rowClues, colClues, closeList, applyClose, undoClose, lineFeasible, lineDone,
+    groupMaxUnused, undoLetters, FULL, letterVal, letterIds, maxSum, coral, popcnt,
     fixed: cfg.fixed || null };
 }
 
@@ -188,23 +227,65 @@ function search(cfg, opts) {
   const cand = opts.collect ? new Int32Array(N) : null;
   const letterCand = opts.collect ? new Int32Array(26) : null;
   const post = opts.onSolution || null;
+  const coral = S.coral;
+  const rowUsedRef = Array.from({ length: R }, (_, r) => ({ get m() { return S.rowUsed[r]; }, set m(v) { S.rowUsed[r] = v; } }));
+  const colUsedRef = Array.from({ length: C }, (_, c) => ({ get m() { return S.colUsed[c]; }, set m(v) { S.colUsed[c] = v; } }));
 
-  // iterate every combination of binding options for a list of group closes,
-  // running body() inside each combination (KD makes closes branch)
+  // coral shape: no blank 2x2 (checked incrementally), blanks connected, and
+  // every filled component touches the grid edge (checked on completion)
+  function coralOk() {
+    // blanks connected
+    let start = -1, blanks = 0;
+    for (let i = 0; i < N; i++) if (S.grid[i] === 0) { blanks++; if (start < 0) start = i; }
+    if (blanks > 0) {
+      const seen = new Uint8Array(N);
+      const stack = [start];
+      seen[start] = 1;
+      let cnt = 0;
+      while (stack.length) {
+        const i = stack.pop(); cnt++;
+        const r = (i / C) | 0, c = i % C;
+        for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const r2 = r + dr, c2 = c + dc;
+          if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+          const j = r2 * C + c2;
+          if (!seen[j] && S.grid[j] === 0) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      if (cnt !== blanks) return false;
+    }
+    // filled components reach the edge
+    const seenF = new Uint8Array(N);
+    const stackF = [];
+    for (let i = 0; i < N; i++) {
+      const r = (i / C) | 0, c = i % C;
+      if (S.grid[i] > 0 && (r === 0 || c === 0 || r === R - 1 || c === C - 1)) { seenF[i] = 1; stackF.push(i); }
+    }
+    while (stackF.length) {
+      const i = stackF.pop();
+      const r = (i / C) | 0, c = i % C;
+      for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const r2 = r + dr, c2 = c + dc;
+        if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+        const j = r2 * C + c2;
+        if (!seenF[j] && S.grid[j] > 0) { seenF[j] = 1; stackF.push(j); }
+      }
+    }
+    for (let i = 0; i < N; i++) if (S.grid[i] > 0 && !seenF[i]) return false;
+    return true;
+  }
+
+  // iterate every combination of close options for a list of pending closes
   function withCloses(closes, k, body) {
     if (k === closes.length) { body(); return; }
-    const { g, s } = closes[k];
-    if (!g || g.type !== 'letters') {
-      const opts = S.closeOptions(g, s);
-      if (opts.length) withCloses(closes, k + 1, body);
-      return;
-    }
-    const n2 = S.closeOptions(g, s).length;
-    for (let oi = 0; oi < n2; oi++) {
-      const b = S.applyOption(g, s, oi);
-      if (b === null) continue;
+    const cl = closes[k];
+    const opts = S.closeList(cl.clue, cl.usedRef ? cl.usedRef.m : 0, cl.vals, cl.s);
+    for (const opt of opts) {
+      if (!cl.clue) { withCloses(closes, k + 1, body); return; }
+      const rec2 = S.applyClose(cl.clue, cl.usedRef, cl.vals, cl.s, opt);
+      if (rec2 === null) continue;
       withCloses(closes, k + 1, body);
-      S.undoLetters(b);
+      S.undoClose(cl.clue, cl.usedRef, cl.vals, rec2);
       if (timedOut || solCount >= maxSol) return;
     }
   }
@@ -213,21 +294,15 @@ function search(cfg, opts) {
     if (timedOut || solCount >= maxSol) return;
     if ((++nodes & 2047) === 0 && Date.now() > deadline) { timedOut = true; return; }
     if (i === N) {
-      // close every pending column group (each may branch under KD)
       const closes = [];
       let ok = true;
-      for (let c = 0; c < C; c++) {
-        const cc = S.colClues[c];
-        let gi = S.colGi[c];
-        if (S.colRun[c] > 0) {
-          if (cc && gi >= cc.length) { ok = false; break; }
-          if (cc) closes.push({ g: cc[gi], s: S.colRun[c] });
-          gi++;
-        }
-        if (cc && gi !== cc.length) { ok = false; break; }
+      for (let c = 0; c < C && ok; c++) {
+        if (S.colRun[c] > 0) closes.push({ clue: S.colClues[c], usedRef: colUsedRef[c], vals: S.colVals[c], s: S.colRun[c] });
       }
-      if (!ok) return;
       withCloses(closes, 0, () => {
+        // all clue lists must be exhausted
+        for (let c = 0; c < C; c++) { const cc = S.colClues[c]; if (cc && S.popcnt(S.colUsed[c]) !== cc.length) return; }
+        if (coral && !coralOk()) return;
         solCount++;
         if (!firstSol) { firstSol = Int8Array.from(S.grid); firstLetters = Int8Array.from(S.letterVal); }
         if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
@@ -244,69 +319,55 @@ function search(cfg, opts) {
     else if (cfg.candMask && cfg.candMask[i]) { const m = cfg.candMask[i]; for (let v = 0; v <= D; v++) if ((m >> v) & 1) vals.push(v); }
     else { vals.push(0); for (let v = 1; v <= D; v++) vals.push(v); }
     for (const v of vals) {
-      const sv = { rGi: S.rowGi[r], rRun: S.rowRun[r], cGi: S.colGi[c], cRun: S.colRun[c] };
+      const svRRun = S.rowRun[r], svCRun = S.colRun[c];
       if (v === 0) {
+        // coral: forbid a 2x2 of blanks
+        if (coral && r > 0 && c > 0 && S.grid[i - 1] === 0 && S.grid[i - C] === 0 && S.grid[i - C - 1] === 0) continue;
         const closes = [];
-        let ok = true;
-        if (S.rowRun[r] > 0) {
-          if (rcl && S.rowGi[r] >= rcl.length) ok = false;
-          else if (rcl) closes.push({ g: rcl[S.rowGi[r]], s: S.rowRun[r] });
-        }
-        if (ok && S.colRun[c] > 0) {
-          if (ccl && S.colGi[c] >= ccl.length) ok = false;
-          else if (ccl) closes.push({ g: ccl[S.colGi[c]], s: S.colRun[c] });
-        }
-        if (ok) {
-          withCloses(closes, 0, () => {
-            if (S.rowRun[r] > 0) { S.rowGi[r]++; S.rowRun[r] = 0; }
-            if (S.colRun[c] > 0) { S.colGi[c]++; S.colRun[c] = 0; }
-            S.grid[i] = v;
-            let fine = true;
-            if (atRowEnd && S.rowRun[r] === 0 && rcl && S.rowGi[r] !== rcl.length) fine = false;
-            if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
-            if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
-            if (fine) rec(i + 1);
-            S.grid[i] = -1;
-            S.rowGi[r] = sv.rGi; S.rowRun[r] = sv.rRun; S.colGi[c] = sv.cGi; S.colRun[c] = sv.cRun;
-          });
-        }
+        if (S.rowRun[r] > 0) closes.push({ clue: rcl, usedRef: rowUsedRef[r], vals: S.rowVals[r], s: S.rowRun[r] });
+        if (S.colRun[c] > 0) closes.push({ clue: ccl, usedRef: colUsedRef[c], vals: S.colVals[c], s: S.colRun[c] });
+        withCloses(closes, 0, () => {
+          S.rowRun[r] = 0; S.colRun[c] = 0;
+          S.grid[i] = v;
+          let fine = true;
+          if (atRowEnd && rcl && S.popcnt(S.rowUsed[r]) !== rcl.length) fine = false;
+          if (fine && !S.lineFeasible(rcl, S.rowUsed[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
+          if (fine && !S.lineFeasible(ccl, S.colUsed[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
+          if (fine) rec(i + 1);
+          S.grid[i] = -1;
+          S.rowRun[r] = svRRun; S.colRun[c] = svCRun;
+        });
       } else {
         let ok = true;
         if ((S.rowMask[r] & (1 << v)) || (S.colMask[c] & (1 << v))) ok = false;
-        if (ok && rcl) {
-          if (S.rowGi[r] >= rcl.length) ok = false;
-          else if (S.rowRun[r] + v > S.groupMax(rcl[S.rowGi[r]])) ok = false;
-        }
-        if (ok && ccl) {
-          if (S.colGi[c] >= ccl.length) ok = false;
-          else if (S.colRun[c] + v > S.groupMax(ccl[S.colGi[c]])) ok = false;
-        }
+        if (ok && rcl && S.rowRun[r] + v > S.groupMaxUnused(rcl, S.rowUsed[r])) ok = false;
+        if (ok && rcl && S.popcnt(S.rowUsed[r]) >= rcl.length && S.rowRun[r] === 0) ok = false;
+        if (ok && ccl && S.colRun[c] + v > S.groupMaxUnused(ccl, S.colUsed[c])) ok = false;
+        if (ok && ccl && S.popcnt(S.colUsed[c]) >= ccl.length && S.colRun[c] === 0) ok = false;
         if (ok) {
           S.rowMask[r] |= 1 << v; S.colMask[c] |= 1 << v;
           S.rowRun[r] += v; S.colRun[c] += v;
           S.grid[i] = v;
           const finish = () => {
             let fine = true;
-            if (atRowEnd && rcl && S.rowGi[r] !== rcl.length) fine = false;
-            if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
-            if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
+            if (fine && !S.lineFeasible(rcl, S.rowUsed[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
+            if (fine && !S.lineFeasible(ccl, S.colUsed[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
             if (fine) rec(i + 1);
           };
-          if (atRowEnd && S.rowRun[r] > 0) {
-            // the row's pending group closes here (may branch)
-            if (!(rcl && S.rowGi[r] >= rcl.length)) {
-              const closes = rcl ? [{ g: rcl[S.rowGi[r]], s: S.rowRun[r] }] : [];
-              withCloses(closes, 0, () => {
-                const svR = { gi: S.rowGi[r], run: S.rowRun[r] };
-                S.rowGi[r]++; S.rowRun[r] = 0;
-                finish();
-                S.rowGi[r] = svR.gi; S.rowRun[r] = svR.run;
-              });
-            }
+          if (atRowEnd) {
+            // the row's pending group closes at the boundary
+            const closes = [{ clue: rcl, usedRef: rowUsedRef[r], vals: S.rowVals[r], s: S.rowRun[r] }];
+            withCloses(closes, 0, () => {
+              const svRun = S.rowRun[r];
+              S.rowRun[r] = 0;
+              let fine = !(rcl && S.popcnt(S.rowUsed[r]) !== rcl.length);
+              if (fine) finish();
+              S.rowRun[r] = svRun;
+            });
           } else finish();
           S.grid[i] = -1;
           S.rowMask[r] &= ~(1 << v); S.colMask[c] &= ~(1 << v);
-          S.rowRun[r] = sv.rRun; S.colRun[c] = sv.cRun;
+          S.rowRun[r] = svRRun; S.colRun[c] = svCRun;
         }
       }
       if (timedOut || solCount >= maxSol) return;

@@ -10,11 +10,12 @@ function makeSumsState(R, C, D) {
   return { R, C, D, cand: new Int32Array(R * C).fill(full),
     letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter
     kd: false,   // Knapp daneben: every clue is one off its true value
+    coral: false,   // Coral: clues ascending (unordered); blanks form a coral
     fastLadder: false, noTrial: false };
 }
 function cloneSumsState(st) {
   return { R: st.R, C: st.C, D: st.D, cand: Int32Array.from(st.cand),
-    letterCand: Int32Array.from(st.letterCand), kd: st.kd,
+    letterCand: Int32Array.from(st.letterCand), kd: st.kd, coral: st.coral,
     fastLadder: st.fastLadder, noTrial: st.noTrial, __lineCache: st.__lineCache };
 }
 function filterLetter(st, L, keepMask) {
@@ -121,6 +122,19 @@ function lineSumSets(st, line) {
     }
     if (!changed) break;
   }
+  if (st.coral) {
+    // ascending clues: keep only values that fit an ascending tuple
+    const K = sets.length;
+    const lo = new Array(K), hi = new Array(K);
+    let prev = 1;
+    for (let k = 0; k < K; k++) { let m2 = Infinity; for (const v of sets[k]) if (v >= prev && v < m2) m2 = v; lo[k] = m2; prev = m2; }
+    let next = Infinity;
+    for (let k = K - 1; k >= 0; k--) { let m2 = -1; for (const v of sets[k]) if (v <= next && v > m2) m2 = v; hi[k] = m2; next = m2; }
+    for (let k = 0; k < K; k++) {
+      const gLo = k > 0 ? lo[k - 1] : 1, gHi = k + 1 < K ? hi[k + 1] : Infinity;
+      for (const v of [...sets[k]]) if (v < gLo || v > gHi) sets[k].delete(v);
+    }
+  }
   return sets;
 }
 
@@ -186,6 +200,28 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   const parsedToks = line.clue ? line.clue.map(tokenParse) : null;
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0;
+  function nextIdx() { let k = 0; while (k < K && (usedIdx & (1 << k))) k++; return k; }
+  function closeIdxOptions(run) {
+    if (!clue) return [-1];
+    const out = [];
+    if (st.coral) {
+      for (let k = 0; k < K; k++) {
+        if (usedIdx & (1 << k)) continue;
+        if (!clue[k].has(run)) continue;
+        let ok = true;
+        for (let k2 = 0; k2 < K && ok; k2++) {
+          if (!(usedIdx & (1 << k2)) || k2 === k) continue;
+          if (k2 < k && chosen[k2] > run) ok = false;
+          if (k2 > k && chosen[k2] < run) ok = false;
+        }
+        if (ok) out.push(k);
+      }
+    } else {
+      const k = nextIdx();
+      if (k < K && clue[k].has(run)) out.push(k);
+    }
+    return out;
+  }
   function bindDisplayed(gi, v) {
     const p2 = parsedToks[gi];
     if (!p2 || !p2.chars) return [];
@@ -207,31 +243,33 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   }
   function unbindClose(bound) { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } }
   const vals = new Int8Array(n);
-  const groupSums = new Int32Array((line.clue || []).length);
+  const K = (line.clue || []).length;
+  const groupSums = new Int32Array(K);
+  const chosen = new Int32Array(K);
+  let usedIdx = 0;
   let nodes = 0, overflow = false, stopped = false;
   const cap = nodeCap || 400000;
   function rec(p, gi, run, mask) {
     if (overflow || stopped) return;
     if (++nodes > cap) { overflow = true; return; }
     if (p === n) {
-      let g2 = gi;
       if (run > 0) {
-        if (clue && (g2 >= clue.length || !clue[g2].has(run))) return;
-        groupSums[g2] = run;
-        if (clue) {
-          if (g2 + 1 !== clue.length) return;
+        if (!clue) { if (onSolution(vals, groupSums) === true) stopped = true; return; }
+        for (const k of closeIdxOptions(run)) {
+          if ((usedIdx | (1 << k)) !== (1 << K) - 1) continue;
           for (const dv of displayedOptions(st, run)) {
-            const bound = bindDisplayed(g2, dv);
+            const bound = bindDisplayed(k, dv);
             if (bound === null) continue;
+            usedIdx |= 1 << k; chosen[k] = run; groupSums[k] = run;
             if (onSolution(vals, groupSums) === true) stopped = true;
+            usedIdx &= ~(1 << k); chosen[k] = 0;
             unbindClose(bound);
-            if (stopped) break;
+            if (stopped) return;
           }
-          return;
         }
-        g2++;
+        return;
       }
-      if (clue && g2 !== clue.length) return;
+      if (clue && usedIdx !== (1 << K) - 1) return;
       if (onSolution(vals, groupSums) === true) stopped = true;
       return;
     }
@@ -239,36 +277,39 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
     // blank
     if (m & 1) {
       if (run > 0) {
-        if (!clue || (gi < clue.length && clue[gi].has(run))) {
-          vals[p] = 0; groupSums[gi] = run;
-          if (clue) {
+        vals[p] = 0;
+        if (clue) {
+          for (const k of closeIdxOptions(run)) {
             for (const dv of displayedOptions(st, run)) {
-              const bound = bindDisplayed(gi, dv);
+              const bound = bindDisplayed(k, dv);
               if (bound === null) continue;
+              usedIdx |= 1 << k; chosen[k] = run; groupSums[k] = run;
               rec(p + 1, gi + 1, 0, mask);
+              usedIdx &= ~(1 << k); chosen[k] = 0;
               unbindClose(bound);
               if (stopped || overflow) break;
             }
-          } else rec(p + 1, gi + 1, 0, mask);
-        }
+            if (stopped || overflow) break;
+          }
+        } else rec(p + 1, gi + 1, 0, mask);
       } else { vals[p] = 0; rec(p + 1, gi, 0, mask); }
     }
     // digits
     for (let d = 1; d <= st.D; d++) {
       if (!(m & (1 << d)) || (mask & (1 << d))) continue;
       if (clue) {
-        if (gi >= clue.length) continue;
-        if (run + d > clueMax[gi]) continue;
-        // some allowed sum must remain reachable with distinct unused digits
-        let reach = clue[gi].has(run + d);
-        if (!reach) {
-          const avail = ~(mask | (1 << d)) & ((1 << (st.D + 1)) - 2);
-          for (const t of clue[gi]) if (t > run + d && comboFeasibleUB(t - run - d, avail)) { reach = true; break; }
+        if (usedIdx === (1 << K) - 1 && run === 0) continue;
+        const avail = ~(mask | (1 << d)) & ((1 << (st.D + 1)) - 2);
+        let reach = false;
+        for (let k = 0; k < K && !reach; k++) {
+          if (usedIdx & (1 << k)) continue;
+          if (!st.coral && k !== nextIdx()) break;
+          if (clue[k].has(run + d)) { reach = true; break; }
+          for (const t of clue[k]) if (t > run + d && comboFeasibleUB(t - run - d, avail)) { reach = true; break; }
         }
         if (!reach) continue;
       }
       vals[p] = d;
-      groupSums[gi] = run + d;
       rec(p + 1, gi, run + d, mask | (1 << d));
     }
   }
@@ -485,6 +526,7 @@ function ruleLetterPairs(st, clues) {
 // exact joint feasibility of one line's groups: pairwise-disjoint digit
 // subsets of 1..D realising each group's sum, within the line's cell budget
 function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
+  if (st.coral) return lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes);
   // groups sharing crypto letters have correlated sums: picking a value for a
   // group binds its letters (consistently, all letters distinct), so two 'G'
   // groups must take the SAME sum and 'GH' must agree with them, etc.
@@ -549,6 +591,79 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
       }
     }
   })(0, 0, 0);
+  return ok;
+}
+
+// coral joint feasibility: tokens are ascending by index but map to spans in
+// an unknown order; assign each token a value (ascending), a digit subset,
+// and (when sizes are given) a distinct span slot of matching size
+function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
+  const K = sets.length;
+  const maxCells = n - (K - 1);
+  const lists = sets.map(s2 => [...s2].sort((a, b) => a - b));
+  const parsed = tokens.map(tokenParse);
+  const letterVal = new Int8Array(26).fill(-1);
+  let digitTaken = 0, ok = false;
+  const subsMemo = new Map();
+  function subsetsFor(v) {
+    if (subsMemo.has(v)) return subsMemo.get(v);
+    const out = [];
+    (function gen(d, mask, sum, cnt) {
+      if (sum === v) { out.push({ mask, cnt }); return; }
+      if (d > st.D || sum > v) return;
+      gen(d + 1, mask, sum, cnt);
+      gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+    })(1, 0, 0, 0);
+    subsMemo.set(v, out);
+    return out;
+  }
+  function bindDisp(g, dv) {
+    const p2 = parsed[g];
+    if (!p2.chars) return [];
+    const ds = String(dv).split('').map(Number);
+    if (ds.length !== p2.chars.length) return null;
+    const bound = [];
+    const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
+    for (let q = 0; q < ds.length; q++) {
+      const ch = p2.chars[q], d = ds[q];
+      if (ch.d !== undefined) { if (ch.d !== d) return bail(); }
+      else if (ch.L !== undefined) {
+        if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) return bail(); }
+        else if ((digitTaken & (1 << d)) || !(st.letterCand[ch.L] & (1 << d))) return bail();
+        else { letterVal[ch.L] = d; digitTaken |= 1 << d; bound.push(ch.L); }
+      }
+    }
+    return bound;
+  }
+  const unbind = b => { for (const L of b) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } };
+  (function rec(k, used, cells, spanUsed, prevV) {
+    if (ok) return;
+    if (k === K) { ok = true; return; }
+    for (const v of lists[k]) {
+      if (v < prevV) continue;   // ascending by token index
+      if (requireVal && requireVal.g === k && requireVal.v !== v) continue;
+      for (const dv of displayedOptions(st, v)) {
+        const bound = bindDisp(k, dv);
+        if (bound === null) continue;
+        for (const sub of subsetsFor(v)) {
+          if (sub.mask & used) continue;
+          if (cells + sub.cnt > maxCells) continue;
+          if (sizes) {
+            // claim a span slot of exactly this size
+            let placed = false;
+            for (let sp = 0; sp < sizes.length && !placed; sp++) {
+              if ((spanUsed & (1 << sp)) || sizes[sp] !== sub.cnt) continue;
+              rec(k + 1, used | sub.mask, cells + sub.cnt, spanUsed | (1 << sp), v);
+              placed = true;   // identical sizes are interchangeable
+            }
+          } else rec(k + 1, used | sub.mask, cells + sub.cnt, 0, v);
+          if (ok) break;
+        }
+        unbind(bound);
+        if (ok) return;
+      }
+    }
+  })(0, 0, 0, 0, 0);
   return ok;
 }
 
@@ -624,6 +739,117 @@ function ruleKDOffByOne(st, clues) {
   return null;
 }
 
+/* ---------------- coral rules ---------------- */
+// helpers over the whole grid
+function coralNeighbors(st, i) {
+  const r = (i / st.C) | 0, c = i % st.C, out = [];
+  if (r > 0) out.push(i - st.C);
+  if (r < st.R - 1) out.push(i + st.C);
+  if (c > 0) out.push(i - 1);
+  if (c < st.C - 1) out.push(i + 1);
+  return out;
+}
+
+// rule (coral): no 2x2 of blanks — three committed blanks force the fourth used
+function ruleCoral2x2(st, clues) {
+  if (!st.coral) return null;
+  for (let r = 0; r + 1 < st.R; r++) for (let c = 0; c + 1 < st.C; c++) {
+    const cells = [r * st.C + c, r * st.C + c + 1, (r + 1) * st.C + c, (r + 1) * st.C + c + 1];
+    const blanks = cells.filter(i => st.cand[i] === 1);
+    if (blanks.length === 4) return { rule: 'Coral 2\u00d72', contradiction: true, cells,
+      text: 'The blank cells ' + cells.map(i => rc(st, i)).join(', ') + ' form a 2\u00d72 \u2014 the coral may not contain one.' };
+    if (blanks.length !== 3) continue;
+    const open = cells.find(i => st.cand[i] !== 1);
+    if (!(st.cand[open] & 1)) continue;
+    return { rule: 'Coral 2\u00d72', cells: [open],
+      text: 'Three cells of the 2\u00d72 at ' + rc(st, cells[0]) + ' are blank; the coral may not contain a 2\u00d72 of blanks, so ' + rc(st, open) + ' holds a digit.',
+      apply() { filterCand(st, open, ~1); } };
+  }
+  return null;
+}
+
+// rule (coral): all blanks are orthogonally connected — a lone cut cell on
+// every path between two committed-blank regions must itself be blank
+function ruleCoralConnect(st, clues) {
+  if (!st.coral) return null;
+  const N = st.R * st.C;
+  const committed = [];
+  for (let i = 0; i < N; i++) if (st.cand[i] === 1) committed.push(i);
+  if (committed.length < 2) return null;
+  const canBlank = i => (st.cand[i] & 1) !== 0;
+  function reachable(block) {
+    const seen = new Uint8Array(N);
+    const stack = [committed[0]];
+    seen[committed[0]] = 1;
+    while (stack.length) {
+      const i = stack.pop();
+      for (const j of coralNeighbors(st, i)) if (!seen[j] && j !== block && canBlank(j)) { seen[j] = 1; stack.push(j); }
+    }
+    return seen;
+  }
+  const base = reachable(-1);
+  for (const i of committed) if (!base[i]) {
+    return { rule: 'Coral connectivity', contradiction: true, cells: [i],
+      text: 'The blank at ' + rc(st, i) + ' cannot connect to the rest of the coral \u2014 the position is contradictory.' };
+  }
+  // cut cells: undecided blank-capable cells whose loss disconnects the coral
+  for (let i = 0; i < N; i++) {
+    if (st.cand[i] === 1 || !canBlank(i) || popc(st.cand[i]) === 1) continue;
+    const seen = reachable(i);
+    let cut = false;
+    for (const j of committed) if (!seen[j]) { cut = true; break; }
+    if (!cut) continue;
+    return { rule: 'Coral connectivity', cells: [i],
+      text: 'Every path joining the coral\u2019s parts runs through ' + rc(st, i) + ' \u2014 the coral is one connected group of blanks, so ' + rc(st, i) + ' is blank.',
+      apply() { filterCand(st, i, 1); } };
+  }
+  return null;
+}
+
+// rule (coral): every group of digit cells touches the grid edge — a digit
+// region whose only escape runs through one cell forces that cell used
+function ruleCoralReach(st, clues) {
+  if (!st.coral) return null;
+  const N = st.R * st.C;
+  const canUse = i => (st.cand[i] & ~1) !== 0;
+  const onEdge = i => { const r = (i / st.C) | 0, c = i % st.C; return r === 0 || c === 0 || r === st.R - 1 || c === st.C - 1; };
+  const committedUsed = [];
+  for (let i = 0; i < N; i++) if ((st.cand[i] & 1) === 0) committedUsed.push(i);
+  if (!committedUsed.length) return null;
+  function escapes(from, block) {
+    // can this used cell reach the edge through use-capable cells?
+    const seen = new Uint8Array(N);
+    const stack = [from];
+    seen[from] = 1;
+    if (onEdge(from) && from !== block) return true;
+    while (stack.length) {
+      const i = stack.pop();
+      for (const j of coralNeighbors(st, i)) {
+        if (seen[j] || j === block || !canUse(j)) continue;
+        if (onEdge(j)) return true;
+        seen[j] = 1; stack.push(j);
+      }
+    }
+    return false;
+  }
+  for (const i of committedUsed) {
+    if (!escapes(i, -1)) {
+      return { rule: 'Coral reach', contradiction: true, cells: [i],
+        text: 'The digit region at ' + rc(st, i) + ' is sealed off from the edge \u2014 every group of digits must touch the grid\u2019s border.' };
+    }
+  }
+  for (let j = 0; j < N; j++) {
+    if (!canUse(j) || popc(st.cand[j]) === 1) continue;
+    for (const i of committedUsed) {
+      if (escapes(i, j)) continue;
+      return { rule: 'Coral reach', cells: [j],
+        text: 'The digit region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 digit groups may not be locked in by the coral, so ' + rc(st, j) + ' holds a digit.',
+        apply() { filterCand(st, j, ~1); } };
+    }
+  }
+  return null;
+}
+
 // rule: full house — a line whose clue sums total 1+2+..+D must contain every digit
 function ruleFullLine(st, clues) {
   if (st.kd) return null;   // displayed totals are off by one per group under Knapp daneben
@@ -661,7 +887,14 @@ function ruleLinePlacements(st, clues) {
     // enumerate group spans: positions + lengths, respecting current masks
     const G = line.clue.length;
     const maxSum = st.D * (st.D + 1) / 2;
-    const sumSets = lineSumSets(st, line);   // budget-refined: all groups share the line's distinct digits
+    const tokenSets = lineSumSets(st, line);   // budget-refined, per clue token
+    let sumSets = tokenSets;
+    if (st.coral) {
+      // group order is unknown: every span may take any group's sums
+      const union = new Set();
+      for (const s2 of tokenSets) for (const v of s2) union.add(v);
+      sumSets = tokenSets.map(() => union);
+    }
     if (sumSets.some(s2 => s2.size === 0)) {
       return { rule: 'Line placements', contradiction: true, cells: line.cells.slice(),
         text: line.name + '\u2019s clue ' + line.clue.map(tokenLabel).join(', ') + ' admits no possible sum for one of its groups \u2014 the position is contradictory.' };
@@ -688,7 +921,7 @@ function ruleLinePlacements(st, clues) {
         if (G > 0) {
           const key = spanLen.join(',');
           let feas = sizeFeas.get(key);
-          if (feas === undefined) { feas = lineJointFeasible(st, line.clue, sumSets, n, null, Array.from(spanLen)); sizeFeas.set(key, feas); }
+          if (feas === undefined) { feas = lineJointFeasible(st, line.clue, tokenSets, n, null, Array.from(spanLen)); sizeFeas.set(key, feas); }
           if (!feas) return;
         }
         count++;
@@ -777,11 +1010,13 @@ function decidedSpans(st, line) {
     else return null;   // an undecided cell outside any committed run
   }
   if (runs.length !== line.clue.length) return null;
+  if (st.coral) return null;   // group order unknown: runs cannot be mapped to clue indices
   return runs.map(([a, b], g) => ({ a, b, tok: line.clue[g], cells: line.cells.slice(a, b) }));
 }
 
 // rule: group combinations — a fully-delimited group's sum restricts its digit set
 function ruleGroupCombos(st, clues) {
+  if (st.coral) return null;   // runs cannot be matched to clue groups in order
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
     const n = line.cells.length;
@@ -1142,8 +1377,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -1183,6 +1418,9 @@ const SUMS_STRATEGIES = [
   { name: 'Letter deduction', desc: 'The sums a clue group can actually achieve pin the decimal digits its crypto letters can stand for \u2014 impossible digits are removed from the letter\u2019s candidates.' },
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
   { name: 'Letter trial', desc: 'Suppose a nearly-decided cipher letter stood for one of its digits and follow the quick consequences \u2014 a contradiction removes that digit, chain shown.' },
+  { name: 'Coral 2\u00d72', variant: 'coral', desc: 'The coral (the blank cells) may not contain a 2\u00d72 block \u2014 three blanks in a square force the fourth cell to hold a digit.' },
+  { name: 'Coral connectivity', variant: 'coral', desc: 'All blank cells form one orthogonally connected coral \u2014 a cell that every connection between two coral parts must pass through is itself blank.' },
+  { name: 'Coral reach', variant: 'coral', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
 ];
