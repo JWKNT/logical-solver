@@ -720,6 +720,7 @@ label.chk { cursor: pointer; user-select: none; }
       <label class="chk"><input type="checkbox" id="sumsVNo22Blank"> No 2×2 shaded</label>
       <label class="chk"><input type="checkbox" id="sumsVAsc"> Ascending clues</label>
       <label class="chk"><input type="checkbox" id="sumsVReach"> Numbers reach edge</label>
+      <label class="chk"><input type="checkbox" id="sumsVBlankReach"> Shaded reach edge</label>
       <label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label>
     </span>
     <span class="sep"></span>
@@ -4907,7 +4908,7 @@ function makeSolver(cfg) {
   const letterIds = [];
   const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
   const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
-  const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
+  const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
     cfg.coral ? { blankConn: true, no22blank: true, asc: true, reach: true } : null,
     cfg.variants || null);
   const coral = V.asc;   // 'coral' below = unordered ascending clues
@@ -5108,9 +5109,30 @@ function search(cfg, opts) {
     }
     return cnt === total;
   }
+  function edgeReachOk(isMember) {
+    const seen = new Uint8Array(N);
+    const stack = [];
+    for (let i = 0; i < N; i++) {
+      const r = (i / C) | 0, c = i % C;
+      if (isMember(i) && (r === 0 || c === 0 || r === R - 1 || c === C - 1)) { seen[i] = 1; stack.push(i); }
+    }
+    while (stack.length) {
+      const i = stack.pop();
+      const r = (i / C) | 0, c = i % C;
+      for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const r2 = r + dr, c2 = c + dc;
+        if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+        const j = r2 * C + c2;
+        if (!seen[j] && isMember(j)) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    for (let i = 0; i < N; i++) if (isMember(i) && !seen[i]) return false;
+    return true;
+  }
   function shapeOk() {
     if (V.blankConn && !connectedOk(i => S.grid[i] === 0)) return false;
     if (V.numConn && !connectedOk(i => S.grid[i] > 0)) return false;
+    if (V.blankReach && !edgeReachOk(i => S.grid[i] === 0)) return false;
     if (!V.reach) return true;
     return reachOk();
   }
@@ -5332,7 +5354,7 @@ function makeSumsState(R, C, D, values) {
     cand: new Int32Array(R * C).fill(full),
     letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter
     kd: false,   // Knapp daneben: every clue is one off its true value
-    variants: { numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
+    variants: { numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
     fastLadder: false, noTrial: false };
 }
 function cloneSumsState(st) {
@@ -6237,12 +6259,12 @@ function ruleCoral2x2(st, clues) {
   for (let r = 0; r + 1 < st.R; r++) for (let c = 0; c + 1 < st.C; c++) {
     const cells = [r * st.C + c, r * st.C + c + 1, (r + 1) * st.C + c, (r + 1) * st.C + c + 1];
     const blanks = cells.filter(i => st.cand[i] === 1);
-    if (blanks.length === 4) return { rule: 'Coral 2\u00d72', contradiction: true, cells,
+    if (blanks.length === 4) return { rule: 'No 2\u00d72 shaded', contradiction: true, cells,
       text: 'The blank cells ' + cells.map(i => rc(st, i)).join(', ') + ' form a 2\u00d72 \u2014 the coral may not contain one.' };
     if (blanks.length !== 3) continue;
     const open = cells.find(i => st.cand[i] !== 1);
     if (!(st.cand[open] & 1)) continue;
-    return { rule: 'Coral 2\u00d72', cells: [open],
+    return { rule: 'No 2\u00d72 shaded', cells: [open],
       text: 'Three cells of the 2\u00d72 at ' + rc(st, cells[0]) + ' are blank; the coral may not contain a 2\u00d72 of blanks, so ' + rc(st, open) + ' holds a digit.',
       apply() { filterCand(st, open, ~1); } };
   }
@@ -6253,7 +6275,15 @@ function ruleCoral2x2(st, clues) {
 // diagonal filled is impossible: the coral path joining the two blanks, plus
 // their corner touch, closes a loop that seals one filled cell off the edge
 function ruleCoralChecker(st, clues) {
-  if (!(st.variants.blankConn && st.variants.reach)) return null;
+  // the checkerboard ban needs one type orthogonally connected AND the other
+  // type all touching the edge: the connected type's path plus the corner
+  // touch closes a loop that seals one cell of the other type off the border
+  const viaShaded = st.variants.blankConn && st.variants.reach;
+  const viaNumbers = st.variants.numConn && st.variants.blankReach;
+  if (!viaShaded && !viaNumbers) return null;
+  const why = viaShaded
+    ? 'the shaded cells\u2019 connection would seal a digit region off the edge'
+    : 'the digit cells\u2019 connection would seal a shaded region off the edge';
   const isBlank = i => st.cand[i] === 1;
   const isUsed = i => (st.cand[i] & 1) === 0;
   for (let r = 0; r + 1 < st.R; r++) for (let c = 0; c + 1 < st.C; c++) {
@@ -6261,14 +6291,14 @@ function ruleCoralChecker(st, clues) {
     for (const [p, q, u, v] of [[a, d, b, c2], [b, c2, a, d]]) {
       if (!isBlank(p) || !isBlank(q)) continue;
       if (isUsed(u) && isUsed(v)) {
-        return { rule: 'Coral checkerboard', contradiction: true, cells: [a, b, c2, d],
-          text: rc(st, p) + ', ' + rc(st, q) + ' are blank and ' + rc(st, u) + ', ' + rc(st, v) + ' hold digits \u2014 a checkerboard 2\u00d72 is impossible in a coral (the blanks\u2019 connection would seal one digit region off the edge).' };
+        return { rule: 'Checkerboard', contradiction: true, cells: [a, b, c2, d],
+          text: rc(st, p) + ', ' + rc(st, q) + ' are blank and ' + rc(st, u) + ', ' + rc(st, v) + ' hold digits \u2014 a checkerboard 2\u00d72 is impossible: ' + why + '.' };
       }
       for (const [w, x] of [[u, v], [v, u]]) {
         if (!isUsed(w)) continue;
         if (!(st.cand[x] & ~1) || !(st.cand[x] & 1)) continue;   // undecided both ways
-        return { rule: 'Coral checkerboard', cells: [x],
-          text: rc(st, p) + ' and ' + rc(st, q) + ' are blank diagonal neighbours and ' + rc(st, w) + ' holds a digit \u2014 a checkerboard 2\u00d72 is impossible in a coral, so ' + rc(st, x) + ' is blank.',
+        return { rule: 'Checkerboard', cells: [x],
+          text: rc(st, p) + ' and ' + rc(st, q) + ' are blank diagonal neighbours and ' + rc(st, w) + ' holds a digit \u2014 a checkerboard 2\u00d72 is impossible (' + why + '), so ' + rc(st, x) + ' is blank.',
           apply() { filterCand(st, x, 1); } };
       }
     }
@@ -6352,7 +6382,7 @@ function ruleCoralConnect(st, clues) {
   }
   const base = reachable(-1);
   for (const i of committed) if (!base[i]) {
-    return { rule: 'Coral connectivity', contradiction: true, cells: [i],
+    return { rule: 'Shaded connected', contradiction: true, cells: [i],
       text: 'The blank at ' + rc(st, i) + ' cannot connect to the rest of the coral \u2014 the position is contradictory.' };
   }
   // cut cells: undecided blank-capable cells whose loss disconnects the coral
@@ -6362,7 +6392,7 @@ function ruleCoralConnect(st, clues) {
     let cut = false;
     for (const j of committed) if (!seen[j]) { cut = true; break; }
     if (!cut) continue;
-    return { rule: 'Coral connectivity', cells: [i],
+    return { rule: 'Shaded connected', cells: [i],
       text: 'Every path joining the coral\u2019s parts runs through ' + rc(st, i) + ' \u2014 the coral is one connected group of blanks, so ' + rc(st, i) + ' is blank.',
       apply() { filterCand(st, i, 1); } };
   }
@@ -6398,7 +6428,7 @@ function ruleCoralSpine(st, clues) {
     if (!lineMustBlank(st, line)) continue;
     const T = line.cells.filter(canBlank);
     if (!T.length) {
-      return { rule: 'Coral spine', contradiction: true, cells: line.cells.slice(),
+      return { rule: 'Shaded spine', contradiction: true, cells: line.cells.slice(),
         text: line.name + '\u2019s clue forces at least one shaded cell, but no cell of the line can still be shaded.' };
     }
     lineTerms.push({ cells: T, why: line.name.toLowerCase() + ' (its clue forces a shaded cell)' });
@@ -6422,7 +6452,7 @@ function ruleCoralSpine(st, clues) {
   const okComps = [];
   for (let c = 0; c < nComp; c++) if (hitsAll(c)) okComps.push(c);
   if (!okComps.length) {
-    return { rule: 'Coral spine', contradiction: true, cells: [],
+    return { rule: 'Shaded spine', contradiction: true, cells: [],
       text: 'No connected region of blank-capable cells can reach every line whose clue forces a shaded cell \u2014 the single coral cannot exist.' };
   }
   // (a) a blank-capable cell outside every viable component cannot be shaded
@@ -6433,7 +6463,7 @@ function ruleCoralSpine(st, clues) {
   }
   if (hits.length) {
     const missed = terminals.find(t => !t.cells.some(i2 => comp[i2] === comp[hits[0]]));
-    return { rule: 'Coral spine', cells: hits.slice(0, 12),
+    return { rule: 'Shaded spine', cells: hits.slice(0, 12),
       text: 'Every shaded cell joins the one coral, which must reach ' + (missed ? missed.why : 'every clued line') + ' \u2014 but ' + hits.slice(0, 6).map(i2 => rc(st, i2)).join(', ') + (hits.length > 6 ? ', \u2026' : '') + ' sit' + (hits.length === 1 ? 's' : '') + ' in a pocket that cannot, so ' + (hits.length === 1 ? 'it holds a digit' : 'they hold digits') + '.',
       apply() { for (const i2 of hits) filterCand(st, i2, ~1); } };
   }
@@ -6460,7 +6490,7 @@ function ruleCoralSpine(st, clues) {
         if (all) any = true;
       }
       if (!any) {
-        return { rule: 'Coral spine', cells: [x],
+        return { rule: 'Shaded spine', cells: [x],
           text: 'Every route the coral could take between the lines that must hold shaded cells passes through ' + rc(st, x) + ' \u2014 so ' + rc(st, x) + ' is shaded.',
           apply() { filterCand(st, x, 1); } };
       }
@@ -6497,7 +6527,7 @@ function ruleCoralReach(st, clues) {
   }
   for (const i of committedUsed) {
     if (!escapes(i, -1)) {
-      return { rule: 'Coral reach', contradiction: true, cells: [i],
+      return { rule: 'Numbers reach edge', contradiction: true, cells: [i],
         text: 'The digit region at ' + rc(st, i) + ' is sealed off from the edge \u2014 every group of digits must touch the grid\u2019s border.' };
     }
   }
@@ -6505,9 +6535,52 @@ function ruleCoralReach(st, clues) {
     if (!canUse(j) || !(st.cand[j] & 1)) continue;   // must still allow blank, or there is nothing to deduce
     for (const i of committedUsed) {
       if (escapes(i, j)) continue;
-      return { rule: 'Coral reach', cells: [j],
+      return { rule: 'Numbers reach edge', cells: [j],
         text: 'The digit region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 digit groups may not be locked in by the coral, so ' + rc(st, j) + ' holds a digit.',
         apply() { filterCand(st, j, ~1); } };
+    }
+  }
+  return null;
+}
+
+// rule (shape): every shaded group touches the grid's edge — a shaded
+// region's last escape route to the border must stay shaded
+function ruleBlankReach(st, clues) {
+  if (!st.variants.blankReach) return null;
+  const N = st.R * st.C;
+  const canBlank = i => (st.cand[i] & 1) !== 0;
+  const onEdge = i => { const r = (i / st.C) | 0, c = i % st.C; return r === 0 || c === 0 || r === st.R - 1 || c === st.C - 1; };
+  const committedBlank = [];
+  for (let i = 0; i < N; i++) if (st.cand[i] === 1) committedBlank.push(i);
+  if (!committedBlank.length) return null;
+  function escapes(from, block) {
+    const seen = new Uint8Array(N);
+    const stack = [from];
+    seen[from] = 1;
+    if (onEdge(from) && from !== block) return true;
+    while (stack.length) {
+      const i = stack.pop();
+      for (const j of coralNeighbors(st, i)) {
+        if (seen[j] || j === block || !canBlank(j)) continue;
+        if (onEdge(j)) return true;
+        seen[j] = 1; stack.push(j);
+      }
+    }
+    return false;
+  }
+  for (const i of committedBlank) {
+    if (!escapes(i, -1)) {
+      return { rule: 'Shaded reach edge', contradiction: true, cells: [i],
+        text: 'The shaded region at ' + rc(st, i) + ' is sealed off from the edge \u2014 every shaded group must touch the grid\u2019s border.' };
+    }
+  }
+  for (let j = 0; j < N; j++) {
+    if (!canBlank(j) || !(st.cand[j] & ~1)) continue;   // must be undecided both ways
+    for (const i of committedBlank) {
+      if (escapes(i, j)) continue;
+      return { rule: 'Shaded reach edge', cells: [j],
+        text: 'The shaded region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 shaded groups may not be locked in, so ' + rc(st, j) + ' is blank.',
+        apply() { filterCand(st, j, 1); } };
     }
   }
   return null;
@@ -7098,8 +7171,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -7139,14 +7212,15 @@ const SUMS_STRATEGIES = [
   { name: 'Letter deduction', desc: 'The sums a clue group can actually achieve pin the decimal digits its crypto letters can stand for \u2014 impossible digits are removed from the letter\u2019s candidates.' },
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
   { name: 'Letter trial', desc: 'Suppose a nearly-decided cipher letter stood for one of its digits and follow the quick consequences \u2014 a contradiction removes that digit, chain shown.' },
-  { name: 'Coral 2\u00d72', variant: 'no22blank', desc: 'No 2\u00d72 block of shaded cells \u2014 three blanks in a square force the fourth cell to hold a digit.' },
+  { name: 'No 2\u00d72 shaded', variant: 'no22blank', desc: 'No 2\u00d72 block of shaded cells \u2014 three blanks in a square force the fourth cell to hold a digit.' },
   { name: 'No 2\u00d72 numbers', variant: 'no22num', desc: 'No 2\u00d72 block of digit cells \u2014 three digits in a square force the fourth cell blank.' },
-  { name: 'Coral checkerboard', variant: 'checker', desc: 'With shaded connected and numbers touching the edge, a 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 two diagonal blanks beside a digit force the fourth cell blank.' },
-  { name: 'Coral connectivity', variant: 'blankConn', desc: 'All shaded cells form one orthogonally connected group \u2014 a cell that every connection between two shaded parts must pass through is itself blank.' },
+  { name: 'Checkerboard', variant: 'checker', desc: 'With shaded connected and numbers touching the edge, a 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 two diagonal blanks beside a digit force the fourth cell blank.' },
+  { name: 'Shaded connected', variant: 'blankConn', desc: 'All shaded cells form one orthogonally connected group \u2014 a cell that every connection between two shaded parts must pass through is itself blank.' },
   { name: 'Numbers connected', variant: 'numConn', desc: 'All digit cells form one orthogonally connected group \u2014 a cell that every connection between two digit regions must pass through holds a digit.' },
   { name: 'Coral escape', variant: 'blankConn', desc: 'A line\u2019s shaded cells come in stretches, and each stretch must join the coral through a blank-capable neighbour outside the line \u2014 arrangements that seal a stretch into a pocket are impossible.' },
-  { name: 'Coral spine', variant: 'blankConn', desc: 'The one coral must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
-  { name: 'Coral reach', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
+  { name: 'Shaded spine', variant: 'blankConn', desc: 'The one coral must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
+  { name: 'Shaded reach edge', variant: 'blankReach', desc: 'Every connected shaded group touches the grid\u2019s edge \u2014 a shaded region\u2019s last escape route to the border stays shaded.' },
+  { name: 'Numbers reach edge', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
 ];
@@ -7356,7 +7430,7 @@ function buildStrategyPanel() {
   };
   for (const s of sums.SUMS_STRATEGIES.filter(s2 => !s2.variant)) ol.appendChild(mk(s));
   const vs = readVariants();
-  const ruleOn = key => key === 'checker' ? (vs.blankConn && vs.reach) : !!vs[key];
+  const ruleOn = key => key === 'checker' ? ((vs.blankConn && vs.reach) || (vs.numConn && vs.blankReach)) : !!vs[key];
   const shapeRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant && s2.variant !== 'kd');
   if (shapeRules.length) {
     const anyOn = shapeRules.some(s2 => ruleOn(s2.variant));
@@ -7451,7 +7525,7 @@ $('sumsClear').onclick = () => buildGrid();
 const VARIANT_BOXES = [
   ['sumsVNumConn', 'numConn'], ['sumsVBlankConn', 'blankConn'],
   ['sumsVNo22Num', 'no22num'], ['sumsVNo22Blank', 'no22blank'],
-  ['sumsVAsc', 'asc'], ['sumsVReach', 'reach'],
+  ['sumsVAsc', 'asc'], ['sumsVReach', 'reach'], ['sumsVBlankReach', 'blankReach'],
 ];
 function readVariants() {
   const out = {};

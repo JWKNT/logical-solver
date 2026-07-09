@@ -154,14 +154,14 @@ let fails = 0;
   Object.assign(st.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   S.filterCand(st, 0, 1); S.filterCand(st, 4, 1); S.filterCand(st, 1, ~1);
   const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
-  if (!mv || mv.rule !== 'Coral checkerboard' || st.cand[3] !== 1) {
+  if (!mv || mv.rule !== 'Checkerboard' || st.cand[3] !== 1) {
     console.log('FAIL: checkerboard deduction (' + (mv && mv.rule) + ', r2c1=' + st.cand[3] + ')'); fails++;
-  } else console.log('ok: "Coral checkerboard": ' + mv.text.slice(0, 120));
+  } else console.log('ok: "Checkerboard": ' + mv.text.slice(0, 120));
   const st2 = S.makeSumsState(3, 3, 3);
   Object.assign(st2.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   S.filterCand(st2, 0, 1); S.filterCand(st2, 4, 1); S.filterCand(st2, 1, ~1); S.filterCand(st2, 3, ~1);
   const mv2 = S.takeSumsStep(st2, { rows: [null, null, null], cols: [null, null, null] });
-  if (!mv2 || !mv2.contradiction || mv2.rule !== 'Coral checkerboard') { console.log('FAIL: checkerboard contradiction (' + (mv2 && mv2.rule) + ')'); fails++; }
+  if (!mv2 || !mv2.contradiction || mv2.rule !== 'Checkerboard') { console.log('FAIL: checkerboard contradiction (' + (mv2 && mv2.rule) + ')'); fails++; }
   else console.log('ok: checkerboard contradiction detected');
 }
 {
@@ -265,16 +265,16 @@ let fails = 0;
   S.filterCand(st, 3, ~1); S.filterCand(st, 4, ~1); S.filterCand(st, 5, ~1);
   let mv, k = 0, fired = false;
   while (k++ < 30 && (mv = S.takeSumsStep(st, { rows: [[1, 1], null, null], cols: [null, null, null] }))) {
-    if (mv.rule === 'Coral spine') { fired = true; break; }
+    if (mv.rule === 'Shaded spine') { fired = true; break; }
     if (mv.contradiction) break;
   }
   const row3Used = [6, 7, 8].every(i => fired && true);
-  if (!fired) { console.log('FAIL: coral spine did not fire on the sealed pocket'); fails++; }
+  if (!fired) { console.log('FAIL: shaded spine did not fire on the sealed pocket'); fails++; }
   else {
     mv.apply && mv.apply();
     const dead = [6, 7, 8].filter(i => (st.cand[i] & 1) === 0);
-    if (dead.length === 0) { console.log('FAIL: coral spine fired but freed no pocket cells'); fails++; }
-    else console.log('ok: "Coral spine": ' + mv.text.slice(0, 150));
+    if (dead.length === 0) { console.log('FAIL: shaded spine fired but freed no pocket cells'); fails++; }
+    else console.log('ok: "Shaded spine": ' + mv.text.slice(0, 150));
   }
 }
 {
@@ -290,6 +290,25 @@ let fails = 0;
   const uc = st.letterCand['U'.charCodeAt(0) - 65];
   if (contra || !(uc & (1 << 5))) { console.log('FAIL: doubled-values Equal groups (contra=' + contra + ', U mask=' + uc.toString(2) + ')'); fails++; }
   else console.log('ok: four U-groups with doubled 5s keep U=5 ({5},{5},{1,4},{2,3})');
+}
+{
+  // dual checkerboard: numbers connected + shaded reach edge also bans it
+  const st = S.makeSumsState(3, 3, 3);
+  Object.assign(st.variants, { numConn: true, blankReach: true });
+  S.filterCand(st, 0, 1); S.filterCand(st, 4, 1); S.filterCand(st, 1, ~1);
+  const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv || mv.rule !== 'Checkerboard' || st.cand[3] !== 1) { console.log('FAIL: dual checkerboard (' + (mv && mv.rule) + ')'); fails++; }
+  else console.log('ok: dual checkerboard fires under numbers-connected + shaded-reach: ' + mv.text.slice(0, 110));
+}
+{
+  // shaded reach edge: a center-committed blank whose escapes are cut
+  const st = S.makeSumsState(3, 3, 3);
+  Object.assign(st.variants, { blankReach: true });
+  S.filterCand(st, 4, 1);                       // center blank
+  S.filterCand(st, 1, ~1); S.filterCand(st, 3, ~1); S.filterCand(st, 5, ~1);   // three exits are digits
+  const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv || mv.rule !== 'Shaded reach edge' || st.cand[7] !== 1) { console.log('FAIL: shaded reach (' + (mv && mv.rule) + ', r3c2=' + st.cand[7] + ')'); fails++; }
+  else console.log('ok: \"Shaded reach edge\": ' + mv.text.slice(0, 120));
 }
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();

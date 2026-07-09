@@ -85,7 +85,7 @@ function makeSolver(cfg) {
   const letterIds = [];
   const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
   const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
-  const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false },
+  const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
     cfg.coral ? { blankConn: true, no22blank: true, asc: true, reach: true } : null,
     cfg.variants || null);
   const coral = V.asc;   // 'coral' below = unordered ascending clues
@@ -286,9 +286,30 @@ function search(cfg, opts) {
     }
     return cnt === total;
   }
+  function edgeReachOk(isMember) {
+    const seen = new Uint8Array(N);
+    const stack = [];
+    for (let i = 0; i < N; i++) {
+      const r = (i / C) | 0, c = i % C;
+      if (isMember(i) && (r === 0 || c === 0 || r === R - 1 || c === C - 1)) { seen[i] = 1; stack.push(i); }
+    }
+    while (stack.length) {
+      const i = stack.pop();
+      const r = (i / C) | 0, c = i % C;
+      for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const r2 = r + dr, c2 = c + dc;
+        if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+        const j = r2 * C + c2;
+        if (!seen[j] && isMember(j)) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    for (let i = 0; i < N; i++) if (isMember(i) && !seen[i]) return false;
+    return true;
+  }
   function shapeOk() {
     if (V.blankConn && !connectedOk(i => S.grid[i] === 0)) return false;
     if (V.numConn && !connectedOk(i => S.grid[i] > 0)) return false;
+    if (V.blankReach && !edgeReachOk(i => S.grid[i] === 0)) return false;
     if (!V.reach) return true;
     return reachOk();
   }

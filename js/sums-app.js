@@ -198,7 +198,7 @@ function buildStrategyPanel() {
   };
   for (const s of sums.SUMS_STRATEGIES.filter(s2 => !s2.variant)) ol.appendChild(mk(s));
   const vs = readVariants();
-  const ruleOn = key => key === 'checker' ? (vs.blankConn && vs.reach) : !!vs[key];
+  const ruleOn = key => key === 'checker' ? ((vs.blankConn && vs.reach) || (vs.numConn && vs.blankReach)) : !!vs[key];
   const shapeRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant && s2.variant !== 'kd');
   if (shapeRules.length) {
     const anyOn = shapeRules.some(s2 => ruleOn(s2.variant));
@@ -293,7 +293,7 @@ $('sumsClear').onclick = () => buildGrid();
 const VARIANT_BOXES = [
   ['sumsVNumConn', 'numConn'], ['sumsVBlankConn', 'blankConn'],
   ['sumsVNo22Num', 'no22num'], ['sumsVNo22Blank', 'no22blank'],
-  ['sumsVAsc', 'asc'], ['sumsVReach', 'reach'],
+  ['sumsVAsc', 'asc'], ['sumsVReach', 'reach'], ['sumsVBlankReach', 'blankReach'],
 ];
 function readVariants() {
   const out = {};

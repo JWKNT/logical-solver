@@ -500,5 +500,49 @@ for (let t = 0; t < 15; t++) {
   }
   if (bruteN < 1) { console.log('PALETTE FAIL: generated puzzle unsolvable'); fails++; }
 }
+// blankReach: every shaded component touches the edge
+function blankReachOk(g, R, C) {
+  const N = R * C;
+  const seen = new Uint8Array(N); const st2 = [];
+  for (let i = 0; i < N; i++) { const r = (i / C) | 0, c = i % C;
+    if (g[i] === 0 && (r === 0 || c === 0 || r === R - 1 || c === C - 1)) { seen[i] = 1; st2.push(i); } }
+  while (st2.length) { const i = st2.pop(); const r = (i / C) | 0, c = i % C;
+    for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) { const r2 = r + dr, c2 = c + dc;
+      if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue; const j = r2 * C + c2;
+      if (!seen[j] && g[j] === 0) { seen[j] = 1; st2.push(j); } } }
+  for (let i = 0; i < N; i++) if (g[i] === 0 && !seen[i]) return false;
+  return true;
+}
+for (let t = 0; t < 8; t++) {
+  const R = 4, C = 3, D = 3;
+  const g = randGrid(R, C, D);
+  const { rows, cols } = cluesOf(g, R, C, D);
+  const rowClues = rows.map(cl => Math.random() < 0.3 ? null : cl);
+  const colClues = cols.map(cl => Math.random() < 0.3 ? null : cl);
+  // brute with the flag
+  let bruteN = 0;
+  const g2 = new Int8Array(R * C);
+  const rm = new Int32Array(R), cm = new Int32Array(C);
+  const sumsOf = cells => { const out = []; let run = 0; for (const v of cells) { if (v) run += v; else if (run) { out.push(run); run = 0; } } if (run) out.push(run); return out; };
+  const match = (cl, sums) => !cl || (sums.length === cl.length && sums.every((s, q) => s === cl[q]));
+  (function rec(i) {
+    if (i === R * C) {
+      for (let r = 0; r < R; r++) if (!match(rowClues[r], sumsOf(g2.slice(r * C, (r + 1) * C)))) return;
+      for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g2[r * C + c]); if (!match(colClues[c], sumsOf(col))) return; }
+      if (!blankReachOk(g2, R, C)) return;
+      bruteN++;
+      return;
+    }
+    const r = (i / C) | 0, c = i % C;
+    g2[i] = 0; rec(i + 1);
+    for (let v = 1; v <= D; v++) {
+      if ((rm[r] & (1 << v)) || (cm[c] & (1 << v))) continue;
+      g2[i] = v; rm[r] |= 1 << v; cm[c] |= 1 << v; rec(i + 1); rm[r] &= ~(1 << v); cm[c] &= ~(1 << v);
+    }
+    g2[i] = 0;
+  })(0);
+  const eng = E.runAny({ R, C, D, variants: { blankReach: true }, rowClues, colClues, mode: 'count', timeLimit: 10000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) { console.log('BLANKREACH FAIL: brute=' + bruteN, 'engine=' + eng.solCount); fails++; }
+}
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS ENGINE TESTS PASSED');
 process.exit(fails ? 1 : 0);
