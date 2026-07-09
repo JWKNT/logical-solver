@@ -18,7 +18,7 @@ function parseValues() {
   const byVal = new Map();
   for (const v of vals) byVal.set(v, (byVal.get(v) || 0) + 1);
   for (const [v, c2] of byVal) if (c2 > 3) return { error: 'a value can repeat at most 3 times (' + v + ' appears ' + c2 + '\u00d7)' };
-  if (byVal.has(0)) return { error: '0 cannot be a placeable value (blank cells are the zeros)' };
+  // 0 is a legal placeable value: the cell is used and adds nothing to its group's sum
   return { values: vals };
 }
 let st = null;              // stepper state (candidate masks)
@@ -41,12 +41,18 @@ function readSlotClue(prefix) {
     const el = $(prefix + '_' + g);
     const t = (el ? (el.dataset.orig !== undefined ? el.dataset.orig : el.value) : '').trim();
     if (!t) continue;
-    if (/^[0-9]+$/.test(t)) { const n = parseInt(t, 10); if (n >= 0) vals.push(n); }
-    else if (/^[0-9A-Za-z?#]+$/.test(t)) vals.push(t.toUpperCase());
+    if (/^-?[0-9]+$/.test(t)) vals.push(parseInt(t, 10));
+    else if (/^-?[0-9A-Za-z?#]+$/.test(t)) vals.push(t.toUpperCase());
   }
   if (!vals.length) return null;
-  if (vals.length === 1 && vals[0] === 0) return [];
-  return vals.filter(v => v !== 0 || typeof v === 'string');
+  // with a palette admitting zero-sum groups (a 0 value or negatives), 0 is a
+  // real clue; otherwise the classic shortcut: a lone 0 = explicitly empty line
+  const zeroSumPossible = VALUES && (VALUES.includes(0) || VALUES.some(v => v < 0));
+  if (!zeroSumPossible) {
+    if (vals.length === 1 && vals[0] === 0) return [];
+    return vals.filter(v => v !== 0 || typeof v === 'string');
+  }
+  return vals;
 }
 
 function readClues() {
@@ -72,6 +78,8 @@ function buildGrid(keepClues) {
   G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
   const pv = parseValues();
   VALUES = pv && !pv.error ? pv.values : null;
+  $('sumsDigits').disabled = !!VALUES;
+  $('sumsDigits').title = VALUES ? 'Ignored while custom Values are set' : '';
   st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
   Object.assign(st.variants, readVariants());

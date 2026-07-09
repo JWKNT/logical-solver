@@ -208,7 +208,10 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
   const paletteCase = puzzles % 5 === 4;
   let values = null;
   if (paletteCase) {
-    const pool = [1, 2, 3, 4, 5, 6, 7, 9, 11].sort(() => Math.random() - 0.5).slice(0, D);
+    const base = (puzzles % 10 === 9)
+      ? [-3, -2, -1, 0, 1, 2, 3, 4, 5]    // negatives and a placeable zero
+      : [1, 2, 3, 4, 5, 6, 7, 9, 11];
+    const pool = base.sort(() => Math.random() - 0.5).slice(0, D);
     values = [...pool];
     values.push(pool[(Math.random() * pool.length) | 0]);   // one double
   }

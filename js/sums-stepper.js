@@ -103,8 +103,8 @@ function allowedSums(st, tok, maxSum) {
     if (s === 0) continue;   // a group has at least one cell; sum 0 only via exact cancellation
     for (const v of displayedOptions(st, s)) if (displayedMatch(st, p, v)) { out.add(s); break; }
   }
-  // a zero-sum group (exact cancellation) is only expressible as '#' or a literal 0
-  if (st.minTotal < 0 && (p.any || p.exact === 0)) out.add(0);
+  // a zero-sum group (cancellation or 0-valued cells) shows as '#' or a literal 0
+  if ((st.minTotal < 0 || st.pal.includes(0)) && (p.any || p.exact === 0)) out.add(0);
   return out;
 }
 // can k pairwise-disjoint subsets of {1..D}, with the given sizes (or any

@@ -462,6 +462,7 @@ const palettes = [
   [-2, 1, 3, 4],          // a negative (zero/negative sums possible)
   [-3, -1, 2, 5, 5],      // negatives + double
   [10, 11, 12],           // double-digit values
+  [-1, 0, 2, 3],          // a placeable zero (used cell, adds nothing)
 ];
 for (let t = 0; t < 15; t++) {
   const values = palettes[t % palettes.length];
