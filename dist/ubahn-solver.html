@@ -518,6 +518,14 @@
 .crypto-box-marks span.off { visibility: hidden; }
 
 /* variant sections in the strategies panel */
+#sumsStrats { counter-reset: strat; list-style: none; padding-left: 30px; }
+#sumsStrats > li { position: relative; }
+#sumsStrats > li:not(.variant-bar) { counter-increment: strat; }
+#sumsStrats > li:not(.variant-bar)::before {
+  content: counter(strat) "."; position: absolute; left: -26px; color: #999;
+  font-size: 13px;
+}
+html.dark #sumsStrats > li:not(.variant-bar)::before { color: #8a8a90; }
 .strategies li.variant-bar {
   list-style: none; margin: 12px 0 4px -18px; padding-top: 8px;
   border-top: 1px solid var(--grid-line); font-variant: small-caps;
@@ -621,6 +629,15 @@ label.chk input[type="checkbox"]:checked::after, .variant-group input[type="chec
 html.dark label.chk input[type="checkbox"]:checked,
 html.dark .variant-group input[type="checkbox"]:checked { background: #6a86b8; border-color: #6a86b8; }
 label.chk { cursor: pointer; user-select: none; }
+
+/* sums legend: match the U-Bahn help presentation */
+#app-sums .legend {
+  margin-top: 16px; background: #fff; border: var(--hair); padding: 10px 16px;
+  line-height: 1.55; font-size: 14.5px;
+}
+#app-sums .legend code { background: #f2f2f2; padding: 1px 5px; font-size: 0.92em; }
+html.dark #app-sums .legend { background: #2b2b2f; border-color: #45454b; color: #cfccc4; }
+html.dark #app-sums .legend code { background: #37373c; }
 </style>
 </head>
 <body>
@@ -6465,7 +6482,7 @@ function ruleCoralSpine(st, clues) {
   if (hits.length) {
     const missed = terminals.find(t => !t.cells.some(i2 => comp[i2] === comp[hits[0]]));
     return { rule: 'Shaded spine', cells: hits.slice(0, 12),
-      text: 'Every shaded cell joins the one coral, which must reach ' + (missed ? missed.why : 'every clued line') + ' \u2014 but ' + hits.slice(0, 6).map(i2 => rc(st, i2)).join(', ') + (hits.length > 6 ? ', \u2026' : '') + ' sit' + (hits.length === 1 ? 's' : '') + ' in a pocket that cannot, so ' + (hits.length === 1 ? 'it holds a digit' : 'they hold digits') + '.',
+      text: 'Every shaded cell joins the one connected shaded group, which must reach ' + (missed ? missed.why : 'every clued line') + ' \u2014 but ' + hits.slice(0, 6).map(i2 => rc(st, i2)).join(', ') + (hits.length > 6 ? ', \u2026' : '') + ' sit' + (hits.length === 1 ? 's' : '') + ' in a pocket that cannot, so ' + (hits.length === 1 ? 'it holds a digit' : 'they hold digits') + '.',
       apply() { for (const i2 of hits) filterCand(st, i2, ~1); } };
   }
   // (b) cut cells: removing one undecided cell must not sever every viable route
@@ -6582,6 +6599,48 @@ function ruleBlankReach(st, clues) {
       return { rule: 'Shaded reach edge', cells: [j],
         text: 'The shaded region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 shaded groups may not be locked in, so ' + rc(st, j) + ' is blank.',
         apply() { filterCand(st, j, 1); } };
+    }
+  }
+  return null;
+}
+
+// rule: a committed run's sum plus any adjoining digit must stay within the
+// clue's largest possible group sum (under ascending clues the last token's
+// maximum caps every group) — neighbours of heavy runs shed big values
+function ruleSumCap(st, clues) {
+  if (st.pal[0] <= 0) return null;   // with negatives a later cell can bring a sum back down
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || !line.clue.length) continue;
+    // ascending clues: the last token bounds every group; otherwise any token might
+    const capToks = st.variants.asc ? [line.clue[line.clue.length - 1]] : line.clue;
+    let cap = -Infinity;
+    for (const tok of capToks) { for (const s2 of allowedSums(st, tok, st.maxTotal)) if (s2 > cap) cap = s2; }
+    if (cap === -Infinity || cap >= st.maxTotal) continue;
+    // maximal committed-digit segments
+    const n2 = line.cells.length;
+    let p = 0;
+    while (p < n2) {
+      const d0 = committedDigit(st, line.cells[p]);
+      if (!d0) { p++; continue; }
+      let q = p, s = 0;
+      while (q < n2) { const d = committedDigit(st, line.cells[q]); if (!d) break; s += st.pal[d - 1]; q++; }
+      if (s > cap) {
+        return { rule: 'Sum cap', contradiction: true, cells: line.cells.slice(p, q),
+          text: line.name + '\u2019s digits ' + line.cells.slice(p, q).map(i => rc(st, i)).join('+') + ' already sum to ' + s + ', but no group of its clue can exceed ' + cap + '.' };
+      }
+      for (const side of [p - 1, q]) {
+        if (side < 0 || side >= n2) continue;
+        const i = line.cells[side];
+        if (committedDigit(st, i) || st.cand[i] === 1) continue;
+        let bad = 0;
+        for (let k = 1; k <= st.D; k++) if ((st.cand[i] & (1 << k)) && s + st.pal[k - 1] > cap) bad |= 1 << k;
+        if (!bad) continue;
+        const keep = st.cand[i] & ~bad;
+        return { rule: 'Sum cap', cells: [i],
+          text: line.name + '\u2019s largest possible group sum is ' + cap + (line.clue.length > 1 && st.variants.asc ? ' (its clues are ascending, so the last one caps every group)' : '') + '; the run ' + line.cells.slice(p, q).map(i2 => rc(st, i2)).join('+') + ' = ' + s + ' would overflow it \u2014 ' + rc(st, i) + ' joined to it must be ' + (cap - s < st.pal[0] ? 'blank' : 'at most ' + (cap - s)) + ', so it keeps ' + (valuesOf(st, keep & ~1).join('/') || 'only blank') + ((keep & 1) ? ' or blank' : '') + '.',
+          apply() { filterCand(st, i, keep); } };
+      }
+      p = q;
     }
   }
   return null;
@@ -6741,7 +6800,7 @@ function ruleLinePlacements(st, clues) {
         const ss = [...sumSets[g2]];
         return '\u201c' + tokenLabel(tok) + '\u201d = ' + (ss.length <= 4 ? ss.join('/') : ss[0] + '\u2026' + ss[ss.length - 1]) + (ls.length ? ' needing ' + (ls.length === 1 ? ls[0] : ls[0] + '\u2013' + ls[ls.length - 1]) + ' cell' + (ls.length === 1 && ls[0] === 1 ? '' : 's') : ' with no feasible length');
       }).join('; ');
-      return { rule: escapeRejects ? 'Coral escape' : 'Line placements', contradiction: true, cells: line.cells.slice(),
+      return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', contradiction: true, cells: line.cells.slice(),
         text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the coral' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed') + '.' };
     }
     if (count > 4000) continue;
@@ -6767,7 +6826,7 @@ function ruleLinePlacements(st, clues) {
     const bits = [];
     if (mkFilled.length) bits.push('wherever the group' + (G === 1 ? ' slides' : 's slide') + ', ' + mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkFilled.length === 1 ? 'is' : 'are') + ' covered');
     if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' out of reach and blank');
-    return { rule: escapeRejects ? 'Coral escape' : 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
+    return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
       text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + (escapeRejects ? ' \u2014 arrangements leaving a shaded stretch sealed off from the coral (no blank-capable neighbour outside the line) were discarded' : '') + ' \u2014 ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
@@ -7176,8 +7235,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 // per line and clue index, the group's sum where it is already exactly
 // determined by committed cells and blanks (for UI display of resolved ?/#).
@@ -7254,6 +7313,7 @@ function sumsComplete(st) {
 
 const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
+  { name: 'Sum cap', desc: 'No group can exceed the clue\u2019s largest possible sum (under ascending clues the last token caps every group) \u2014 a committed run near the cap sheds big values from the cells that would join it.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
   { name: 'Letter pairs', desc: 'Two (or three) crypto letters confined to the same two (or three) digits use them all up \u2014 those digits leave every other letter (naked pairs, sudoku-style).' },
   { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k separate digit sets with the same sum (each value within its per-line multiplicity) \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
@@ -7271,8 +7331,8 @@ const SUMS_STRATEGIES = [
   { name: 'Checkerboard', variant: 'checker', desc: 'With shaded connected and numbers touching the edge, a 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 two diagonal blanks beside a digit force the fourth cell blank.' },
   { name: 'Shaded connected', variant: 'blankConn', desc: 'All shaded cells form one orthogonally connected group \u2014 a cell that every connection between two shaded parts must pass through is itself blank.' },
   { name: 'Numbers connected', variant: 'numConn', desc: 'All digit cells form one orthogonally connected group \u2014 a cell that every connection between two digit regions must pass through holds a digit.' },
-  { name: 'Coral escape', variant: 'blankConn', desc: 'A line\u2019s shaded cells come in stretches, and each stretch must join the coral through a blank-capable neighbour outside the line \u2014 arrangements that seal a stretch into a pocket are impossible.' },
-  { name: 'Shaded spine', variant: 'blankConn', desc: 'The one coral must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
+  { name: 'Shaded escape', variant: 'blankConn', desc: 'A line\u2019s shaded cells come in stretches, and each stretch must join the connected shaded area through a blank-capable neighbour outside the line \u2014 arrangements that seal a stretch into a pocket are impossible.' },
+  { name: 'Shaded spine', variant: 'blankConn', desc: 'The one connected shaded group must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
   { name: 'Shaded reach edge', variant: 'blankReach', desc: 'Every connected shaded group touches the grid\u2019s edge \u2014 a shaded region\u2019s last escape route to the border stays shaded.' },
   { name: 'Numbers reach edge', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },

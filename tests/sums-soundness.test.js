@@ -310,6 +310,24 @@ let fails = 0;
   if (!mv || mv.rule !== 'Shaded reach edge' || st.cand[7] !== 1) { console.log('FAIL: shaded reach (' + (mv && mv.rule) + ', r3c2=' + st.cand[7] + ')'); fails++; }
   else console.log('ok: \"Shaded reach edge\": ' + mv.text.slice(0, 120));
 }
+{
+  // Sum cap under ascending clues: last token 9 caps every group; a committed
+  // 7 caps its would-be neighbours at 2
+  const st = S.makeSumsState(10, 10, 9);
+  st.variants.asc = true;
+  S.filterCand(st, 30, 1 << 7);
+  const cols = Array(10).fill(null);
+  cols[0] = ['#', '#', 9];
+  let mv, k = 0, saw = false;
+  while (k++ < 12 && (mv = S.takeSumsStep(st, { rows: Array(10).fill(null), cols }))) {
+    if (mv.rule === 'Sum cap') saw = true;
+    if (mv.contradiction) break;
+  }
+  const m20 = st.cand[20];
+  const vals20 = ((m20 & 1) ? 'b' : '') + S.digitsOf(m20).map(x => st.pal[x - 1]).join('');
+  if (!saw || vals20 !== 'b12') { console.log('FAIL: Sum cap (saw=' + saw + ', r3c1=' + vals20 + ')'); fails++; }
+  else console.log('ok: \"Sum cap\": ascending last-token 9 pins the 7\u2019s neighbours to 1/2/blank');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
