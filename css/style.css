@@ -464,3 +464,13 @@
 .sums-clue-row input { width: 84px; margin-right: 4px; text-align: right; }
 .sums-corner { border: none; }
 .sums-grid tr:first-child td, .sums-clue-row { border: none; background: none; }
+
+/* per-slot clue boxes */
+.sums-slots { display: flex; gap: 2px; justify-content: flex-end; margin-right: 4px; }
+.sums-slots.v { flex-direction: column; align-items: center; margin: 0 1px 4px; }
+.sums-slots input {
+  width: 26px; height: 20px; border: 1px solid #e0e0e0; background: #fbfbfb;
+  font-family: "Menlo", monospace; font-size: 11.5px; font-weight: 700;
+  color: var(--ink); text-align: center; padding: 1px;
+}
+.sums-slots input:focus { border-color: #999; outline: none; }

@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 
-let R = 6, C = 6, D = 5;
+let R = 6, C = 6, D = 5, G = 3;   // G = clue slots per line
 let st = null;              // stepper state (candidate masks)
 let clues = null;           // { rows: [...], cols: [...] } parsed
 let worker = null;
@@ -14,47 +14,62 @@ if (!root) return;
 
 const workerUrl = URL.createObjectURL(new Blob(['(' + sumsWorkerMain.toString() + ')()'], { type: 'application/javascript' }));
 
-function parseClue(str) {
-  const t = (str || '').trim();
-  if (!t) return null;
-  const parts = t.split(/[\s,;]+/).filter(Boolean);
-  const out = [];
-  for (const p of parts) {
-    if (p === '?') out.push(-1);
-    else { const n = parseInt(p, 10); if (isNaN(n) || n < 1) return null; out.push(n); }
+function readSlotClue(prefix) {
+  // per-slot boxes: numbers >= 1 in order, '?' = unknown-sum group, a single '0'
+  // = explicitly empty line (zero groups); all boxes empty = unclued line
+  const vals = [];
+  for (let g = 0; g < G; g++) {
+    const el = $(prefix + '_' + g);
+    const t = (el ? el.value : '').trim();
+    if (!t) continue;
+    if (t === '?') vals.push(-1);
+    else { const n = parseInt(t, 10); if (!isNaN(n) && n >= 0) vals.push(n); }
   }
-  return out.length ? out : null;
+  if (!vals.length) return null;
+  if (vals.length === 1 && vals[0] === 0) return [];
+  return vals.filter(v => v !== 0);
 }
 
 function readClues() {
   const rows = [], cols = [];
-  for (let r = 0; r < R; r++) rows.push(parseClue($('sumsRow' + r).value));
-  for (let c = 0; c < C; c++) cols.push(parseClue($('sumsCol' + c).value));
+  for (let r = 0; r < R; r++) rows.push(readSlotClue('sumsRow' + r));
+  for (let c = 0; c < C; c++) cols.push(readSlotClue('sumsCol' + c));
   return { rows, cols };
 }
 
 function status(html) { $('sumsStatus').innerHTML = html; }
 
-function buildGrid() {
+function buildGrid(keepClues) {
+  const saved = {};
+  if (keepClues) {
+    document.querySelectorAll('#sumsGridWrap input').forEach(el => { if (el.value) saved[el.id] = el.value; });
+  }
   R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 6));
   C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 6));
   D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 5));
+  G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
   st = sums.makeSumsState(R, C, D);
   stepCounts = new Map();
   const wrap = $('sumsGridWrap');
+  const slotBox = (prefix, vertical) => {
+    let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
+    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="3" spellcheck="false">';
+    return h + '</div>';
+  };
   let html = '<table class="sums-grid"><tr><td class="sums-corner"></td>';
-  for (let c = 0; c < C; c++) html += '<td class="sums-clue-col"><input id="sumsCol' + c + '" placeholder="\u00b7" spellcheck="false"></td>';
+  for (let c = 0; c < C; c++) html += '<td class="sums-clue-col">' + slotBox('sumsCol' + c, true) + '</td>';
   html += '</tr>';
   for (let r = 0; r < R; r++) {
-    html += '<tr><td class="sums-clue-row"><input id="sumsRow' + r + '" placeholder="\u00b7" spellcheck="false"></td>';
+    html += '<tr><td class="sums-clue-row">' + slotBox('sumsRow' + r, false) + '</td>';
     for (let c = 0; c < C; c++) html += '<td class="sums-cell" id="sumsCell' + (r * C + c) + '"></td>';
     html += '</tr>';
   }
   html += '</table>';
   wrap.innerHTML = html;
+  for (const id in saved) { const el = $(id); if (el) el.value = saved[id]; }
   renderCells();
   buildStrategyPanel();
-  status('Enter the group sums for each row and column (space-separated, in order; <code>?</code> for an unknown sum; leave blank for an unclued line), then <b>Solve</b>, <b>True candidates</b>, or <b>Take step</b>.');
+  status('Enter each line\u2019s group sums in the boxes, in reading order (one box per group; <code>?</code> = unknown sum; a single <code>0</code> = the line is entirely blank; all boxes empty = unclued line). Then <b>Solve</b>, <b>True candidates</b>, or <b>Take step</b>.');
 }
 
 function renderCells(hl) {
@@ -100,7 +115,7 @@ function runWorker(cfg, onDone, progressLabel) {
 
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
-$('sumsBuild').onclick = buildGrid;
+$('sumsBuild').onclick = () => buildGrid(true);
 $('sumsSolve').onclick = () => {
   clues = readClues();
   runWorker({ R, C, D, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
@@ -115,11 +130,14 @@ $('sumsCands').onclick = () => {
   clues = readClues();
   runWorker({ R, C, D, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
     if (!res.cand || res.solCount === 0) { status(res.timedOut ? '<span class="warn">Timed out before finding solutions.</span>' : '<span class="bad">No solution exists.</span>'); return; }
+    if (!res.complete) {
+      status('<span class="warn">Search truncated</span> after ' + res.solCount.toLocaleString() + ' solutions (' + ms + ' ms) \u2014 the grid is too underconstrained for exact candidates, so no marks were drawn (a partial union would be misleading). Add clues or raise the time limit.');
+      return;
+    }
     st = sums.makeSumsState(R, C, D);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
     renderCells();
-    status((res.complete ? '<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's')
-      : '<span class="warn">Partial candidates</span> (search truncated at ' + res.solCount.toLocaleString() + ' solutions)') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.');
+    status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.');
   }, 'Enumerating solutions');
 };
 $('sumsStep').onclick = () => {

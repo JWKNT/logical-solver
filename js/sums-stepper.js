@@ -233,7 +233,7 @@ function ruleLinePlacements(st, clues) {
     if (mkFilled.length) bits.push(mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' carr' + (mkFilled.length === 1 ? 'ies' : 'y') + ' a digit in every arrangement');
     if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' blank in every arrangement');
     return { rule: 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
-      text: line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(s => s < 0 ? '?' : s).join(', ') + ') can only be arranged in so many ways given the blanks and digits already placed \u2014 ' + bits.join('; ') + '.',
+      text: (G === 0 ? line.name + '’s clue is 0 — the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(s => s < 0 ? '?' : s).join(', ') + ') can only be arranged in so many ways given the blanks and digits already placed \u2014 ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
         for (const p of mkBlank) filterCand(st, line.cells[p], 1);

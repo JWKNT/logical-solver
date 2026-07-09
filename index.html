@@ -79,6 +79,7 @@
     <label>Rows <input type="number" id="sumsRows" value="6" min="2" max="12"></label>
     <label>Cols <input type="number" id="sumsCols" value="6" min="2" max="12"></label>
     <label>Digits 1..<input type="number" id="sumsDigits" value="5" min="2" max="9"></label>
+    <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="6"></label>
     <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
     <span class="sep"></span>
     <button id="sumsBuild">Resize</button>
@@ -112,12 +113,17 @@
 <script src="js/sums-stepper.js"></script>
 <script src="js/sums-app.js"></script>
 <script>
-// tab switching (no URL change)
+// tab switching (no URL change); the title follows the active app
+const APP_TITLES = { ubahn: 'U-Bahn Solver', sums: 'Japanese Sums Solver' };
 document.querySelectorAll('.tabs .tab').forEach(btn => btn.addEventListener('click', () => {
   document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b === btn));
   document.getElementById('app-ubahn').hidden = btn.dataset.app !== 'ubahn';
   document.getElementById('app-sums').hidden = btn.dataset.app !== 'sums';
+  document.getElementById('siteTitle').textContent = APP_TITLES[btn.dataset.app];
+  document.title = APP_TITLES[btn.dataset.app];
 }));
+document.getElementById('siteTitle').textContent = APP_TITLES.ubahn;
+document.title = APP_TITLES.ubahn;
 </script>
 </body>
 </html>
