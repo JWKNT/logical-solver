@@ -768,6 +768,33 @@ function ruleCoral2x2(st, clues) {
   return null;
 }
 
+// rule (coral): no checkerboard — a 2x2 with one diagonal blank and the other
+// diagonal filled is impossible: the coral path joining the two blanks, plus
+// their corner touch, closes a loop that seals one filled cell off the edge
+function ruleCoralChecker(st, clues) {
+  if (!st.coral) return null;
+  const isBlank = i => st.cand[i] === 1;
+  const isUsed = i => (st.cand[i] & 1) === 0;
+  for (let r = 0; r + 1 < st.R; r++) for (let c = 0; c + 1 < st.C; c++) {
+    const a = r * st.C + c, b = a + 1, c2 = a + st.C, d = c2 + 1;
+    for (const [p, q, u, v] of [[a, d, b, c2], [b, c2, a, d]]) {
+      if (!isBlank(p) || !isBlank(q)) continue;
+      if (isUsed(u) && isUsed(v)) {
+        return { rule: 'Coral checkerboard', contradiction: true, cells: [a, b, c2, d],
+          text: rc(st, p) + ', ' + rc(st, q) + ' are blank and ' + rc(st, u) + ', ' + rc(st, v) + ' hold digits \u2014 a checkerboard 2\u00d72 is impossible in a coral (the blanks\u2019 connection would seal one digit region off the edge).' };
+      }
+      for (const [w, x] of [[u, v], [v, u]]) {
+        if (!isUsed(w)) continue;
+        if (!(st.cand[x] & ~1) || !(st.cand[x] & 1)) continue;   // undecided both ways
+        return { rule: 'Coral checkerboard', cells: [x],
+          text: rc(st, p) + ' and ' + rc(st, q) + ' are blank diagonal neighbours and ' + rc(st, w) + ' holds a digit \u2014 a checkerboard 2\u00d72 is impossible in a coral, so ' + rc(st, x) + ' is blank.',
+          apply() { filterCand(st, x, 1); } };
+      }
+    }
+  }
+  return null;
+}
+
 // rule (coral): all blanks are orthogonally connected — a lone cut cell on
 // every path between two committed-blank regions must itself be blank
 function ruleCoralConnect(st, clues) {
@@ -1377,8 +1404,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralChecker, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleCoralChecker, ruleCoralConnect, ruleCoralReach, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -1419,6 +1446,7 @@ const SUMS_STRATEGIES = [
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
   { name: 'Letter trial', desc: 'Suppose a nearly-decided cipher letter stood for one of its digits and follow the quick consequences \u2014 a contradiction removes that digit, chain shown.' },
   { name: 'Coral 2\u00d72', variant: 'coral', desc: 'The coral (the blank cells) may not contain a 2\u00d72 block \u2014 three blanks in a square force the fourth cell to hold a digit.' },
+  { name: 'Coral checkerboard', variant: 'coral', desc: 'A 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 the coral joining the two blanks would seal a digit region off the edge. Two diagonal blanks beside a digit force the fourth cell blank.' },
   { name: 'Coral connectivity', variant: 'coral', desc: 'All blank cells form one orthogonally connected coral \u2014 a cell that every connection between two coral parts must pass through is itself blank.' },
   { name: 'Coral reach', variant: 'coral', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },

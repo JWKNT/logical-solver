@@ -147,6 +147,23 @@ let fails = 0;
   if (!ok) { console.log('FAIL: 12x12 not rule-solved (complete=' + S.sumsComplete(st) + ', trials=' + trials + ')'); fails++; }
   else console.log('ok: 12x12 D=9 crypto (LM 0001GH) fully solved by rules alone in ' + (k - 1) + ' steps, zero trials, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
 }
+{
+  // coral checkerboard: r1c1, r2c2 blank + r1c2 digit -> r2c1 blank; and the
+  // full checkerboard is a contradiction
+  const st = S.makeSumsState(3, 3, 3);
+  st.coral = true;
+  S.filterCand(st, 0, 1); S.filterCand(st, 4, 1); S.filterCand(st, 1, ~1);
+  const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv || mv.rule !== 'Coral checkerboard' || st.cand[3] !== 1) {
+    console.log('FAIL: checkerboard deduction (' + (mv && mv.rule) + ', r2c1=' + st.cand[3] + ')'); fails++;
+  } else console.log('ok: "Coral checkerboard": ' + mv.text.slice(0, 120));
+  const st2 = S.makeSumsState(3, 3, 3);
+  st2.coral = true;
+  S.filterCand(st2, 0, 1); S.filterCand(st2, 4, 1); S.filterCand(st2, 1, ~1); S.filterCand(st2, 3, ~1);
+  const mv2 = S.takeSumsStep(st2, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv2 || !mv2.contradiction || mv2.rule !== 'Coral checkerboard') { console.log('FAIL: checkerboard contradiction (' + (mv2 && mv2.rule) + ')'); fails++; }
+  else console.log('ok: checkerboard contradiction detected');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
