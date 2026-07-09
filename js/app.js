@@ -394,8 +394,8 @@ $('resetBtn').addEventListener('click', () => {
 });
 
 function onResize() {
-    const nR = Math.max(2, Math.min(12, parseInt($('rowsIn').value, 10) || R));
-    const nC = Math.max(2, Math.min(12, parseInt($('colsIn').value, 10) || C));
+    const nR = Math.max(2, Math.min(16, parseInt($('rowsIn').value, 10) || R));
+    const nC = Math.max(2, Math.min(16, parseInt($('colsIn').value, 10) || C));
     $('rowsIn').value = nR; $('colsIn').value = nC;
     if (nR === R && nC === C) return;
     freshModel(nR, nC);

@@ -528,6 +528,61 @@
 label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group { display: inline-flex; gap: 10px; flex-wrap: wrap; padding: 2px 8px; border-left: 1px solid var(--grid-line); }
 .variant-group .chk { font-size: 13px; }
+
+/* ---------------- dark mode ---------------- */
+#themeToggle {
+  margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
+  background: none; border: 1px solid var(--grid-line); border-radius: 3px;
+  cursor: pointer; color: inherit; vertical-align: middle;
+}
+#themeToggle:hover { border-color: var(--ink); }
+html.dark {
+  --ink: #d8d4cc;
+  --platform: #1c1c1e;
+  --board: #232326;
+  --grid-line: #4a4a4e;
+  --shaded: #0a0a0a;
+  --tint-used: #2e3442;
+  --line-maybe: #5a5a5e;
+}
+html.dark body { background: #161618; color: #d8d4cc; }
+html.dark header, html.dark main { background: #161618; }
+html.dark h1, html.dark h2, html.dark h3 { color: #e4e0d8; }
+html.dark input, html.dark button, html.dark select {
+  background: #232326; color: #d8d4cc; border-color: #4a4a4e;
+}
+html.dark .tab { color: #b8b4ac; }
+html.dark .tab.active { color: #e4e0d8; border-color: #e4e0d8; }
+html.dark .sums-cands { color: #9a96a0; }
+html.dark .sums-blank { color: #777; }
+html.dark .strategies li.variant-bar .voff { color: #777; }
+html.dark .sums-clue-col input, html.dark .sums-clue-row input { background: #202024; border-color: #3a3a3e; }
+html.dark #sumsStatus, html.dark #status { background: #1e1e22; border-color: #4a4a4e; }
+html.dark .legend, html.dark .sdesc { color: #a8a4a0; }
+html.dark a { color: #8fa8d0; }
+
+/* ---------------- bespoke checkboxes ---------------- */
+label.chk input[type="checkbox"], .variant-group input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  width: 15px; height: 15px; margin: 0 2px 0 0;
+  border: 1px solid var(--grid-line); border-radius: 2px;
+  background: var(--board); cursor: pointer; position: relative;
+  vertical-align: -2px; transition: border-color 0.12s;
+}
+label.chk input[type="checkbox"]:hover, .variant-group input[type="checkbox"]:hover {
+  border-color: var(--sign-blue);
+}
+label.chk input[type="checkbox"]:checked, .variant-group input[type="checkbox"]:checked {
+  background: var(--sign-blue); border-color: var(--sign-blue);
+}
+label.chk input[type="checkbox"]:checked::after, .variant-group input[type="checkbox"]:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(42deg);
+}
+html.dark label.chk input[type="checkbox"]:checked,
+html.dark .variant-group input[type="checkbox"]:checked { background: #6a86b8; border-color: #6a86b8; }
+label.chk { cursor: pointer; user-select: none; }
 </style>
 </head>
 <body>
@@ -536,14 +591,27 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
   <nav class="tabs">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
+    <button id="themeToggle" title="Toggle light/dark">◐</button>
   </nav>
+  <script>
+  (function () {
+    const saved = localStorage.getItem('solverTheme');
+    if (saved === 'dark') document.documentElement.classList.add('dark');
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById('themeToggle').addEventListener('click', function () {
+        const dark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
+      });
+    });
+  })();
+  </script>
 </header>
 
 <main>
 <section id="app-ubahn">
   <div class="toolbar">
-    <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="12" value="6"></div>
-    <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="12" value="6"></div>
+    <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="16" value="6"></div>
+    <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="16" value="6"></div>
     <div class="group"><label for="timeIn">Time limit (s)</label><input id="timeIn" type="number" min="1" max="600" value="10"></div>
     <div class="sep"></div>
     <button id="solveBtn" class="primary">Solve</button>
@@ -600,11 +668,12 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 
 <section id="app-sums" hidden>
   <div class="toolbar">
-    <label>Rows <input type="number" id="sumsRows" value="8" min="2" max="12"></label>
-    <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="12"></label>
+    <label>Rows <input type="number" id="sumsRows" value="8" min="2" max="16"></label>
+    <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="16"></label>
     <label>Digits 1..<input type="number" id="sumsDigits" value="6" min="2" max="9"></label>
-    <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="6"></label>
-    <label>Values <input type="text" id="sumsValues" placeholder="e.g. 1,2,3,4,5,5" size="15" title="Custom value palette: comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed. Empty = digits 1..D."></label>
+    <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="8"></label>
+    <label class="chk"><input type="checkbox" id="sumsCustomVals"> Custom values</label>
+    <label id="sumsValuesWrap" hidden>Values <input type="text" id="sumsValues" placeholder="e.g. -2,1,3,3,4" size="15" title="Comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed."></label>
     <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
     <span class="variant-group">
       <label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label>
@@ -4488,8 +4557,8 @@ $('resetBtn').addEventListener('click', () => {
 });
 
 function onResize() {
-    const nR = Math.max(2, Math.min(12, parseInt($('rowsIn').value, 10) || R));
-    const nC = Math.max(2, Math.min(12, parseInt($('colsIn').value, 10) || C));
+    const nR = Math.max(2, Math.min(16, parseInt($('rowsIn').value, 10) || R));
+    const nC = Math.max(2, Math.min(16, parseInt($('colsIn').value, 10) || C));
     $('rowsIn').value = nR; $('colsIn').value = nC;
     if (nR === R && nC === C) return;
     freshModel(nR, nC);
@@ -6884,6 +6953,7 @@ else global.sums = api;
 let R = 8, C = 8, D = 6, G = 3;   // G = clue slots per line
 let VALUES = null;   // custom value palette (null = digits 1..D)
 function parseValues() {
+  if (!$('sumsCustomVals').checked) return null;   // Digits 1..D mode
   const txt = $('sumsValues').value.trim();
   if (!txt) return null;
   const parts = txt.split(/[,;\s]+/).filter(Boolean);
@@ -6951,14 +7021,15 @@ function buildGrid(keepClues) {
       if (orig) saved[el.id] = orig;
     });
   }
-  R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 8));
-  C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 8));
+  R = Math.max(2, Math.min(16, parseInt($('sumsRows').value, 10) || 8));
+  C = Math.max(2, Math.min(16, parseInt($('sumsCols').value, 10) || 8));
   D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 6));
-  G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
+  G = Math.max(1, Math.min(8, parseInt($('sumsSlots').value, 10) || 3));
   const pv = parseValues();
   VALUES = pv && !pv.error ? pv.values : null;
-  $('sumsDigits').disabled = !!VALUES;
-  $('sumsDigits').title = VALUES ? 'Ignored while custom Values are set' : '';
+  const customOn = $('sumsCustomVals').checked;
+  $('sumsValuesWrap').hidden = !customOn;
+  $('sumsDigits').closest('label').style.display = customOn ? 'none' : '';
   st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
   Object.assign(st.variants, readVariants());
@@ -7190,6 +7261,12 @@ $('sumsKD').addEventListener('change', () => variantChanged($('sumsKD').checked
   : 'Knapp daneben off: clues are exact again.'));
 for (const [id] of VARIANT_BOXES) $(id).addEventListener('change', () => variantChanged('Shape/order rules updated.'));
 
+$('sumsCustomVals').addEventListener('change', () => {
+  buildGrid(true);
+  status($('sumsCustomVals').checked
+    ? 'Custom values mode: enter a comma-separated palette (the Digits box is replaced). Marks reset, clues kept.'
+    : 'Standard digits 1\u2026' + D + ' mode. Marks reset, clues kept.');
+});
 $('sumsValues').addEventListener('change', () => {
   const pv2 = parseValues();
   if (pv2 && pv2.error) { status('Custom values: ' + pv2.error); return; }

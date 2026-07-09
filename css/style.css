@@ -521,3 +521,58 @@
 label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group { display: inline-flex; gap: 10px; flex-wrap: wrap; padding: 2px 8px; border-left: 1px solid var(--grid-line); }
 .variant-group .chk { font-size: 13px; }
+
+/* ---------------- dark mode ---------------- */
+#themeToggle {
+  margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
+  background: none; border: 1px solid var(--grid-line); border-radius: 3px;
+  cursor: pointer; color: inherit; vertical-align: middle;
+}
+#themeToggle:hover { border-color: var(--ink); }
+html.dark {
+  --ink: #d8d4cc;
+  --platform: #1c1c1e;
+  --board: #232326;
+  --grid-line: #4a4a4e;
+  --shaded: #0a0a0a;
+  --tint-used: #2e3442;
+  --line-maybe: #5a5a5e;
+}
+html.dark body { background: #161618; color: #d8d4cc; }
+html.dark header, html.dark main { background: #161618; }
+html.dark h1, html.dark h2, html.dark h3 { color: #e4e0d8; }
+html.dark input, html.dark button, html.dark select {
+  background: #232326; color: #d8d4cc; border-color: #4a4a4e;
+}
+html.dark .tab { color: #b8b4ac; }
+html.dark .tab.active { color: #e4e0d8; border-color: #e4e0d8; }
+html.dark .sums-cands { color: #9a96a0; }
+html.dark .sums-blank { color: #777; }
+html.dark .strategies li.variant-bar .voff { color: #777; }
+html.dark .sums-clue-col input, html.dark .sums-clue-row input { background: #202024; border-color: #3a3a3e; }
+html.dark #sumsStatus, html.dark #status { background: #1e1e22; border-color: #4a4a4e; }
+html.dark .legend, html.dark .sdesc { color: #a8a4a0; }
+html.dark a { color: #8fa8d0; }
+
+/* ---------------- bespoke checkboxes ---------------- */
+label.chk input[type="checkbox"], .variant-group input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  width: 15px; height: 15px; margin: 0 2px 0 0;
+  border: 1px solid var(--grid-line); border-radius: 2px;
+  background: var(--board); cursor: pointer; position: relative;
+  vertical-align: -2px; transition: border-color 0.12s;
+}
+label.chk input[type="checkbox"]:hover, .variant-group input[type="checkbox"]:hover {
+  border-color: var(--sign-blue);
+}
+label.chk input[type="checkbox"]:checked, .variant-group input[type="checkbox"]:checked {
+  background: var(--sign-blue); border-color: var(--sign-blue);
+}
+label.chk input[type="checkbox"]:checked::after, .variant-group input[type="checkbox"]:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(42deg);
+}
+html.dark label.chk input[type="checkbox"]:checked,
+html.dark .variant-group input[type="checkbox"]:checked { background: #6a86b8; border-color: #6a86b8; }
+label.chk { cursor: pointer; user-select: none; }

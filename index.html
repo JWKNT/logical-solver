@@ -12,14 +12,27 @@
   <nav class="tabs">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
+    <button id="themeToggle" title="Toggle light/dark">◐</button>
   </nav>
+  <script>
+  (function () {
+    const saved = localStorage.getItem('solverTheme');
+    if (saved === 'dark') document.documentElement.classList.add('dark');
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById('themeToggle').addEventListener('click', function () {
+        const dark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
+      });
+    });
+  })();
+  </script>
 </header>
 
 <main>
 <section id="app-ubahn">
   <div class="toolbar">
-    <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="12" value="6"></div>
-    <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="12" value="6"></div>
+    <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="16" value="6"></div>
+    <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="16" value="6"></div>
     <div class="group"><label for="timeIn">Time limit (s)</label><input id="timeIn" type="number" min="1" max="600" value="10"></div>
     <div class="sep"></div>
     <button id="solveBtn" class="primary">Solve</button>
@@ -76,11 +89,12 @@
 
 <section id="app-sums" hidden>
   <div class="toolbar">
-    <label>Rows <input type="number" id="sumsRows" value="8" min="2" max="12"></label>
-    <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="12"></label>
+    <label>Rows <input type="number" id="sumsRows" value="8" min="2" max="16"></label>
+    <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="16"></label>
     <label>Digits 1..<input type="number" id="sumsDigits" value="6" min="2" max="9"></label>
-    <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="6"></label>
-    <label>Values <input type="text" id="sumsValues" placeholder="e.g. 1,2,3,4,5,5" size="15" title="Custom value palette: comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed. Empty = digits 1..D."></label>
+    <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="8"></label>
+    <label class="chk"><input type="checkbox" id="sumsCustomVals"> Custom values</label>
+    <label id="sumsValuesWrap" hidden>Values <input type="text" id="sumsValues" placeholder="e.g. -2,1,3,3,4" size="15" title="Comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed."></label>
     <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
     <span class="variant-group">
       <label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label>

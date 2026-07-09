@@ -5,6 +5,7 @@
 let R = 8, C = 8, D = 6, G = 3;   // G = clue slots per line
 let VALUES = null;   // custom value palette (null = digits 1..D)
 function parseValues() {
+  if (!$('sumsCustomVals').checked) return null;   // Digits 1..D mode
   const txt = $('sumsValues').value.trim();
   if (!txt) return null;
   const parts = txt.split(/[,;\s]+/).filter(Boolean);
@@ -72,14 +73,15 @@ function buildGrid(keepClues) {
       if (orig) saved[el.id] = orig;
     });
   }
-  R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 8));
-  C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 8));
+  R = Math.max(2, Math.min(16, parseInt($('sumsRows').value, 10) || 8));
+  C = Math.max(2, Math.min(16, parseInt($('sumsCols').value, 10) || 8));
   D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 6));
-  G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
+  G = Math.max(1, Math.min(8, parseInt($('sumsSlots').value, 10) || 3));
   const pv = parseValues();
   VALUES = pv && !pv.error ? pv.values : null;
-  $('sumsDigits').disabled = !!VALUES;
-  $('sumsDigits').title = VALUES ? 'Ignored while custom Values are set' : '';
+  const customOn = $('sumsCustomVals').checked;
+  $('sumsValuesWrap').hidden = !customOn;
+  $('sumsDigits').closest('label').style.display = customOn ? 'none' : '';
   st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
   Object.assign(st.variants, readVariants());
@@ -311,6 +313,12 @@ $('sumsKD').addEventListener('change', () => variantChanged($('sumsKD').checked
   : 'Knapp daneben off: clues are exact again.'));
 for (const [id] of VARIANT_BOXES) $(id).addEventListener('change', () => variantChanged('Shape/order rules updated.'));
 
+$('sumsCustomVals').addEventListener('change', () => {
+  buildGrid(true);
+  status($('sumsCustomVals').checked
+    ? 'Custom values mode: enter a comma-separated palette (the Digits box is replaced). Marks reset, clues kept.'
+    : 'Standard digits 1\u2026' + D + ' mode. Marks reset, clues kept.');
+});
 $('sumsValues').addEventListener('change', () => {
   const pv2 = parseValues();
   if (pv2 && pv2.error) { status('Custom values: ' + pv2.error); return; }
