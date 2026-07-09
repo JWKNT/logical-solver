@@ -93,6 +93,7 @@ function displayedOptions(st, s) {
   // sum 1); with negatives in play, negative displayed values are legitimate
   return st.minTotal < 0 ? [s - 1, s + 1] : [s - 1, s + 1].filter(v => v >= 0);
 }
+function dvSignOk(p, dv) { return p.neg ? dv < 0 : dv >= 0; }
 const DS_CACHE = new Map();
 function digitsOfValue(v) {
   let a = DS_CACHE.get(v);
@@ -304,6 +305,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap) {
   function bindDisplayed(gi, v) {
     const p2 = parsedToks[gi];
     if (!p2 || !p2.chars) return [];
+    if (!dvSignOk(p2, v)) return null;
     const ds = digitsOfValue(v);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
@@ -672,6 +674,7 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
   function bindDisp(g, dv) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
+    if (!dvSignOk(p2, dv)) return null;
     const ds = digitsOfValue(dv);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
@@ -754,6 +757,7 @@ function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
   function bindDisp(g, dv) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
+    if (!dvSignOk(p2, dv)) return null;
     const ds = digitsOfValue(dv);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
@@ -1373,8 +1377,9 @@ function ruleSpanAlgebra(st, clues) {
         const p2 = tokenParse(s2.sp.tok);
         for (const dv of displayedOptions(st, sum)) {
           if (p2.exact !== undefined) { if (p2.exact !== dv) continue; if (tryBind(idx + 1)) return true; continue; }
-          if (p2.any) { if (dv >= 1 && tryBind(idx + 1)) return true; continue; }
-          const dsx = String(dv).split('').map(Number);
+          if (p2.any) { if (tryBind(idx + 1)) return true; continue; }
+          if (!dvSignOk(p2, dv)) continue;
+          const dsx = digitsOfValue(dv);
           if (dsx.length !== p2.chars.length) continue;
           const bound = [];
           let ok2 = true;
@@ -1432,7 +1437,7 @@ function ruleSpanAlgebra(st, clues) {
     const spanDesc = compSpans.map(s2 => s2.line.name.toLowerCase() + '\u2019s \u201c' + tokenLabel(s2.sp.tok) + '\u201d (' + rc(st, s2.sp.cells[0]) + '\u2013' + rc(st, s2.sp.cells[s2.sp.cells.length - 1]) + ')').join(', ');
     const bits = [];
     if (letterHits.length) bits.push(letterHits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; '));
-    if (cellHits.length) bits.push(cellHits.slice(0, 5).map(h2 => rc(st, h2.i) + ' = ' + digitsOf(h2.nm).join('/')).join('; ') + (cellHits.length > 5 ? '; \u2026' : ''));
+    if (cellHits.length) bits.push(cellHits.slice(0, 5).map(h2 => rc(st, h2.i) + ' = ' + digitsOf(h2.nm).map(k2 => st.pal[k2 - 1]).join('/')).join('; ') + (cellHits.length > 5 ? '; \u2026' : ''));
     return { rule: 'Span algebra', cells: cellHits.map(h2 => h2.i),
       text: 'The groups ' + spanDesc + ' interlock over the cells ' + cells.map(i => rc(st, i)).join(', ') + ' \u2014 summing the row groups must equal summing the column groups over the same cells. Every joint completion agrees: ' + bits.join('; ') + '.',
       apply() {

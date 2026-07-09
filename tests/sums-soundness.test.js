@@ -198,6 +198,43 @@ let fails = 0;
     if (!bad) console.log('ok: negative palette [-2,1,3,4] stepper sound vs engine truth');
   }
 }
+{
+  // 10x10 palette -4..4 with signed and zero clues (a user's real puzzle that
+  // once false-contradicted via a sign-blind span-algebra binder): the ladder
+  // must solve it completely, zero trials, and the fill must validate
+  const values = [-4, -3, -2, -1, 0, 1, 2, 3, 4];
+  const P = {
+    rows: [['?','-?','?','-?'], ['?',0,0,'?'], ['-??'], ['?','?','?','-?','?'], [-3,'?','?'],
+           ['-?',0,0], [3,-2,'?'], [-2], [3,4], [0,'?',3]],
+    cols: [[0,8], [0,0,0,0], ['-?',-3,-2], ['?','-?','?','?','?'], [-2,'?'],
+           [-6,1,1], ['?','-?'], ['?',0], ['-?','-?',5,'?'], [1,0,'?','-?']]
+  };
+  const st = S.makeSumsState(10, 10, 0, values);
+  st.noTrial = true;
+  let mv, k = 0, contra = false;
+  const t0 = Date.now();
+  while (k++ < 600 && (mv = S.takeSumsStep(st, { rows: P.rows, cols: P.cols }))) if (mv.contradiction) { contra = true; break; }
+  const valAt = i => st.cand[i] === 1 ? null : st.pal[((m2) => { for (let d = 1; d < 31; d++) if (m2 & (1 << d)) return d; })(st.cand[i]) - 1];
+  function grps(cells) { const out = []; let run = 0, len = 0; for (const i of cells) { const v = valAt(i); if (v !== null) { run += v; len++; } else if (len) { out.push(run); run = 0; len = 0; } } if (len) out.push(run); return out; }
+  function tokOk(t, s2) {
+    if (typeof t === 'number') return t === s2;
+    const str = String(t); const neg = str[0] === '-'; const body = neg ? str.slice(1) : str;
+    if (str === '#') return true;
+    if (neg ? s2 >= 0 : s2 < 0) return false;
+    const a = Math.abs(s2);
+    if (String(a).length !== body.length && !(a === 0 && body.length === 1)) return false;
+    const ds = String(a).padStart(body.length, '0');
+    for (let q = 0; q < body.length; q++) if (body[q] !== '?' && body[q] !== ds[q]) return false;
+    return true;
+  }
+  let valid = !contra && S.sumsComplete(st);
+  if (valid) {
+    for (let r = 0; r < 10 && valid; r++) { const gs = grps(Array.from({length: 10}, (_, c) => r * 10 + c)); const cl = P.rows[r]; if (gs.length !== cl.length || !gs.every((s2, q) => tokOk(cl[q], s2))) valid = false; }
+    for (let c = 0; c < 10 && valid; c++) { const gs = grps(Array.from({length: 10}, (_, r) => r * 10 + c)); const cl = P.cols[c]; if (gs.length !== cl.length || !gs.every((s2, q) => tokOk(cl[q], s2))) valid = false; }
+  }
+  if (!valid) { console.log('FAIL: signed 10x10 palette puzzle (contra=' + contra + ', complete=' + S.sumsComplete(st) + ', steps=' + (k - 1) + ')'); fails++; }
+  else console.log('ok: signed 10x10 palette -4..4 fully rule-solved in ' + (k - 1) + ' steps, zero trials, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's, fill validates');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
