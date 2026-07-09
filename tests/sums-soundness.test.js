@@ -50,6 +50,27 @@ let fails = 0;
   if (!saw || S.digitsOf2(st.letterCand[23]).join('') !== '789') { console.log('FAIL: equal groups X != 789 (' + S.digitsOf2(st.letterCand[23]).join('') + ')'); fails++; }
   else console.log('ok: "Equal groups": ' + mv.text.slice(0, 140));
 }
+{
+  // the user's 8x8 crypto position: letter pairs (B,C = 1,2), correlated
+  // disjoint sums (G,G,B and A,A,B lines), letter trials, and full-ladder
+  // ghosts together solve it completely
+  const clues = {
+    rows: [['F','G','A'], ['G','G','B'], ['F','G','A'], ['CB'], ['B','F','G'], ['B','G','A'], ['CE'], ['G','A','B']],
+    cols: [['A','A','B'], ['BC'], null, ['D','B','C'], ['CE'], null, ['BE'], ['A','A','B']]
+  };
+  const st = S.makeSumsState(8, 8, 6);
+  let mv, k = 0, sawPairs = false, sawDisjoint = false;
+  while (k++ < 1500 && (mv = S.takeSumsStep(st, clues))) {
+    if (mv.rule === 'Letter pairs') sawPairs = true;
+    if (mv.rule === 'Disjoint sums') sawDisjoint = true;
+    if (mv.contradiction) { console.log('FAIL: crypto position hit a contradiction'); fails++; break; }
+  }
+  const truth = { A: 6, B: 1, C: 2, D: 8, E: 0, F: 4, G: 5 };
+  let ok = S.sumsComplete(st) && sawPairs && sawDisjoint;
+  for (const [name, want] of Object.entries(truth)) if (S.digitsOf2(st.letterCand[name.charCodeAt(0) - 65]).join('') !== String(want)) ok = false;
+  if (!ok) { console.log('FAIL: crypto position not solved (pairs=' + sawPairs + ', disjoint=' + sawDisjoint + ', complete=' + S.sumsComplete(st) + ')'); fails++; }
+  else console.log('ok: 8x8 crypto position fully solved in ' + (k - 1) + ' steps via Letter pairs + correlated Disjoint sums + trials');
+}
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {

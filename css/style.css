@@ -483,3 +483,4 @@
 .crypto-letter { font-weight: 700; background: #f5f5f5; }
 .crypto-digit.off { color: #ccc; background: #fafafa; }
 .crypto-digit.solo { font-weight: 700; background: #edf2ee; }
+.sums-cell.used { background: var(--tint-used); }

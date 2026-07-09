@@ -371,6 +371,162 @@ function ruleEqualGroups(st, clues) {
   return null;
 }
 
+// active letters of the whole puzzle
+function activeLetterIds(clues) {
+  const out = [];
+  for (const list of (clues.rows || []).concat(clues.cols || [])) if (list) for (const tok of list) for (const L of tokenLetters(tok)) if (!out.includes(L)) out.push(L);
+  return out.sort((a, b) => a - b);
+}
+
+// rule: letter pairs — k letters confined to the same k digits exclude those
+// digits from every other letter (naked subsets, sudoku-style)
+function ruleLetterPairs(st, clues) {
+  const act = activeLetterIds(clues);
+  if (act.length < 3) return null;
+  const idxs = act.filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 3);
+  for (let size = 2; size <= 3; size++) {
+    const pick = [];
+    function rec(from, union) {
+      if (pick.length === size) {
+        if (popc(union) !== size) return null;
+        const hits = [];
+        for (const L of act) if (!pick.includes(L) && (st.letterCand[L] & union)) hits.push(L);
+        if (!hits.length) return null;
+        return { union, members: pick.slice(), hits };
+      }
+      for (let q = from; q < idxs.length; q++) {
+        const L = idxs[q];
+        if ((st.letterCand[L] & ~union) && popc(st.letterCand[L] | union) > size) continue;
+        pick.push(L);
+        const r2 = rec(q + 1, union | st.letterCand[L]);
+        pick.pop();
+        if (r2) return r2;
+      }
+      return null;
+    }
+    const found = rec(0, 0);
+    if (found) {
+      const names = found.members.map(L => String.fromCharCode(65 + L));
+      const digs = digitsOf2(found.union);
+      return { rule: 'Letter pairs', cells: [],
+        text: names.join(', ') + ' are confined to the digits ' + digs.join(', ') + ' between them \u2014 since every letter takes a different digit, ' + (size === 2 ? 'this pair uses both' : 'this triple uses all three') + ', and ' + found.hits.map(L => String.fromCharCode(65 + L)).join(', ') + ' cannot be ' + (digs.length === 2 ? 'either' : 'any of them') + '.',
+        apply() { for (const L of found.hits) filterLetter(st, L, ~found.union); } };
+    }
+  }
+  return null;
+}
+
+// exact joint feasibility of one line's groups: pairwise-disjoint digit
+// subsets of 1..D realising each group's sum, within the line's cell budget
+function lineJointFeasible(st, tokens, sets, n, requireVal) {
+  // groups sharing crypto letters have correlated sums: picking a value for a
+  // group binds its letters (consistently, all letters distinct), so two 'G'
+  // groups must take the SAME sum and 'GH' must agree with them, etc.
+  const G = sets.length;
+  const maxCells = n - (G - 1);
+  const lists = sets.map(s2 => [...s2].sort((a, b) => a - b));
+  const parsed = tokens.map(tokenParse);
+  let ok = false;
+  const subsBydum = new Map();
+  function subsetsFor(v) {
+    if (subsBydum.has(v)) return subsBydum.get(v);
+    const out = [];
+    (function gen(d, mask, sum, cnt) {
+      if (sum === v) { out.push({ mask, cnt }); return; }
+      if (d > st.D || sum > v) return;
+      gen(d + 1, mask, sum, cnt);
+      gen(d + 1, mask | (1 << d), sum + d, cnt + 1);
+    })(1, 0, 0, 0);
+    subsBydum.set(v, out);
+    return out;
+  }
+  const letterVal = new Int8Array(26).fill(-1);
+  let digitTaken = 0;
+  function bindToken(g, v) {
+    const p2 = parsed[g];
+    if (!p2.chars) return [];
+    const ds = String(v).split('').map(Number);
+    if (ds.length !== p2.chars.length) return null;
+    const bound = [];
+    for (let q = 0; q < ds.length; q++) {
+      const ch = p2.chars[q], d = ds[q];
+      if (ch.d !== undefined) { if (ch.d !== d) { unbind(bound); return null; } }
+      else if (ch.L !== undefined) {
+        if (letterVal[ch.L] >= 0) { if (letterVal[ch.L] !== d) { unbind(bound); return null; } }
+        else {
+          if (digitTaken & (1 << d)) { unbind(bound); return null; }
+          if (!(st.letterCand[ch.L] & (1 << d))) { unbind(bound); return null; }
+          letterVal[ch.L] = d; digitTaken |= 1 << d; bound.push(ch.L);
+        }
+      }
+    }
+    return bound;
+  }
+  function unbind(bound) { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } }
+  (function rec(g, used, cells) {
+    if (ok) return;
+    if (g === G) { ok = true; return; }
+    for (const v of lists[g]) {
+      if (requireVal && requireVal.g === g && requireVal.v !== v) continue;
+      const bound = bindToken(g, v);
+      if (bound === null) continue;
+      for (const sub of subsetsFor(v)) {
+        if (sub.mask & used) continue;
+        if (cells + sub.cnt > maxCells) continue;
+        rec(g + 1, used | sub.mask, cells + sub.cnt);
+        if (ok) break;
+      }
+      unbind(bound);
+      if (ok) return;
+    }
+  })(0, 0, 0);
+  return ok;
+}
+
+// rule: disjoint sums — all of a line's groups need pairwise-disjoint digit
+// sets; sums that no joint assignment realises are impossible
+function ruleDisjointSums(st, clues) {
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || line.clue.length < 2) continue;
+    let hasLetters = false;
+    for (const tok of line.clue) if (tokenLetters(tok).length) hasLetters = true;
+    if (!hasLetters) continue;
+    const sets = lineSumSets(st, line);
+    if (sets.some(s2 => !s2.size)) continue;   // Sum bounds reports that
+    let prod = 1;
+    for (const s2 of sets) prod *= s2.size;
+    if (prod > 4000) continue;
+    const n = line.cells.length;
+    for (let g = 0; g < line.clue.length; g++) {
+      const p2 = tokenParse(line.clue[g]);
+      if (!p2.chars || !p2.chars.some(ch => ch.L !== undefined)) continue;
+      const surviving = new Set();
+      for (const v of sets[g]) if (lineJointFeasible(st, line.clue, sets, n, { g, v })) surviving.add(v);
+      if (!surviving.size) return { rule: 'Disjoint sums', contradiction: true, cells: line.cells.slice(),
+        text: line.name + '\u2019s groups cannot all take pairwise-different digits at once \u2014 the position is contradictory.' };
+      if (surviving.size === sets[g].size) continue;
+      const seen = p2.chars.map(() => 0);
+      for (const s of surviving) {
+        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
+        if (ds.length === p2.chars.length) for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+      }
+      const hits = [];
+      for (let q = 0; q < p2.chars.length; q++) {
+        const ch = p2.chars[q];
+        if (ch.L === undefined) continue;
+        const nm = st.letterCand[ch.L] & seen[q];
+        if (nm !== 0 && nm !== st.letterCand[ch.L]) hits.push({ L: ch.L, nm });
+      }
+      if (!hits.length) continue;
+      const desc = hits.map(h2 => String.fromCharCode(65 + h2.L) + ' = ' + digitsOf2(h2.nm).join('/')).join('; ');
+      return { rule: 'Disjoint sums', cells: [],
+        text: line.name + '\u2019s ' + line.clue.length + ' groups (' + line.clue.map(tokenLabel).join(', ') + ') need pairwise-disjoint sets of the digits 1\u2026' + st.D + ', all fitting in ' + n + ' cells with gaps between \u2014 for \u201c' + tokenLabel(line.clue[g]) + '\u201d only ' + [...surviving].join('/') + ' can be realised alongside the others. So ' + desc + '.',
+        apply() { for (const h2 of hits) filterLetter(st, h2.L, h2.nm); } };
+    }
+  }
+  return null;
+}
+
 // rule: full house — a line whose clue sums total 1+2+..+D must contain every digit
 function ruleFullLine(st, clues) {
   const fullSum = st.D * (st.D + 1) / 2;
@@ -628,6 +784,36 @@ function ruleLetterUniqueness(st, clues) {
 function ruleCellTrial(st, clues) {
   if (st.noTrial) return null;
   const N = st.R * st.C;
+  // letter trials first: a cipher letter down to 2-3 digits is a natural
+  // hypothesis, and a quick contradiction removes the digit for good
+  const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 3);
+  act.sort((a, b) => popc(st.letterCand[a]) - popc(st.letterCand[b]));
+  const lDeadline = Date.now() + 1500;
+  for (const L of act) {
+    if (Date.now() > lDeadline) break;
+    for (const d of digitsOf2(st.letterCand[L])) {
+      const ghost = cloneSumsState(st);
+      ghost.fastLadder = false; ghost.noTrial = true; ghost.__lineCache = undefined;
+      try { filterLetter(ghost, L, 1 << d); } catch (e) { continue; }
+      const chain = [];
+      let contra = null;
+      for (let k = 0; k < 25 && !contra; k++) {
+        let mv = null;
+        try { mv = takeSumsStep(ghost, clues); } catch (e) { break; }
+        if (!mv) break;
+        chain.push(mv);
+        if (mv.contradiction) contra = mv;
+      }
+      if (contra) {
+        const name = String.fromCharCode(65 + L);
+        return { rule: 'Letter trial', cells: [], chain,
+          chainIntro: 'Suppose letter ' + name + ' stood for ' + d + '. Then:',
+          chainOutro: 'So ' + name + ' is <b>not ' + d + '</b>.',
+          text: 'Suppose ' + name + ' stood for ' + d + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + name + ' is not ' + d + '.',
+          apply() { filterLetter(st, L, ~(1 << d)); } };
+      }
+    }
+  }
   const cands = [];
   for (let i = 0; i < N; i++) {
     const pc = popc(st.cand[i]);
@@ -640,7 +826,7 @@ function ruleCellTrial(st, clues) {
     for (let v = 0; v <= st.D; v++) {
       if (!(st.cand[i] & (1 << v))) continue;
       const ghost = cloneSumsState(st);
-      ghost.fastLadder = true; ghost.noTrial = true;
+      ghost.fastLadder = false; ghost.noTrial = true;
       ghost.__lineCache = undefined;
       try { filterCand(ghost, i, 1 << v); } catch (e) { continue; }
       const chain = [];
@@ -665,8 +851,8 @@ function ruleCellTrial(st, clues) {
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleSumBounds, ruleEqualGroups, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleSumBounds, ruleEqualGroups, ruleFullLine, ruleLinePlacements, ruleGroupCombos];
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleFullLine, ruleLinePlacements, ruleGroupCombos];
 
 function takeSumsStep(st, clues) {
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
@@ -695,13 +881,16 @@ function sumsComplete(st) {
 const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
+  { name: 'Letter pairs', desc: 'Two (or three) crypto letters confined to the same two (or three) digits use them all up \u2014 those digits leave every other letter (naked pairs, sudoku-style).' },
   { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k pairwise-disjoint digit sets with the same sum \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
+  { name: 'Disjoint sums', desc: 'All of a line\u2019s groups need pairwise-disjoint sets of the digits 1\u2026D, fitting in the line with gaps \u2014 a group sum no joint assignment can realise alongside the others is impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },
   { name: 'Group combinations', desc: 'A fully-delimited group\u2019s sum restricts which distinct digits its open cells can hold (killer-cage style) \u2014 impossible digits are eliminated.' },
   { name: 'Line analysis', desc: 'One line considered in isolation: every completion consistent with its clue and the current candidates is enumerated \u2014 values no completion uses are eliminated.' },
   { name: 'Letter deduction', desc: 'The sums a clue group can actually achieve pin the decimal digits its crypto letters can stand for \u2014 impossible digits are removed from the letter\u2019s candidates.' },
   { name: 'Letter uniqueness', desc: 'Every crypto letter stands for a different digit \u2014 a solved letter\u2019s digit is removed from all other letters.' },
+  { name: 'Letter trial', desc: 'Suppose a nearly-decided cipher letter stood for one of its digits and follow the quick consequences \u2014 a contradiction removes that digit, chain shown.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
 ];
 

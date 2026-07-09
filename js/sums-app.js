@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 
-let R = 6, C = 6, D = 5, G = 3;   // G = clue slots per line
+let R = 8, C = 8, D = 6, G = 3;   // G = clue slots per line
 let st = null;              // stepper state (candidate masks)
 let clues = null;           // { rows: [...], cols: [...] } parsed
 let worker = null;
@@ -44,9 +44,9 @@ function buildGrid(keepClues) {
   if (keepClues) {
     document.querySelectorAll('#sumsGridWrap input').forEach(el => { if (el.value) saved[el.id] = el.value; });
   }
-  R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 6));
-  C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 6));
-  D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 5));
+  R = Math.max(2, Math.min(12, parseInt($('sumsRows').value, 10) || 8));
+  C = Math.max(2, Math.min(12, parseInt($('sumsCols').value, 10) || 8));
+  D = Math.max(2, Math.min(9, parseInt($('sumsDigits').value, 10) || 6));
   G = Math.max(1, Math.min(6, parseInt($('sumsSlots').value, 10) || 3));
   st = sums.makeSumsState(R, C, D);
   stepCounts = new Map();
@@ -82,6 +82,7 @@ function renderCells(hl) {
     if (m === 1) { td.className += ' shaded'; td.innerHTML = ''; continue; }
     const ds = sums.digitsOf(m);
     if (ds.length === 1 && !(m & 1)) { td.innerHTML = '<span class="sums-digit">' + ds[0] + '</span>'; continue; }
+    if (!(m & 1)) td.className += ' used';   // certainly holds a digit
     const full = ((1 << (D + 1)) - 2) | 1;
     if (m === full) { td.innerHTML = ''; continue; }
     td.innerHTML = '<span class="sums-cands">' + (m & 1 ? '\u00b7' : '') + ds.join('') + '</span>';
