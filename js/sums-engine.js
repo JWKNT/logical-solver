@@ -1,129 +1,139 @@
 // Japanese Sums search engine: solve, count solutions, and per-cell candidate
-// statuses. Runs in a Web Worker in the page (via Blob) and as a Node module
-// for the tests.
-//
-// Rules: place digits 1..D in some cells of an R x C grid; a digit appears at
-// most once per row and per column; empty cells split each line into groups of
-// consecutive digits, and a clued line lists the sums of its groups in order.
-// A clue value of -1 (entered as '?') is a wildcard group of unknown sum. An
-// unclued line is unconstrained.
+// statuses. Supports pattern clues ('?' = one digit 1-9, '1?' = 10..19, '?1' =
+// 11,21,..,91 — no leading zero) and crypto letters (each letter A-Z stands
+// for one digit 0-9, all letters distinct, bound consistently puzzle-wide).
+// Runs in a Web Worker in the page (via Blob) and as a Node module for tests.
 function sumsWorkerMain() {
 
-// ---- clue state helpers -------------------------------------------------
-// Per line we track: group index, running sum. Placing digit v extends the
-// current group; placing empty closes it (sum must match the clue) or is a
-// plain gap. At line end the pending group closes and all groups must be used.
+// clue tokens -> group objects
+// token: number (exact), or string of [0-9A-Z?]: digits fixed, '?' wildcard,
+// letters crypto variables. A one-char '?' means a single digit 1..9, '??'
+// a two-digit sum, etc. No leading zeros for multi-digit values.
+function compileClue(clue, maxSum, letterIds) {
+  if (!clue) return null;
+  return clue.map(tok => {
+    if (typeof tok === 'number') {
+      if (tok >= 0) return { type: 'exact', v: tok, max: tok, min: tok };
+      // legacy -1: completely unknown sum
+      return { type: 'set', set: null, max: maxSum, min: 1 };
+    }
+    const s = String(tok).toUpperCase().trim();
+    const chars = [];
+    let hasLetter = false;
+    for (const ch of s) {
+      if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
+      else if (ch === '?') chars.push({ q: true });
+      else if (ch >= 'A' && ch <= 'Z') { chars.push({ L: ch.charCodeAt(0) - 65 }); hasLetter = true; if (!letterIds.includes(ch.charCodeAt(0) - 65)) letterIds.push(ch.charCodeAt(0) - 65); }
+    }
+    if (!chars.length) return { type: 'set', set: null, max: maxSum, min: 1 };
+    if (!hasLetter) {
+      // fixed set of matching values
+      const set = new Set();
+      const lo = chars.length === 1 ? 0 : Math.pow(10, chars.length - 1);
+      const hi = Math.pow(10, chars.length) - 1;
+      for (let v = Math.max(1, lo); v <= Math.min(hi, maxSum); v++) {
+        const ds = String(v).padStart(chars.length, '0').split('').map(Number);
+        if (ds.length !== chars.length) continue;
+        let ok = true;
+        for (let p = 0; p < chars.length; p++) if (chars[p].d !== undefined && chars[p].d !== ds[p]) ok = false;
+        if (ok) set.add(v);
+      }
+      let mn = Infinity, mx = 0;
+      for (const v of set) { if (v < mn) mn = v; if (v > mx) mx = v; }
+      return { type: 'set', set, max: mx, min: mn === Infinity ? 1 : mn };
+    }
+    return { type: 'letters', chars, len: chars.length,
+      max: Math.min(maxSum, Math.pow(10, chars.length) - 1),
+      min: chars.length === 1 ? 1 : Math.pow(10, chars.length - 1) };
+  });
+}
 
 function makeSolver(cfg) {
   const { R, C, D } = cfg;
-  const rowClues = cfg.rowClues;   // array per row: null (unclued) or [s1, s2, ...] with -1 = '?'
-  const colClues = cfg.colClues;
+  const maxSum = D * (D + 1) / 2;
+  const letterIds = [];
+  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds));
+  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds));
   const N = R * C;
-  const grid = new Int8Array(N).fill(-1);   // -1 undecided, 0 empty, 1..D digit
-  const rowMask = new Int32Array(R);        // digits used
-  const colMask = new Int32Array(C);
+  const grid = new Int8Array(N).fill(-1);
+  const rowMask = new Int32Array(R), colMask = new Int32Array(C);
   const rowGi = new Int32Array(R), rowRun = new Int32Array(R);
   const colGi = new Int32Array(C), colRun = new Int32Array(C);
-  const fixed = cfg.fixed || null;          // optional Int8Array of prefills (-1 = free)
+  const FULL = (1 << (D + 1)) - 2;
+  // crypto letter state
+  const letterVal = new Int8Array(26).fill(-1);
+  let letterUsed = 0;   // digits 0-9 taken by letters
 
-  const FULL = (1 << (D + 1)) - 2;          // bits 1..D
-
-  // max sum obtainable from a digit mask, and with at most k digits
   function maxSumOf(mask) { let s = 0; for (let d = D; d >= 1; d--) if (mask & (1 << d)) s += d; return s; }
   function minAvail(mask) { for (let d = 1; d <= D; d++) if (mask & (1 << d)) return d; return 0; }
 
-  // Can the current group for a line still be completed and the rest of the
-  // clue list still fit into `left` remaining cells with `avail` digit mask?
+  function groupMax(g) {
+    if (!g) return maxSum;
+    if (g.type !== 'letters') return g.max;
+    // tighten by bound letters
+    let mx = 0;
+    for (let p = 0; p < g.len; p++) {
+      const ch = g.chars[p];
+      let d = 9;
+      if (ch.d !== undefined) d = ch.d;
+      else if (ch.L !== undefined && letterVal[ch.L] >= 0) d = letterVal[ch.L];
+      mx = mx * 10 + d;
+    }
+    return Math.min(mx, g.max);
+  }
+
+  // close a group with sum s against clue group g. Returns null (fail) or an
+  // undo list of letters bound by this closure.
+  function closeGroup(g, s) {
+    if (!g) return [];
+    if (g.type === 'exact') return g.v === s ? [] : null;
+    if (g.type === 'set') return (g.set === null || g.set.has(s)) ? [] : null;
+    const ds = String(s).split('').map(Number);
+    if (ds.length !== g.len) return null;
+    const bound = [];
+    for (let p = 0; p < g.len; p++) {
+      const ch = g.chars[p], d = ds[p];
+      if (ch.d !== undefined) { if (ch.d !== d) { undoLetters(bound); return null; } }
+      else if (ch.L !== undefined) {
+        const cur = letterVal[ch.L];
+        if (cur >= 0) { if (cur !== d) { undoLetters(bound); return null; } }
+        else {
+          if (letterUsed & (1 << d)) { undoLetters(bound); return null; }   // another letter has d
+          letterVal[ch.L] = d; letterUsed |= 1 << d; bound.push(ch.L);
+        }
+      }
+    }
+    return bound;
+  }
+  function undoLetters(bound) {
+    for (const L of bound) { letterUsed &= ~(1 << letterVal[L]); letterVal[L] = -1; }
+  }
+
   function lineFeasible(clue, gi, run, left, avail) {
     if (!clue) return true;
-    let need = 0;
     if (run > 0) {
       if (gi >= clue.length) return false;
-      const target = clue[gi];
-      if (target >= 0) {
-        if (run > target) return false;
-        if (run < target) {
-          // must extend: need at least one more cell and enough digit mass
+      const g = clue[gi];
+      const gm = groupMax(g);
+      if (run > gm) return false;
+      if (run < g.min || run < gm) {
+        // may need to extend; ensure it's possible when it must
+        if (run < g.min) {
           if (left <= 0) return false;
-          if (run + maxSumOf(avail) < target) return false;
+          if (run + maxSumOf(avail) < g.min) return false;
           if (minAvail(avail) === 0) return false;
         }
-      } else if (left < 0) return false;
-      need = (target >= 0 && run < target) ? 1 : 0;
+      }
     }
-    // remaining groups after the current one: each needs >= 1 cell + 1 gap before it
-    const remGroups = clue.length - gi - (run > 0 ? 1 : 0);
-    if (remGroups < 0) return false;
-    let cellsNeeded = need;
-    for (let g = gi + (run > 0 ? 1 : 0); g < clue.length; g++) cellsNeeded += 2;  // gap + at least 1 cell
-    if (run === 0 && gi < clue.length && cellsNeeded >= 2) cellsNeeded -= 1;      // no gap needed before the first pending group if we're already at a gap
+    let cellsNeeded = (run > 0 && clue[gi] && run < clue[gi].min) ? 1 : 0;
+    for (let g2 = gi + (run > 0 ? 1 : 0); g2 < clue.length; g2++) cellsNeeded += 2;
+    if (run === 0 && gi < clue.length && cellsNeeded >= 2) cellsNeeded -= 1;
     return cellsNeeded <= left;
   }
 
-  function tryPlace(i, v) {
-    const r = (i / C) | 0, c = i % C;
-    const rc = rowClues[r], cc = colClues[c];
-    // row transition
-    if (v === 0) {
-      if (rowRun[r] > 0) {
-        const t = rc ? rc[rowGi[r]] : -2;
-        if (rc && (rowGi[r] >= rc.length || (t >= 0 && rowRun[r] !== t))) return false;
-      }
-      if (colRun[c] > 0) {
-        const t = cc ? cc[colGi[c]] : -2;
-        if (cc && (colGi[c] >= cc.length || (t >= 0 && colRun[c] !== t))) return false;
-      }
-    } else {
-      if (rowMask[r] & (1 << v)) return false;
-      if (colMask[c] & (1 << v)) return false;
-      if (rc) {
-        const gi = rowRun[r] > 0 ? rowGi[r] : rowGi[r];
-        if (gi >= rc.length) return false;
-        const t = rc[gi];
-        if (t >= 0 && rowRun[r] + v > t) return false;
-      }
-      if (cc) {
-        const gi = colGi[c];
-        if (gi >= cc.length) return false;
-        const t = cc[gi];
-        if (t >= 0 && colRun[c] + v > t) return false;
-      }
-    }
-    return true;
-  }
-
-  function apply(i, v) {
-    const r = (i / C) | 0, c = i % C;
-    const undo = { rGi: rowGi[r], rRun: rowRun[r], cGi: colGi[c], cRun: colRun[c] };
-    if (v === 0) {
-      if (rowRun[r] > 0) { rowGi[r]++; rowRun[r] = 0; }
-      if (colRun[c] > 0) { colGi[c]++; colRun[c] = 0; }
-    } else {
-      rowMask[r] |= 1 << v; colMask[c] |= 1 << v;
-      rowRun[r] += v; colRun[c] += v;
-    }
-    grid[i] = v;
-    return undo;
-  }
-  function unapply(i, v, undo) {
-    const r = (i / C) | 0, c = i % C;
-    if (v > 0) { rowMask[r] &= ~(1 << v); colMask[c] &= ~(1 << v); }
-    rowGi[r] = undo.rGi; rowRun[r] = undo.rRun; colGi[c] = undo.cGi; colRun[c] = undo.cRun;
-    grid[i] = -1;
-  }
-
-  function lineEndOk(clue, gi, run) {
-    if (!clue) return true;
-    let g = gi;
-    if (run > 0) {
-      const t = clue[g];
-      if (g >= clue.length || (t >= 0 && run !== t)) return false;
-      g++;
-    }
-    return g === clue.length;
-  }
-
-  return { grid, rowMask, colMask, rowGi, rowRun, colGi, colRun, tryPlace, apply, unapply, lineEndOk, lineFeasible, FULL, fixed };
+  return { grid, rowMask, colMask, rowGi, rowRun, colGi, colRun, rowClues, colClues,
+    lineFeasible, groupMax, closeGroup, undoLetters, FULL, letterVal, letterIds, maxSum,
+    fixed: cfg.fixed || null };
 }
 
 function search(cfg, opts) {
@@ -133,55 +143,112 @@ function search(cfg, opts) {
   const deadline = Date.now() + (opts.timeLimit || 10000);
   let nodes = 0, solCount = 0, timedOut = false;
   const maxSol = opts.maxSolutions || Infinity;
-  let firstSol = null;
-  // per-cell candidate accumulation: bit 0 = empty, bits 1..D digit
+  let firstSol = null, firstLetters = null;
   const cand = opts.collect ? new Int32Array(N) : null;
+  const letterCand = opts.collect ? new Int32Array(26) : null;
   const post = opts.onSolution || null;
 
   function rec(i) {
     if (timedOut || solCount >= maxSol) return;
     if ((++nodes & 2047) === 0 && Date.now() > deadline) { timedOut = true; return; }
     if (i === N) {
-      // verify column ends (row ends checked at each row boundary)
-      for (let c = 0; c < C; c++) if (!S.lineEndOk(cfg.colClues[c], S.colGi[c], S.colRun[c])) return;
-      solCount++;
-      if (!firstSol) firstSol = Int8Array.from(S.grid);
-      if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
-      if (post) post(S.grid);
+      // close pending column groups
+      const undos = [];
+      let ok = true;
+      for (let c = 0; c < C && ok; c++) {
+        const cc = S.colClues[c];
+        let gi = S.colGi[c];
+        if (S.colRun[c] > 0) {
+          const u = S.closeGroup(cc ? cc[gi] : null, S.colRun[c]);
+          if (u === null || (cc && gi >= cc.length)) { ok = false; break; }
+          undos.push(u); gi++;
+        }
+        if (cc && gi !== cc.length) { ok = false; break; }
+      }
+      if (ok) {
+        solCount++;
+        if (!firstSol) { firstSol = Int8Array.from(S.grid); firstLetters = Int8Array.from(S.letterVal); }
+        if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
+        if (letterCand) for (const L of S.letterIds) if (S.letterVal[L] >= 0) letterCand[L] |= 1 << S.letterVal[L];
+        if (post) post(S.grid, S.letterVal);
+      }
+      for (let k = undos.length - 1; k >= 0; k--) S.undoLetters(undos[k]);
       return;
     }
     const r = (i / C) | 0, c = i % C;
     const atRowEnd = c === C - 1;
+    const rcl = S.rowClues[r], ccl = S.colClues[c];
     const vals = [];
     if (S.fixed && S.fixed[i] >= 0) vals.push(S.fixed[i]);
     else { vals.push(0); for (let v = 1; v <= D; v++) vals.push(v); }
     for (const v of vals) {
-      if (!S.tryPlace(i, v)) continue;
-      const undo = S.apply(i, v);
+      let undoR = null, undoC = null;
       let ok = true;
-      if (atRowEnd && !S.lineEndOk(cfg.rowClues[r], S.rowGi[r], S.rowRun[r])) ok = false;
-      if (ok) {
-        // row feasibility for the remainder of this row
-        const leftInRow = C - 1 - c;
-        if (!S.lineFeasible(cfg.rowClues[r], S.rowGi[r], S.rowRun[r], leftInRow, ~S.rowMask[r] & S.FULL)) ok = false;
-        if (ok) {
-          const leftInCol = R - 1 - r;
-          if (!S.lineFeasible(cfg.colClues[c], S.colGi[c], S.colRun[c], leftInCol, ~S.colMask[c] & S.FULL)) ok = false;
+      const sv = { rGi: S.rowGi[r], rRun: S.rowRun[r], cGi: S.colGi[c], cRun: S.colRun[c] };
+      if (v === 0) {
+        if (S.rowRun[r] > 0) {
+          if (rcl && S.rowGi[r] >= rcl.length) ok = false;
+          else { undoR = S.closeGroup(rcl ? rcl[S.rowGi[r]] : null, S.rowRun[r]); if (undoR === null) ok = false; }
+          if (ok) { S.rowGi[r]++; S.rowRun[r] = 0; }
         }
+        if (ok && S.colRun[c] > 0) {
+          if (ccl && S.colGi[c] >= ccl.length) ok = false;
+          else { undoC = S.closeGroup(ccl ? ccl[S.colGi[c]] : null, S.colRun[c]); if (undoC === null) ok = false; }
+          if (ok) { S.colGi[c]++; S.colRun[c] = 0; }
+        }
+      } else {
+        if ((S.rowMask[r] & (1 << v)) || (S.colMask[c] & (1 << v))) ok = false;
+        if (ok && rcl) {
+          if (S.rowGi[r] >= rcl.length) ok = false;
+          else if (S.rowRun[r] + v > S.groupMax(rcl[S.rowGi[r]])) ok = false;
+        }
+        if (ok && ccl) {
+          if (S.colGi[c] >= ccl.length) ok = false;
+          else if (S.colRun[c] + v > S.groupMax(ccl[S.colGi[c]])) ok = false;
+        }
+        if (ok) { S.rowMask[r] |= 1 << v; S.colMask[c] |= 1 << v; S.rowRun[r] += v; S.colRun[c] += v; }
       }
-      if (ok) rec(i + 1);
-      S.unapply(i, v, undo);
+      if (ok) {
+        S.grid[i] = v;
+        let fine = true;
+        if (atRowEnd) {
+          // close the row's pending group and require the clue exhausted
+          if (S.rowRun[r] > 0) {
+            const rg = rcl ? rcl[S.rowGi[r]] : null;
+            if (rcl && S.rowGi[r] >= rcl.length) fine = false;
+            else {
+              const u = S.closeGroup(rg, S.rowRun[r]);
+              if (u === null) fine = false;
+              else { sv.rowEndUndo = u; S.rowGi[r]++; S.rowRun[r] = 0; }
+            }
+          }
+          if (fine && rcl && S.rowGi[r] !== rcl.length) fine = false;
+        }
+        if (fine && !S.lineFeasible(rcl, S.rowGi[r], S.rowRun[r], C - 1 - c, ~S.rowMask[r] & S.FULL)) fine = false;
+        if (fine && !S.lineFeasible(ccl, S.colGi[c], S.colRun[c], R - 1 - r, ~S.colMask[c] & S.FULL)) fine = false;
+        if (fine) rec(i + 1);
+        if (sv.rowEndUndo) S.undoLetters(sv.rowEndUndo);
+      }
+      // restore
+      S.grid[i] = -1;
+      if (v > 0 && ok) { S.rowMask[r] &= ~(1 << v); S.colMask[c] &= ~(1 << v); }
+      if (undoR) S.undoLetters(undoR);
+      if (undoC) S.undoLetters(undoC);
+      S.rowGi[r] = sv.rGi; S.rowRun[r] = sv.rRun; S.colGi[c] = sv.cGi; S.colRun[c] = sv.cRun;
       if (timedOut || solCount >= maxSol) return;
     }
   }
   rec(0);
-  return { solCount, nodes, timedOut, complete: !timedOut, firstSol, cand };
+  return { solCount, nodes, timedOut, complete: !timedOut, firstSol, firstLetters, cand, letterCand,
+    letterIds: S.letterIds };
 }
 
 function runAny(cfg) {
   if (cfg.mode === 'solve') {
     const r = search(cfg, { timeLimit: cfg.timeLimit, maxSolutions: 1 });
-    return { firstSol: r.firstSol ? Array.from(r.firstSol) : null, nodes: r.nodes, timedOut: r.timedOut };
+    return { firstSol: r.firstSol ? Array.from(r.firstSol) : null,
+      firstLetters: r.firstLetters ? Array.from(r.firstLetters) : null,
+      letterIds: r.letterIds, nodes: r.nodes, timedOut: r.timedOut };
   }
   if (cfg.mode === 'count') {
     const r = search(cfg, { timeLimit: cfg.timeLimit, maxSolutions: cfg.maxSolutions || 10000 });
@@ -189,7 +256,10 @@ function runAny(cfg) {
   }
   if (cfg.mode === 'candidates') {
     const r = search(cfg, { timeLimit: cfg.timeLimit, collect: true, maxSolutions: cfg.maxSolutions || 100000 });
-    return { solCount: r.solCount, nodes: r.nodes, complete: r.complete, timedOut: r.timedOut, cand: r.cand ? Array.from(r.cand) : null };
+    return { solCount: r.solCount, nodes: r.nodes, complete: r.complete, timedOut: r.timedOut,
+      cand: r.cand ? Array.from(r.cand) : null,
+      letterCand: r.letterCand ? Array.from(r.letterCand) : null,
+      letterIds: r.letterIds };
   }
   return { error: 'unknown mode' };
 }
@@ -198,7 +268,7 @@ if (typeof self !== 'undefined' && typeof postMessage === 'function') {
   self.onmessage = function (e) { postMessage(runAny(e.data)); };
 }
 if (typeof module !== 'undefined' && module.exports !== undefined) {
-  module.exports = { runAny, search, makeSolver };
+  module.exports = { runAny, search, makeSolver, compileClue };
 }
 }
 if (typeof module !== 'undefined') {

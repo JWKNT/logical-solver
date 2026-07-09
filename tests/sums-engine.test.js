@@ -86,5 +86,48 @@ for (let t = 0; t < 40; t++) {
   }
   if (bruteN < 1) { console.log('FAIL: generated puzzle has no solutions?!'); fails++; }
 }
+// crypto letters: substitute letters into some clue digits and compare against
+// a brute that tries every distinct letter->digit assignment
+for (let t = 0; t < 12; t++) {
+  const R = 3, C = 3 + ((Math.random() * 2) | 0), D = 3 + ((Math.random() * 2) | 0);
+  const g = randGrid(R, C, D);
+  const { rows, cols } = cluesOf(g, R, C, D);
+  // pick up to 2 digits that appear in the clue values and letter them
+  const digitsSeen = new Set();
+  for (const cl of rows.concat(cols)) for (const v of cl) for (const ch of String(v)) digitsSeen.add(+ch);
+  const pool = [...digitsSeen];
+  const nL = Math.min(pool.length, 1 + ((Math.random() * 2) | 0));
+  const chosen = [];
+  while (chosen.length < nL && pool.length) chosen.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
+  const LET = ['A', 'B'];
+  const sub = v => String(v).split('').map(ch => { const k = chosen.indexOf(+ch); return k >= 0 ? LET[k] : ch; }).join('');
+  const rowClues = rows.map(cl => cl.map(sub));
+  const colClues = cols.map(cl => cl.map(sub));
+  // brute over assignments: distinct digits 0-9 for each letter
+  let bruteN = 0;
+  const assign = new Array(nL).fill(0);
+  function tryAssign(k) {
+    if (k === nL) {
+      const unsub = tok => { let out = ''; for (const ch of tok) { const li = LET.indexOf(ch); out += li >= 0 ? String(assign[li]) : ch; } return parseInt(out, 10); };
+      const rcl = rowClues.map(cl => cl.map(tok => { const v = unsub(tok); return (String(v).length !== tok.length) ? NaN : v; }));
+      const ccl = colClues.map(cl => cl.map(tok => { const v = unsub(tok); return (String(v).length !== tok.length) ? NaN : v; }));
+      if (rcl.some(cl => cl.some(isNaN)) || ccl.some(cl => cl.some(isNaN))) return;   // leading zero created a shorter number
+      for (const cl of rcl.concat(ccl)) for (const v of cl) if (isNaN(v)) return;
+      bruteN += brute(R, C, D, rcl, ccl);
+      return;
+    }
+    for (let d = 0; d <= 9; d++) {
+      if (assign.slice(0, k).includes(d)) continue;
+      assign[k] = d;
+      tryAssign(k + 1);
+    }
+  }
+  tryAssign(0);
+  const eng = E.runAny({ R, C, D, rowClues, colClues, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  if (!eng.complete || eng.solCount !== bruteN) {
+    console.log('CRYPTO FAIL:', R + 'x' + C, 'D=' + D, 'letters=' + nL, 'brute=' + bruteN, 'engine=' + eng.solCount);
+    fails++;
+  }
+}
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS ENGINE TESTS PASSED');
 process.exit(fails ? 1 : 0);

@@ -23,12 +23,27 @@ function cluesOf(g, R, C) {
   return { rows, cols };
 }
 
-let fails = 0, steps = 0, trialSteps = 0, solved = 0, puzzles = 0;
+let fails = 0, steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
 while (puzzles < 24 && Date.now() - t00 < 200000) {
   const R = 4 + ((Math.random() * 3) | 0), C = 4 + ((Math.random() * 3) | 0), D = 4 + ((Math.random() * 3) | 0);
   const g = randGrid(R, C, D);
   const clues = cluesOf(g, R, C);
+  // every third puzzle: crypto-substitute 1-2 digits with letters
+  const crypto = puzzles % 3 === 2;
+  if (crypto) {
+    const digitsSeen = new Set();
+    for (const cl of clues.rows.concat(clues.cols)) for (const v of cl) for (const ch of String(v)) digitsSeen.add(+ch);
+    const pool = [...digitsSeen];
+    const nL = Math.min(pool.length, 1 + ((Math.random() * 2) | 0));
+    const chosen = [];
+    while (chosen.length < nL && pool.length) chosen.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
+    const LET = ['A', 'B'];
+    const sub = v => String(v).split('').map(ch => { const k = chosen.indexOf(+ch); return k >= 0 ? LET[k] : ch; }).join('');
+    clues.rows = clues.rows.map(cl => cl.map(sub));
+    clues.cols = clues.cols.map(cl => cl.map(sub));
+    cryptoPuzzles++;
+  }
   // union of values per cell over ALL solutions
   const eng = E.runAny({ R, C, D, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
   if (!eng.complete) continue;
@@ -50,9 +65,16 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
         fails++; k = 9999; break;
       }
     }
+    // letter soundness: no letter may lose a digit some solution assigns
+    if (eng.letterCand) for (let L = 0; L < 26; L++) {
+      if (eng.letterCand[L] & ~st.letterCand[L]) {
+        console.log('FAIL: unsound letter elimination for', String.fromCharCode(65 + L), 'rule [' + mv.rule + ']:', mv.text.slice(0, 140));
+        fails++; k = 9999; break;
+      }
+    }
   }
   if (S.sumsComplete(st)) solved++;
 }
-console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
+console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles (' + cryptoPuzzles + ' crypto) \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS STEPPER TESTS PASSED');
 process.exit(fails ? 1 : 0);

@@ -474,3 +474,12 @@
   color: var(--ink); text-align: center; padding: 1px;
 }
 .sums-slots input:focus { border-color: #999; outline: none; }
+
+/* shaded blank cells + crypto letter table */
+.sums-cell.shaded { background: var(--shaded); }
+.crypto-table { border-collapse: collapse; margin-top: 12px; font-family: "Menlo", monospace; }
+.crypto-table th { font-size: 11px; color: #888; font-weight: 400; padding: 2px 5px; }
+.crypto-table td { border: 1px solid var(--grid-line); padding: 3px 7px; font-size: 13px; text-align: center; }
+.crypto-letter { font-weight: 700; background: #f5f5f5; }
+.crypto-digit.off { color: #ccc; background: #fafafa; }
+.crypto-digit.solo { font-weight: 700; background: #edf2ee; }

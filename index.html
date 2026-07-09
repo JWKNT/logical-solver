@@ -93,7 +93,8 @@
     <div class="board-col">
       <div class="board-wrap"><div id="sumsGridWrap"></div></div>
       <div class="status" id="sumsStatus"></div>
-      <div class="legend">Digits 1..D, at most once per row and column. A clue lists each group’s sum in reading order; groups are separated by at least one blank cell. <code>?</code> = a group of unknown sum; a blank clue box = unclued line.</div>
+      <div id="sumsLetters" hidden></div>
+      <div class="legend">Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. <code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits), letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</div>
     </div>
     <aside class="strategies-side">
       <details class="strategies" open>

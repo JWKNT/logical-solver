@@ -22,12 +22,12 @@ function readSlotClue(prefix) {
     const el = $(prefix + '_' + g);
     const t = (el ? el.value : '').trim();
     if (!t) continue;
-    if (t === '?') vals.push(-1);
-    else { const n = parseInt(t, 10); if (!isNaN(n) && n >= 0) vals.push(n); }
+    if (/^[0-9]+$/.test(t)) { const n = parseInt(t, 10); if (n >= 0) vals.push(n); }
+    else if (/^[0-9A-Za-z?]+$/.test(t)) vals.push(t.toUpperCase());
   }
   if (!vals.length) return null;
   if (vals.length === 1 && vals[0] === 0) return [];
-  return vals.filter(v => v !== 0);
+  return vals.filter(v => v !== 0 || typeof v === 'string');
 }
 
 function readClues() {
@@ -68,6 +68,7 @@ function buildGrid(keepClues) {
   wrap.innerHTML = html;
   for (const id in saved) { const el = $(id); if (el) el.value = saved[id]; }
   renderCells();
+  renderLetters();
   buildStrategyPanel();
   status('Enter each line\u2019s group sums in the boxes, in reading order (one box per group; <code>?</code> = unknown sum; a single <code>0</code> = the line is entirely blank; all boxes empty = unclued line). Then <b>Solve</b>, <b>True candidates</b>, or <b>Take step</b>.');
 }
@@ -78,13 +79,40 @@ function renderCells(hl) {
     const td = $('sumsCell' + i);
     const m = st.cand[i];
     td.className = 'sums-cell' + (hlSet.has(i) ? ' hl' : '');
-    if (m === 1) { td.innerHTML = '<span class="sums-blank">\u00d7</span>'; continue; }
+    if (m === 1) { td.className += ' shaded'; td.innerHTML = ''; continue; }
     const ds = sums.digitsOf(m);
     if (ds.length === 1 && !(m & 1)) { td.innerHTML = '<span class="sums-digit">' + ds[0] + '</span>'; continue; }
     const full = ((1 << (D + 1)) - 2) | 1;
     if (m === full) { td.innerHTML = ''; continue; }
     td.innerHTML = '<span class="sums-cands">' + (m & 1 ? '\u00b7' : '') + ds.join('') + '</span>';
   }
+}
+
+function activeLetters() {
+  const set = new Set();
+  const cl = clues || readClues();
+  for (const list of cl.rows.concat(cl.cols)) if (list) for (const tok of list) for (const L of sums.tokenLetters(tok)) set.add(L);
+  return [...set].sort((a, b) => a - b);
+}
+function renderLetters(engineCand) {
+  const box = $('sumsLetters');
+  const letters = activeLetters();
+  if (!letters.length) { box.hidden = true; return; }
+  box.hidden = false;
+  let html = '<table class="crypto-table"><tr><th></th>';
+  for (let d = 0; d <= 9; d++) html += '<th>' + d + '</th>';
+  html += '</tr>';
+  for (const L of letters) {
+    const mask = engineCand ? engineCand[L] : st.letterCand[L];
+    html += '<tr><td class="crypto-letter">' + String.fromCharCode(65 + L) + '</td>';
+    for (let d = 0; d <= 9; d++) {
+      const on = mask & (1 << d);
+      const solo = on && sums.popc(mask) === 1;
+      html += '<td class="crypto-digit' + (on ? (solo ? ' solo' : '') : ' off') + '">' + d + '</td>';
+    }
+    html += '</tr>';
+  }
+  box.innerHTML = html + '</table>';
 }
 
 function buildStrategyPanel() {
@@ -122,8 +150,11 @@ $('sumsSolve').onclick = () => {
     if (!res.firstSol) { status(res.timedOut ? '<span class="warn">No solution found within the time limit.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     st = sums.makeSumsState(R, C, D);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
+    if (res.firstLetters) for (let L = 0; L < 26; L++) if (res.firstLetters[L] >= 0) st.letterCand[L] = 1 << res.firstLetters[L];
     renderCells();
-    status('<span class="good">Solved</span> in ' + ms + ' ms (' + res.nodes.toLocaleString() + ' nodes).' + (res.timedOut ? ' <span class="warn">(search truncated)</span>' : ''));
+    renderLetters();
+    const letterTxt = (res.letterIds || []).filter(L => res.firstLetters[L] >= 0).map(L => String.fromCharCode(65 + L) + '=' + res.firstLetters[L]).join(', ');
+    status('<span class="good">Solved</span> in ' + ms + ' ms (' + res.nodes.toLocaleString() + ' nodes).' + (letterTxt ? ' Letters: <b>' + letterTxt + '</b>.' : '') + (res.timedOut ? ' <span class="warn">(search truncated)</span>' : ''));
   }, 'Solving');
 };
 $('sumsCands').onclick = () => {
@@ -136,13 +167,16 @@ $('sumsCands').onclick = () => {
     }
     st = sums.makeSumsState(R, C, D);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
+    if (res.letterCand) for (const L of res.letterIds || []) if (res.letterCand[L]) st.letterCand[L] = res.letterCand[L];
     renderCells();
+    renderLetters();
     status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.');
   }, 'Enumerating solutions');
 };
 $('sumsStep').onclick = () => {
   clues = readClues();
   const mv = sums.takeSumsStep(st, clues);
+  renderLetters();
   if (!mv) { status('No deduction found \u2014 the ladder is out of ideas here. Try <b>True candidates</b> for the engine\u2019s view.'); return; }
   stepCounts.set(mv.rule, (stepCounts.get(mv.rule) || 0) + 1);
   markStrategy(mv.rule);
@@ -154,7 +188,7 @@ $('sumsStep').onclick = () => {
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : ''));
   renderCells(mv.cells);
 };
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); stepCounts = new Map(); renderCells(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D); stepCounts = new Map(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 buildGrid();
