@@ -506,8 +506,11 @@
 .crypto-box-solved { font-family: "Menlo", monospace; font-size: 26px; font-weight: 700; color: #8c2f2f; padding: 6px 0; }
 .crypto-box-marks {
   display: grid; grid-template-columns: repeat(5, 1fr); padding: 4px 3px;
+  column-gap: 3px; justify-items: center;
   font-family: "Menlo", monospace; font-size: 11px; color: #555; line-height: 1.6;
 }
+/* two-digit values (alien digits, bases) get wider cells so they never touch */
+.crypto-box-marks.wide { grid-template-columns: repeat(4, 1fr); column-gap: 4px; font-size: 10.5px; }
 .crypto-box-marks span.off { visibility: hidden; }
 .crypto-box-many {
   font-family: "Menlo", monospace; font-size: 10.5px; color: #999;

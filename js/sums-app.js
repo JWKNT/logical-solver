@@ -271,7 +271,7 @@ function renderLetters(engineCand, engineBases) {
     if (bs.length === 1) html += '<div class="crypto-box-solved">' + bs[0] + '</div>';
     else if (!bs.length) html += '<div class="crypto-box-solved">?</div>';
     else if (bs.length > 10) html += '<div class="crypto-box-many">' + bs.length + ' possible</div>';
-    else html += '<div class="crypto-box-marks">' + bs.map(b => '<span>' + b + '</span>').join('') + '</div>';
+    else html += '<div class="crypto-box-marks' + (bs.some(b => b > 9) ? ' wide' : '') + '">' + bs.map(b => '<span>' + b + '</span>').join('') + '</div>';
     html += '</div>';
   }
   for (const L of letters) {
@@ -285,7 +285,7 @@ function renderLetters(engineCand, engineBases) {
       for (let d = 0; d <= 9; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
       html += '</div>';
     } else if (ds.length > 10) html += '<div class="crypto-box-many">' + ds.length + ' possible</div>';
-    else html += '<div class="crypto-box-marks">' + ds.map(d => '<span>' + d + '</span>').join('') + '</div>';
+    else html += '<div class="crypto-box-marks' + (ds.some(d => d > 9) ? ' wide' : '') + '">' + ds.map(d => '<span>' + d + '</span>').join('') + '</div>';
     html += '</div>';
   }
   box.innerHTML = html + '</div>';
