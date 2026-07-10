@@ -43,6 +43,21 @@ cell a digit or shaded? — and case analysis, which follows a binary split a
 few steps in both cases and keeps whatever every case agrees on). Switch apps
 with the tabs in the header.
 
+The **Alien** variant writes every clue in one unknown number base (2–31)
+that the solver must determine: a *base* box beside the cipher tracks the
+candidates, whittled down like a crypto letter (Base bounds, Base deduction,
+Base trial, and base case-analysis, all narrated). Letters stand for digits
+0…base−1, so a letter can be worth 10 or more; a clue digit needing two
+decimal characters is entered dot-separated (`11.3` = the numeral [11][3]).
+The suite's reference puzzles — KNT's *Extraterrestrial Japanese Sums*
+(base 11, X=10) and ibag's *Glückwunsch von der ganzen Rasselbande (5)*
+(base 13, B=11, F=12) — are solved end to end by the ladder and
+engine-verified in `tests/sums-soundness.test.js`.
+
+`node tests/sums-soundness.test.js` runs scenario regressions plus randomized
+engine-vs-ladder batteries (`--scenarios` or `--battery` runs one half; the
+full default run takes roughly half an hour).
+
 ## Layout
 
 ```

@@ -9,8 +9,19 @@ function sumsWorkerMain() {
 // token: number (exact), or string of [0-9A-Z?]: digits fixed, '?' wildcard,
 // letters crypto variables. A one-char '?' means a single digit 1..9, '??'
 // a two-digit sum, etc. No leading zeros for multi-digit values.
-function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk) {
+function digitsInBase(v, b, len) {
+  // digits of |v| in base b, or null if it does not fit exactly `len` digits
+  let x = Math.abs(v);
+  const a = [];
+  if (x === 0) a.push(0);
+  else while (x > 0) { a.unshift(x % b); x = (x / b) | 0; }
+  if (a.length > len) return null;
+  while (a.length < len) a.unshift(0);
+  return a;
+}
+function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk, base) {
   minSumRef = minSumRef || 0;
+  base = base || 10;
   if (!clue) return null;
   const kdSet = set => {
     if (!kd || set === null) return set;
@@ -19,7 +30,7 @@ function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk) {
     return out;
   };
   return clue.map(tok => {
-    if (typeof tok === 'number') {
+    if (typeof tok === 'number' && base === 10) {
       // numeric clues are always exact (negative sums included); '#' is the catch-all
       if (!kd) return { type: 'exact', v: tok, max: tok, min: tok };
       const s2 = kdSet(new Set([tok]));
@@ -32,24 +43,33 @@ function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk) {
     if (s[0] === '-') { neg = true; s = s.slice(1); }
     const chars = [];
     let hasLetter = false;
-    for (const ch of s) {
+    const addChar = ch => {
+      if (ch === '#') return 'any';
+      if (ch === '?') { chars.push({ q: true }); return; }
+      if (ch >= 'A' && ch <= 'Z') { chars.push({ L: ch.charCodeAt(0) - 65 }); hasLetter = true; if (!letterIds.includes(ch.charCodeAt(0) - 65)) letterIds.push(ch.charCodeAt(0) - 65); return; }
       if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
-      else if (ch === '#') return { type: 'set', set: null, max: maxSum, min: 1 };
-      else if (ch === '?') chars.push({ q: true });
-      else if (ch >= 'A' && ch <= 'Z') { chars.push({ L: ch.charCodeAt(0) - 65 }); hasLetter = true; if (!letterIds.includes(ch.charCodeAt(0) - 65)) letterIds.push(ch.charCodeAt(0) - 65); }
+    };
+    if (base !== 10 && s.includes('.')) {
+      // '.'-separated base digits: '11.A.3' is the three-digit numeral [11, A, 3]
+      for (const f of s.split('.')) {
+        if (/^[0-9]+$/.test(f)) chars.push({ d: parseInt(f, 10) });
+        else if (addChar(f) === 'any') return { type: 'set', set: null, max: maxSum, min: 1 };
+      }
+    } else {
+      for (const ch of s) if (addChar(ch) === 'any') return { type: 'set', set: null, max: maxSum, min: 1 };
     }
     if (!chars.length) return { type: 'set', set: null, max: maxSum, min: 1 };
     if (!hasLetter) {
-      // fixed set of matching values
+      // fixed set of matching values (numerals read in the given base)
       const set = new Set();
-      const lo = chars.length === 1 ? 0 : Math.pow(10, chars.length - 1);
-      const hi = Math.pow(10, chars.length) - 1;
+      const lo = chars.length === 1 ? 0 : Math.pow(base, chars.length - 1);
+      const hi = Math.pow(base, chars.length) - 1;
       // displayed values run one past maxSum under KD (displayed = true + 1)
       const vlo = Math.max((kd || (zeroOk && !neg)) ? 0 : 1, lo);
       for (let v = vlo; v <= Math.min(hi, Math.abs(neg ? -1e9 : maxSum) + (kd ? 1 : 0)); v++) {
         if (neg && v === 0) continue;   // '-?' and kin are strictly negative
-        const ds = String(v).padStart(chars.length, '0').split('').map(Number);
-        if (ds.length !== chars.length) continue;
+        const ds = digitsInBase(v, base, chars.length);
+        if (!ds) continue;
         let ok = true;
         for (let p = 0; p < chars.length; p++) if (chars[p].d !== undefined && chars[p].d !== ds[p]) ok = false;
         if (ok) set.add(neg ? -v : v);
@@ -59,9 +79,9 @@ function compileClue(clue, maxSum, letterIds, kd, minSumRef, zeroOk) {
       for (const v of set2) { if (v < mn) mn = v; if (v > mx) mx = v; }
       return { type: 'set', set: set2, max: mx, min: mn === Infinity ? 1 : mn };
     }
-    const rawMax = Math.min(maxSum, Math.pow(10, chars.length) - 1 + (kd ? 1 : 0));
-    const rawMin = Math.max(1, (chars.length === 1 ? 1 : Math.pow(10, chars.length - 1)) - (kd ? 1 : 0));
-    return { type: 'letters', chars, len: chars.length, kd: !!kd, max: rawMax, min: rawMin };
+    const rawMax = Math.min(maxSum, Math.pow(base, chars.length) - 1 + (kd ? 1 : 0));
+    const rawMin = Math.max(1, (chars.length === 1 ? 1 : Math.pow(base, chars.length - 1)) - (kd ? 1 : 0));
+    return { type: 'letters', chars, len: chars.length, kd: !!kd, base, max: rawMax, min: rawMin };
   });
 }
 
@@ -83,12 +103,13 @@ function makeSolver(cfg) {
   const maxSum = pal.reduce((a, v, k) => a + (v > 0 ? v * cnt[k] : 0), 0);
   const minSum = pal.reduce((a, v, k) => a + (v < 0 ? v * cnt[k] : 0), 0);
   const letterIds = [];
-  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
-  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0)));
+  const BASE = cfg.base || 10;
+  const rowClues = (cfg.rowClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0), BASE));
+  const colClues = (cfg.colClues || []).map(cl => compileClue(cl, maxSum, letterIds, cfg.kd, minSum, minSum < 0 || pal.includes(0), BASE));
   const V = Object.assign({ numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
-    cfg.coral ? { blankConn: true, no22blank: true, asc: true, reach: true } : null,
+    null,
     cfg.variants || null);
-  const coral = V.asc;   // 'coral' below = unordered ascending clues
+  const asc = V.asc;   // unordered ascending clues
   const N = R * C;
   const grid = new Int8Array(N).fill(-1);          // 0 = blank, k = palette index k (1..M)
   const rowPack = new Int32Array(R), colPack = new Int32Array(C);   // 2-bit usage counters per value
@@ -100,7 +121,7 @@ function makeSolver(cfg) {
   const colVals = colClues.map(cl => cl ? new Int8Array(cl.length) : null);
   const FULL = (1 << (M + 1)) - 2;
   const letterVal = new Int8Array(26).fill(-1);
-  let letterUsed = 0;
+  const digitUsed = new Uint8Array(64);   // letter digits can exceed 31 under large alien bases
 
   function popcnt(m) { let c = 0; while (m) { c += m & 1; m >>>= 1; } return c; }
   function usedOf(pack, k) { return (pack >> (2 * k)) & 3; }
@@ -112,8 +133,11 @@ function makeSolver(cfg) {
   function anyLeft(pack) { for (let k = 0; k < M; k++) if (usedOf(pack, k) < cnt[k]) return true; return false; }
 
   function bindDisplayed(g, dv) {
-    const ds = String(dv).split('').map(Number);
-    if (ds.length !== g.len) return null;
+    if (dv < 0) return null;
+    // numerals may not carry leading zeros (single-char displays may be 0)
+    if (g.len > 1 && dv < Math.pow(BASE, g.len - 1)) return null;
+    const ds = digitsInBase(dv, BASE, g.len);
+    if (!ds) return null;
     const bound = [];
     for (let p = 0; p < g.len; p++) {
       const ch = g.chars[p], d = ds[p];
@@ -122,15 +146,15 @@ function makeSolver(cfg) {
         const cur = letterVal[ch.L];
         if (cur >= 0) { if (cur !== d) { undoLetters(bound); return null; } }
         else {
-          if (letterUsed & (1 << d)) { undoLetters(bound); return null; }
-          letterVal[ch.L] = d; letterUsed |= 1 << d; bound.push(ch.L);
+          if (digitUsed[d]) { undoLetters(bound); return null; }
+          letterVal[ch.L] = d; digitUsed[d] = 1; bound.push(ch.L);
         }
       }
     }
     return bound;
   }
   function undoLetters(bound) {
-    for (const L of bound) { letterUsed &= ~(1 << letterVal[L]); letterVal[L] = -1; }
+    for (const L of bound) { digitUsed[letterVal[L]] = 0; letterVal[L] = -1; }
   }
   function groupMatchOptions(g, s) {
     // ways one clue group can absorb TRUE sum s: list of displayed values
@@ -141,18 +165,18 @@ function makeSolver(cfg) {
   }
 
   // every viable close of TRUE sum s in this line: pick an unused clue index
-  // (any index under coral, the next-in-order index otherwise), a displayed
-  // value its token matches, and (coral) keep the values ascending by index
+  // (any index under ascending clues, the next-in-order index otherwise), a displayed
+  // value its token matches, and (ascending) keep the values ascending by index
   function closeList(clue, used, vals, s) {
     if (!clue) return [{ k: -1, dv: 0 }];
     const out = [];
     const idxs = [];
-    if (coral) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) idxs.push(k); }
+    if (asc) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) idxs.push(k); }
     else { const k = popcnt(used); if (k < clue.length) idxs.push(k); }
     for (const k of idxs) {
       const g = clue[k];
       for (const dv of groupMatchOptions(g, s)) {
-        if (coral) {
+        if (asc) {
           let ok = true;
           for (let k2 = 0; k2 < clue.length && ok; k2++) {
             if (!(used & (1 << k2)) || k2 === k) continue;
@@ -188,7 +212,7 @@ function makeSolver(cfg) {
   function groupMaxUnused(clue, used) {
     if (!clue) return maxSum;
     let mx = 0;
-    if (coral) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mx = Math.max(mx, groupMaxOf(clue[k])); }
+    if (asc) { for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mx = Math.max(mx, groupMaxOf(clue[k])); }
     else { const k = popcnt(used); if (k < clue.length) mx = groupMaxOf(clue[k]); }
     return mx;
   }
@@ -197,17 +221,17 @@ function makeSolver(cfg) {
     let mx = 0;
     for (let p = 0; p < g.len; p++) {
       const ch = g.chars[p];
-      let d = 9;
+      let d = BASE - 1;
       if (ch.d !== undefined) d = ch.d;
       else if (ch.L !== undefined && letterVal[ch.L] >= 0) d = letterVal[ch.L];
-      mx = mx * 10 + d;
+      mx = mx * BASE + d;
     }
     if (g.kd) mx += 1;
     return Math.min(mx, g.max);
   }
   function groupMinNext(clue, used) {
     if (!clue) return 1;
-    if (coral) { let mn = Infinity; for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mn = Math.min(mn, clue[k].min); return mn === Infinity ? 1 : mn; }
+    if (asc) { let mn = Infinity; for (let k = 0; k < clue.length; k++) if (!(used & (1 << k))) mn = Math.min(mn, clue[k].min); return mn === Infinity ? 1 : mn; }
     const k = popcnt(used);
     return k < clue.length ? clue[k].min : 1;
   }
@@ -241,7 +265,7 @@ function makeSolver(cfg) {
 
   return { grid, rowPack, colPack, rowUsed, colUsed, rowRun, colRun, rowLen, colLen, rowVals, colVals,
     rowClues, colClues, closeList, applyClose, undoClose, lineFeasible, lineDone,
-    groupMaxUnused, undoLetters, FULL, letterVal, letterIds, maxSum, minSum, coral, V, popcnt,
+    groupMaxUnused, undoLetters, FULL, letterVal, letterIds, maxSum, minSum, asc, V, popcnt,
     pal, cnt, M, usedOf, bumpPack, dropPack, posLeft, negLeft,
     fixed: cfg.fixed || null };
 }
@@ -264,7 +288,7 @@ function search(cfg, opts) {
   const rowUsedRef = Array.from({ length: R }, (_, r) => ({ get m() { return S.rowUsed[r]; }, set m(v) { S.rowUsed[r] = v; } }));
   const colUsedRef = Array.from({ length: C }, (_, c) => ({ get m() { return S.colUsed[c]; }, set m(v) { S.colUsed[c] = v; } }));
 
-  // coral shape: no blank 2x2 (checked incrementally), blanks connected, and
+  // shape: no shaded 2x2 (checked incrementally), shaded cells connected, and
   // every filled component touches the grid edge (checked on completion)
   function connectedOk(isMember) {
     let start = -1, total = 0;
@@ -312,29 +336,6 @@ function search(cfg, opts) {
     if (V.blankReach && !edgeReachOk(i => S.grid[i] === 0)) return false;
     if (!V.reach) return true;
     return reachOk();
-  }
-  function coralOk() {
-    // blanks connected
-    let start = -1, blanks = 0;
-    for (let i = 0; i < N; i++) if (S.grid[i] === 0) { blanks++; if (start < 0) start = i; }
-    if (blanks > 0) {
-      const seen = new Uint8Array(N);
-      const stack = [start];
-      seen[start] = 1;
-      let cnt = 0;
-      while (stack.length) {
-        const i = stack.pop(); cnt++;
-        const r = (i / C) | 0, c = i % C;
-        for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-          const r2 = r + dr, c2 = c + dc;
-          if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
-          const j = r2 * C + c2;
-          if (!seen[j] && S.grid[j] === 0) { seen[j] = 1; stack.push(j); }
-        }
-      }
-      if (cnt !== blanks) return false;
-    }
-    return true;
   }
   function reachOk() {
     // filled components reach the edge
@@ -396,7 +397,7 @@ function search(cfg, opts) {
         solCount++;
         if (!firstSol) { firstSol = Int16Array.from(S.grid, k => k === 0 ? 0 : S.pal[k - 1]); firstLetters = Int8Array.from(S.letterVal); }
         if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
-        if (letterCand) for (const L of S.letterIds) if (S.letterVal[L] >= 0) letterCand[L] |= 1 << S.letterVal[L];
+        if (letterCand) for (const L of S.letterIds) if (S.letterVal[L] >= 0 && S.letterVal[L] <= 30) letterCand[L] |= 1 << S.letterVal[L];
         if (post) post(S.grid, S.letterVal);
       });
       return;
@@ -470,7 +471,89 @@ function search(cfg, opts) {
     letterIds: S.letterIds };
 }
 
+// candidate bases for an alien puzzle: every written digit below the base,
+// distinct letters need distinct digits, and any k-digit numeral is worth at
+// least base^(k-1) which must stay within the palette's largest sum
+function alienBases(cfg) {
+  let maxSum;
+  if (cfg.values && cfg.values.length) {
+    const byVal = new Map();
+    for (const v of cfg.values) byVal.set(v, (byVal.get(v) || 0) + 1);
+    maxSum = [...byVal].reduce((a, [v, c]) => a + (v > 0 ? v * Math.min(3, c) : 0), 0);
+  } else {
+    maxSum = 0;
+    for (let d = 1; d <= cfg.D; d++) maxSum += d;
+  }
+  let minB = 2, maxLen = 1;
+  const letters = new Set();
+  for (const list of (cfg.rowClues || []).concat(cfg.colClues || [])) {
+    if (!list) continue;
+    for (const tok of list) {
+      const str = String(tok).toUpperCase().trim().replace(/^-/, '');
+      const fields = str.includes('.') ? str.split('.') : str.split('');
+      let len = 0;
+      for (const f of fields) {
+        if (f === '#') { len = 0; break; }
+        len++;
+        if (/^[0-9]+$/.test(f)) minB = Math.max(minB, parseInt(f, 10) + 1);
+        else if (/^[A-Z]$/.test(f)) letters.add(f);
+      }
+      if (len) maxLen = Math.max(maxLen, len);
+    }
+  }
+  minB = Math.max(minB, letters.size);
+  const cap = maxSum + (cfg.kd ? 1 : 0);
+  let maxB = Math.min(31, cap + 1);   // aligned with the stepper's 32-bit letter masks (cfg.bases overrides)
+  if (maxLen >= 2) { while (maxB > minB && Math.pow(maxB, maxLen - 1) > cap) maxB--; }
+  const out = [];
+  for (let b = minB; b <= Math.max(minB, maxB); b++) out.push(b);
+  return out;
+}
+
 function runAny(cfg) {
+  if (cfg.alien) {
+    const bases = cfg.bases || alienBases(cfg);
+    const deadline = Date.now() + (cfg.timeLimit || 10000);
+    let nodes = 0, timedOut = false;
+    const sub = b => Object.assign({}, cfg, { alien: false, bases: undefined, base: b, timeLimit: Math.max(1, deadline - Date.now()) });
+    if (cfg.mode === 'solve') {
+      for (const b of bases) {
+        const r = search(sub(b), { timeLimit: Math.max(1, deadline - Date.now()), maxSolutions: 1 });
+        nodes += r.nodes; timedOut = timedOut || r.timedOut;
+        if (r.firstSol) return { firstSol: Array.from(r.firstSol), firstLetters: Array.from(r.firstLetters), letterIds: r.letterIds, base: b, nodes, timedOut };
+      }
+      return { firstSol: null, firstLetters: null, letterIds: [], nodes, timedOut };
+    }
+    if (cfg.mode === 'count') {
+      let solCount = 0; const perBase = {};
+      let complete = true;
+      for (const b of bases) {
+        const r = search(sub(b), { timeLimit: Math.max(1, deadline - Date.now()), maxSolutions: cfg.maxSolutions || 10000 });
+        nodes += r.nodes; timedOut = timedOut || r.timedOut; complete = complete && r.complete;
+        solCount += r.solCount;
+        if (r.solCount) perBase[b] = r.solCount;
+      }
+      return { solCount, perBase, bases: Object.keys(perBase).map(Number), nodes, complete, timedOut };
+    }
+    if (cfg.mode === 'candidates') {
+      const N = cfg.R * cfg.C;
+      const cand = new Int32Array(N), letterCand = new Int32Array(26);
+      let solCount = 0, complete = true, letterIds = [];
+      const okBases = [];
+      for (const b of bases) {
+        const r = search(sub(b), { timeLimit: Math.max(1, deadline - Date.now()), collect: true, maxSolutions: cfg.maxSolutions || 100000 });
+        nodes += r.nodes; timedOut = timedOut || r.timedOut; complete = complete && r.complete;
+        solCount += r.solCount;
+        if (r.solCount) okBases.push(b);
+        if (r.cand) for (let i = 0; i < N; i++) cand[i] |= r.cand[i];
+        if (r.letterCand) for (let L = 0; L < 26; L++) letterCand[L] |= r.letterCand[L];
+        for (const L of r.letterIds) if (!letterIds.includes(L)) letterIds.push(L);
+      }
+      return { solCount, bases: okBases, nodes, complete, timedOut,
+        cand: Array.from(cand), letterCand: Array.from(letterCand), letterIds };
+    }
+    return { error: 'unknown mode' };
+  }
   if (cfg.mode === 'solve') {
     const r = search(cfg, { timeLimit: cfg.timeLimit, maxSolutions: 1 });
     return { firstSol: r.firstSol ? Array.from(r.firstSol) : null,

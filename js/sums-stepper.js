@@ -23,8 +23,9 @@ function makeSumsState(R, C, D, values) {
     maxTotal: pal.reduce((a, v, k) => a + (v > 0 ? v * cnt[k] : 0), 0),
     minTotal: pal.reduce((a, v, k) => a + (v < 0 ? v * cnt[k] : 0), 0),
     cand: new Int32Array(R * C).fill(full),
-    letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter
+    letterCand: new Int32Array(26).fill(1023),   // digits 0-9 per crypto letter (0..base-1 under alien)
     kd: false,   // Knapp daneben: every clue is one off its true value
+    alien: false, baseCand: null,   // alien: the clues' number base is unknown (a set of candidate bases 2..31)
     variants: { numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
     fastLadder: false, noTrial: false };
 }
@@ -32,7 +33,57 @@ function cloneSumsState(st) {
   return { R: st.R, C: st.C, D: st.D, pal: st.pal, cnt: st.cnt, maxTotal: st.maxTotal, minTotal: st.minTotal,
     cand: Int32Array.from(st.cand),
     letterCand: Int32Array.from(st.letterCand), kd: st.kd, variants: Object.assign({}, st.variants),
+    alien: st.alien, baseCand: st.baseCand ? new Set(st.baseCand) : null,
     fastLadder: st.fastLadder, noTrial: st.noTrial, __lineCache: st.__lineCache };
+}
+// candidate bases the clues could be written in (alien); [10] otherwise.
+// st.__forceBase pins a single base inside per-base enumerations.
+function baseList(st) {
+  if (!st.alien) return [10];
+  if (st.__forceBase) return [st.__forceBase];
+  return st.baseCand ? [...st.baseCand].sort((a, b) => a - b) : [10];
+}
+function filterBase(st, keepSet) {
+  const next = new Set([...st.baseCand].filter(b => keepSet.has(b)));
+  if (!next.size) { const e = new Error('no possible number base remains'); throw e; }
+  st.baseCand = next;
+}
+// initial base range from the clues' syntax: every digit written must be
+// below the base, and any k-digit numeral is worth at least base^(k-1),
+// which must stay within the largest achievable sum (bases capped at 31 so
+// letter digits keep fitting the 32-bit candidate masks)
+function ensureBaseCand(st, clues) {
+  if (!st.alien || st.baseCand) return;
+  let minB = 2, maxLen = 1;
+  const letterSet = new Set();
+  for (const list of (clues.rows || []).concat(clues.cols || [])) {
+    if (!list) continue;
+    for (const tok of list) {
+      if (typeof tok === 'number') { for (const ch of String(Math.abs(tok))) minB = Math.max(minB, (+ch) + 1); maxLen = Math.max(maxLen, String(Math.abs(tok)).length); continue; }
+      const p = tokenParse(tok, st);
+      if (!p.chars) continue;
+      maxLen = Math.max(maxLen, p.chars.length);
+      for (const ch of p.chars) {
+        if (ch.d !== undefined) minB = Math.max(minB, ch.d + 1);
+        if (ch.L !== undefined) letterSet.add(ch.L);
+      }
+    }
+  }
+  minB = Math.max(minB, letterSet.size);   // distinct letters are distinct digits 0..base-1
+  const cap = st.maxTotal + (st.kd ? 1 : 0);
+  let maxB = 31;
+  if (maxLen >= 2) { while (maxB > minB && Math.pow(maxB, maxLen - 1) > cap) maxB--; }
+  const set = new Set();
+  for (let b = minB; b <= Math.min(31, maxB); b++) set.add(b);
+  if (!set.size) set.add(minB);   // leave the contradiction to the rules
+  st.baseCand = set;
+  // letters stand for digits 0..base-1: widen pristine masks to the alien
+  // range (letters already narrowed by the caller keep their filter)
+  const mask = maxB >= 31 ? 0x7FFFFFFF : (1 << maxB) - 1;
+  for (const list of (clues.rows || []).concat(clues.cols || [])) if (list) for (const tok of list) for (const L of tokenLetters(tok)) {
+    if (st.letterCand[L] === 1023) st.letterCand[L] = mask;
+    else st.letterCand[L] &= mask;
+  }
 }
 function filterLetter(st, L, keepMask) {
   const nm = st.letterCand[L] & keepMask;
@@ -41,39 +92,60 @@ function filterLetter(st, L, keepMask) {
 }
 // token -> the set of sums it can currently take (an OVERAPPROXIMATION for
 // letter tokens: per-character candidate masks, intra-token repeats honoured)
-function tokenParse(tok) {
-  if (typeof tok === 'number') return { exact: tok };
+function tokenParse(tok, st) {
+  const alien = !!(st && st.alien);
+  if (typeof tok === 'number') {
+    if (!alien || (tok > -10 && tok < 10)) return { exact: tok };
+    tok = String(tok);   // a multi-digit numeral's value depends on the base
+  }
   let s = String(tok).toUpperCase().trim();
   let neg = false;
   if (s[0] === '-') { neg = true; s = s.slice(1); }
-  if (/^[0-9]+$/.test(s)) return { exact: (neg ? -1 : 1) * parseInt(s, 10) };
+  if (!alien && /^[0-9]+$/.test(s)) return { exact: (neg ? -1 : 1) * parseInt(s, 10) };
   const chars = [];
-  for (const ch of s) {
-    if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
-    else if (ch === '#') return { any: true };
-    else if (ch === '?') chars.push({ q: true });
-    else if (ch >= 'A' && ch <= 'Z') chars.push({ L: ch.charCodeAt(0) - 65 });
+  if (alien && s.includes('.')) {
+    // '.'-separated base digits: '11.A.3' is the three-digit numeral [11, A, 3]
+    for (const f of s.split('.')) {
+      if (/^[0-9]+$/.test(f)) chars.push({ d: parseInt(f, 10) });
+      else if (f === '#') return { any: true };
+      else if (f === '?') chars.push({ q: true });
+      else if (/^[A-Z]$/.test(f)) chars.push({ L: f.charCodeAt(0) - 65 });
+    }
+  } else {
+    for (const ch of s) {
+      if (ch >= '0' && ch <= '9') chars.push({ d: ch.charCodeAt(0) - 48 });
+      else if (ch === '#') return { any: true };
+      else if (ch === '?') chars.push({ q: true });
+      else if (ch >= 'A' && ch <= 'Z') chars.push({ L: ch.charCodeAt(0) - 65 });
+    }
   }
   if (!chars.length) return { any: true };
+  if (alien && /^[0-9]+$/.test(s.replace(/\./g, '')) && chars.length === 1) return { exact: (neg ? -1 : 1) * chars[0].d };
   return { chars, neg };
 }
+// the value of a token whose base digits are all fixed, read in base b (else null)
+function tokenFixedValue(p, b) {
+  if (p.exact !== undefined) return p.exact;
+  if (!p.chars) return null;
+  let v = 0;
+  for (const ch of p.chars) { if (ch.d === undefined || ch.d >= b) return null; v = v * b + ch.d; }
+  return p.neg ? -v : v;
+}
 function tokenLetters(tok) {
-  const p = tokenParse(tok);
+  const p = tokenParse(tok);   // letter extraction is base-independent
   if (!p.chars) return [];
   const out = [];
   for (const ch of p.chars) if (ch.L !== undefined && !out.includes(ch.L)) out.push(ch.L);
   return out;
 }
 // does displayed value v match the parsed token against current letter cands?
-function displayedMatch(st, p, v) {
-  if (p.exact !== undefined) return v === p.exact;
-  if (p.any) return true;
-  if (p.neg) { if (v >= 0) return false; v = -v; }   // '-?' and kin are strictly negative
-  else if (v < 0) return false;
+// (under alien, the numeral is read in each candidate base; a match in any is enough)
+function matchInBase(st, p, v, b) {
   const n = p.chars.length;
-  const lo = n === 1 ? 0 : Math.pow(10, n - 1);   // a 1-char clue may display 0 (KD)
-  if (v < lo || v > Math.pow(10, n) - 1) return false;
-  const ds = String(v).split('').map(Number);
+  const lo = n === 1 ? 0 : Math.pow(b, n - 1);   // a 1-char clue may display 0 (KD)
+  if (v < lo || v > Math.pow(b, n) - 1) return false;
+  const ds = digitsOfValueB(v, b);
+  if (ds.length !== n) return false;
   const seen = {};
   for (let q = 0; q < n; q++) {
     const ch = p.chars[q], d = ds[q];
@@ -86,6 +158,14 @@ function displayedMatch(st, p, v) {
   }
   return true;
 }
+function displayedMatch(st, p, v) {
+  if (p.exact !== undefined) return v === p.exact;
+  if (p.any) return true;
+  if (p.neg) { if (v >= 0) return false; v = -v; }   // '-?' and kin are strictly negative
+  else if (v < 0) return false;
+  for (const b of baseList(st)) if (matchInBase(st, p, v, b)) return true;
+  return false;
+}
 // displayed values a TRUE sum s can show: s itself normally; s-1 and s+1 in KD
 function displayedOptions(st, s) {
   if (!st.kd) return [s];
@@ -95,14 +175,26 @@ function displayedOptions(st, s) {
 }
 function dvSignOk(p, dv) { return p.neg ? dv < 0 : dv >= 0; }
 const DS_CACHE = new Map();
-function digitsOfValue(v) {
-  let a = DS_CACHE.get(v);
-  if (!a) { a = String(Math.abs(v)).split('').map(Number); if (DS_CACHE.size < 20000) DS_CACHE.set(v, a); }
+function digitsOfValueB(v, b) {
+  const key = v * 64 + b;
+  let a = DS_CACHE.get(key);
+  if (!a) {
+    let x = Math.abs(v);
+    if (x === 0) a = [0];
+    else { a = []; while (x > 0) { a.unshift(x % b); x = (x / b) | 0; } }
+    if (DS_CACHE.size < 40000) DS_CACHE.set(key, a);
+  }
   return a;
+}
+function digitsOfValue(v) { return digitsOfValueB(v, 10); }
+// render a value as a base-b numeral: digits joined, '.'-separated when any digit needs two decimal characters
+function numeralOf(v, b) {
+  const ds = digitsOfValueB(v, b);
+  return (v < 0 ? '-' : '') + (ds.some(d => d > 9) ? ds.join('.') : ds.join(''));
 }
 
 function allowedSums(st, tok, maxSum) {
-  const p = tokenParse(tok);
+  const p = tokenParse(tok, st);
   const out = new Set();
   const lo2 = Math.min(1, st.minTotal);
   // sum 0 needs a zero-capable palette (cancellation or 0-valued cells); all
@@ -191,10 +283,13 @@ function lineSumSets(st, line) {
 
 function accumulateSeen(st, p, s, seen) {
   for (const v of displayedOptions(st, s)) {
-    if (!displayedMatch(st, p, v)) continue;
-    const ds = digitsOfValue(v);
-    if (ds.length !== seen.length) continue;
-    for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+    for (const b of baseList(st)) {
+      if (!matchInBase(st, p, Math.abs(v), b)) continue;
+      if (p.neg ? v >= 0 : v < 0) continue;
+      const ds = digitsOfValueB(Math.abs(v), b);
+      if (ds.length !== seen.length) continue;
+      for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
+    }
   }
 }
 
@@ -274,10 +369,11 @@ function comboFeasible(st, s, len, availMask) {
 // Returns false on node-budget overflow.
 function enumerateSumsLine(st, line, onSolution, nodeCap, shapeFilter) {
   const n = line.cells.length;
+  const eb = baseList(st)[0];   // alien callers force a single base per pass
   const maxSum0 = 0 + st.maxTotal;
   const clue = line.clue ? line.clue.map(tok => allowedSums(st, tok, maxSum0)) : null;
   const clueMax = clue ? clue.map(set => { let m = 0; for (const v of set) if (v > m) m = v; return m; }) : null;
-  const parsedToks = line.clue ? line.clue.map(tokenParse) : null;
+  const parsedToks = line.clue ? line.clue.map(t => tokenParse(t, st)) : null;
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0;
   function nextIdx() { let k = 0; while (k < K && (usedIdx & (1 << k))) k++; return k; }
@@ -306,7 +402,7 @@ function enumerateSumsLine(st, line, onSolution, nodeCap, shapeFilter) {
     const p2 = parsedToks[gi];
     if (!p2 || !p2.chars) return [];
     if (!dvSignOk(p2, v)) return null;
-    const ds = digitsOfValue(v);
+    const ds = digitsOfValueB(Math.abs(v), eb);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
@@ -435,14 +531,14 @@ function enumerateSumsLine(st, line, onSolution, nodeCap, shapeFilter) {
 }
 
 // reject line fillings whose maximal shaded stretch has no blank-capable
-// neighbour outside the line: a sealed pocket cannot join the one coral
-function makeCoralStretchFilter(st, clues, line) {
-  if (!coralBeyondLine(st, clues, line)) return null;
+// neighbour outside the line: a sealed pocket cannot join the shaded group
+function makeShadedStretchFilter(st, clues, line) {
+  if (!shadedBeyondLine(st, clues, line)) return null;
   const lineSet = new Set(line.cells);
   const n = line.cells.length;
   const escAt = new Uint8Array(n);
   for (let p = 0; p < n; p++) {
-    for (const j of coralNeighbors(st, line.cells[p])) {
+    for (const j of orthNeighbors(st, line.cells[p])) {
       if (!lineSet.has(j) && (st.cand[j] & 1)) { escAt[p] = 1; break; }
     }
   }
@@ -462,10 +558,11 @@ function makeCoralStretchFilter(st, clues, line) {
 // fingerprint-cached per-line assignment unions
 function cachedLineUnion(st, clues, line, peekOnly) {
   if (!st.__lineCache) st.__lineCache = new Map();
-  const sf = makeCoralStretchFilter(st, clues, line);
+  const sf = makeShadedStretchFilter(st, clues, line);
   let h = 2166136261 >>> 0;
   for (const i of line.cells) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; }
   for (const tok of line.clue || []) for (const L of tokenLetters(tok)) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; }
+  if (st.alien) for (const b of baseList(st)) { h ^= b * 131; h = Math.imul(h, 16777619) >>> 0; }
   if (sf) for (let p = 0; p < sf.escAt.length; p++) { h ^= sf.escAt[p] + 7; h = Math.imul(h, 16777619) >>> 0; }
   const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + h;
   if (st.__lineCache.has(key)) return st.__lineCache.get(key);
@@ -476,19 +573,40 @@ function cachedLineUnion(st, clues, line, peekOnly) {
     const n2 = line.cells.length;
     const union = new Int32Array(n2);
     const gSums = Array.from({ length: G }, () => new Set());
-    let sols = 0;
-    const ok = enumerateSumsLine(st, line, (vals, gs) => {
-      for (let p = 0; p < vals.length; p++) union[p] |= 1 << vals[p];
-      for (let g = 0; g < G; g++) gSums[g].add(gs[g]);
-      // saturation: once the union matches the current masks everywhere and
-      // every group has shown several sums, nothing further can be learned
-      if ((++sols & 255) === 0) {
-        for (let p = 0; p < n2; p++) if (union[p] !== st.cand[line.cells[p]]) return false;
-        return true;
-      }
-      return false;
-    }, 3000000, sf ? sf.fn : null);
-    if (ok) res = { union, gSums };
+    const deadBases = [];
+    // under alien the letters (and every numeral) must be read in ONE base:
+    // enumerate once per candidate base; a clued line with no completion in
+    // some base rules that base out entirely
+    const passes = st.alien ? baseList(st) : [10];
+    let ok = true;
+    // early stopping truncates gSums, whose completeness letter deductions
+    // rely on — only lines whose clues carry no cipher letters may stop early
+    const lettered = (line.clue || []).some(t => tokenLetters(t).length);
+    let saturated = false;
+    const checkSat = () => {
+      if (lettered) return false;
+      for (let p = 0; p < n2; p++) if (union[p] !== st.cand[line.cells[p]]) return false;
+      return true;
+    };
+    for (const b of passes) {
+      if (st.alien) st.__forceBase = b;
+      let sols = 0;
+      const okB = enumerateSumsLine(st, line, (vals, gs) => {
+        sols++;
+        for (let p = 0; p < vals.length; p++) union[p] |= 1 << vals[p];
+        for (let g = 0; g < G; g++) gSums[g].add(gs[g]);
+        // once the union matches the current masks everywhere it cannot grow:
+        // this pass and later ones only need one solution each (they still
+        // confirm the base is alive)
+        if (saturated) return true;
+        if ((sols & 63) === 0 && checkSat()) { saturated = true; return true; }
+        return false;
+      }, 3000000, sf ? sf.fn : null);
+      if (st.alien) st.__forceBase = undefined;
+      if (!okB) { ok = false; break; }
+      if (st.alien && line.clue && line.clue.length && sols === 0) deadBases.push(b);
+    }
+    if (ok) res = { union, gSums, deadBases };
   }
   if (st.__lineCache.size > 3000) st.__lineCache.clear();
   st.__lineCache.set(key, res);
@@ -530,7 +648,7 @@ function ruleSumBounds(st, clues) {
     if (!hasLetters) continue;
     const sets = lineSumSets(st, line);
     for (let g = 0; g < line.clue.length; g++) {
-      const p2 = tokenParse(line.clue[g]);
+      const p2 = tokenParse(line.clue[g], st);
       if (!p2.chars || !p2.chars.some(ch => ch.L !== undefined)) continue;
       if (!sets[g].size) return { rule: 'Sum bounds', contradiction: true, cells: line.cells.slice(),
         text: line.name + '\u2019s groups cannot all fit within the digit budget 1+2+\u2026+' + st.D + ' = ' + maxTotal + ' \u2014 the position is contradictory.' };
@@ -598,13 +716,10 @@ function ruleEqualGroups(st, clues) {
         text: line.name + ' repeats the group \u201c' + tokStr + '\u201d ' + k + ' times, but no value lets ' + k + ' separate groups of digits with that sum to fit \u2014 the position is contradictory.' };
       if (!bad.length) continue;
       // map the surviving sums back to letter digits
-      const p2 = tokenParse(tokStr);
+      const p2 = tokenParse(tokStr, st);
       const survivors = [...set].filter(v => !bad.includes(v));
       const seen = p2.chars.map(() => 0);
-      for (const s of survivors) {
-        const ds = String(s).padStart(p2.chars.length, '0').split('').map(Number);
-        if (ds.length === p2.chars.length) for (let q = 0; q < ds.length; q++) seen[q] |= 1 << ds[q];
-      }
+      for (const s of survivors) accumulateSeen(st, p2, s, seen);
       const hits = [];
       for (let q = 0; q < p2.chars.length; q++) {
         const ch = p2.chars[q];
@@ -670,14 +785,25 @@ function ruleLetterPairs(st, clues) {
 // exact joint feasibility of one line's groups: pairwise-disjoint digit
 // subsets of 1..D realising each group's sum, within the line's cell budget
 function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
-  if (st.variants.asc) return lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes);
+  if (st.alien && !st.__forceBase && st.baseCand && st.baseCand.size > 1) {
+    // joint bindings must read every numeral in ONE base: try each candidate
+    for (const b of baseList(st)) {
+      st.__forceBase = b;
+      const ok = lineJointFeasible(st, tokens, sets, n, requireVal, sizes);
+      st.__forceBase = undefined;
+      if (ok) return true;
+    }
+    return false;
+  }
+  if (st.variants.asc) return lineJointFeasibleAsc(st, tokens, sets, n, requireVal, sizes);
+  const jb = baseList(st)[0];
   // groups sharing crypto letters have correlated sums: picking a value for a
   // group binds its letters (consistently, all letters distinct), so two 'G'
   // groups must take the SAME sum and 'GH' must agree with them, etc.
   const G = sets.length;
   const maxCells = n - (G - 1);
   const lists = sets.map(s2 => [...s2].sort((a, b) => a - b));
-  const parsed = tokens.map(tokenParse);
+  const parsed = tokens.map(t => tokenParse(t, st));
   let ok = false;
   const subsBydum = new Map();
   function subsetsFor(v) {
@@ -704,7 +830,7 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
     if (!dvSignOk(p2, dv)) return null;
-    const ds = digitsOfValue(dv);
+    const ds = digitsOfValueB(Math.abs(dv), jb);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     for (let q = 0; q < ds.length; q++) {
@@ -754,14 +880,24 @@ function lineJointFeasible(st, tokens, sets, n, requireVal, sizes) {
   return ok;
 }
 
-// coral joint feasibility: tokens are ascending by index but map to spans in
+// ascending-clue joint feasibility: tokens are ascending by index but map to spans in
 // an unknown order; assign each token a value (ascending), a digit subset,
 // and (when sizes are given) a distinct span slot of matching size
-function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
+function lineJointFeasibleAsc(st, tokens, sets, n, requireVal, sizes) {
+  if (st.alien && !st.__forceBase && st.baseCand && st.baseCand.size > 1) {
+    for (const b of baseList(st)) {
+      st.__forceBase = b;
+      const ok = lineJointFeasibleAsc(st, tokens, sets, n, requireVal, sizes);
+      st.__forceBase = undefined;
+      if (ok) return true;
+    }
+    return false;
+  }
+  const jb = baseList(st)[0];
   const K = sets.length;
   const maxCells = n - (K - 1);
   const lists = sets.map(s2 => [...s2].sort((a, b) => a - b));
-  const parsed = tokens.map(tokenParse);
+  const parsed = tokens.map(t => tokenParse(t, st));
   const letterVal = new Int8Array(26).fill(-1);
   let digitTaken = 0, ok = false;
   const subsMemo = new Map();
@@ -787,7 +923,7 @@ function lineJointFeasibleCoral(st, tokens, sets, n, requireVal, sizes) {
     const p2 = parsed[g];
     if (!p2.chars) return [];
     if (!dvSignOk(p2, dv)) return null;
-    const ds = digitsOfValue(dv);
+    const ds = digitsOfValueB(Math.abs(dv), jb);
     if (ds.length !== p2.chars.length) return null;
     const bound = [];
     const bail = () => { for (const L of bound) { digitTaken &= ~(1 << letterVal[L]); letterVal[L] = -1; } return null; };
@@ -858,7 +994,7 @@ function ruleDisjointSums(st, clues) {
     if (prod > 4000) continue;
     const n = line.cells.length;
     for (let g = 0; g < line.clue.length; g++) {
-      const p2 = tokenParse(line.clue[g]);
+      const p2 = tokenParse(line.clue[g], st);
       if (!p2.chars || !p2.chars.some(ch => ch.L !== undefined)) continue;
       const surviving = new Set();
       for (const v of sets[g]) if (lineJointFeasible(st, line.clue, sets, n, { g, v })) surviving.add(v);
@@ -893,7 +1029,13 @@ function ruleKDOffByOne(st, clues) {
     const ds = decidedSpans(st, line);
     if (!ds) continue;
     for (const sp of ds) {
-      const p2 = tokenParse(sp.tok);
+      const p2 = tokenParse(sp.tok, st);
+      if (st.alien) {
+        if (baseList(st).length !== 1) continue;
+        const v = tokenFixedValue(p2, baseList(st)[0]);
+        if (v === null) continue;
+        p2.exact = v;
+      }
       if (p2.exact === undefined) continue;
       const open = sp.cells.filter(i => popc(st.cand[i]) > 1);
       if (open.length !== 1) continue;
@@ -915,9 +1057,9 @@ function ruleKDOffByOne(st, clues) {
   return null;
 }
 
-/* ---------------- coral rules ---------------- */
+/* ---------------- shape rules ---------------- */
 // helpers over the whole grid
-function coralNeighbors(st, i) {
+function orthNeighbors(st, i) {
   const r = (i / st.C) | 0, c = i % st.C, out = [];
   if (r > 0) out.push(i - st.C);
   if (r < st.R - 1) out.push(i + st.C);
@@ -926,28 +1068,28 @@ function coralNeighbors(st, i) {
   return out;
 }
 
-// rule (coral): no 2x2 of blanks — three committed blanks force the fourth used
-function ruleCoral2x2(st, clues) {
+// rule (shape): no 2x2 of shaded cells — three committed blanks force the fourth used
+function ruleNo22Blank(st, clues) {
   if (!st.variants.no22blank) return null;
   for (let r = 0; r + 1 < st.R; r++) for (let c = 0; c + 1 < st.C; c++) {
     const cells = [r * st.C + c, r * st.C + c + 1, (r + 1) * st.C + c, (r + 1) * st.C + c + 1];
     const blanks = cells.filter(i => st.cand[i] === 1);
     if (blanks.length === 4) return { rule: 'No 2\u00d72 shaded', contradiction: true, cells,
-      text: 'The blank cells ' + cells.map(i => rc(st, i)).join(', ') + ' form a 2\u00d72 \u2014 the coral may not contain one.' };
+      text: 'The blank cells ' + cells.map(i => rc(st, i)).join(', ') + ' form a 2\u00d72 of shaded cells \u2014 that is not allowed.' };
     if (blanks.length !== 3) continue;
     const open = cells.find(i => st.cand[i] !== 1);
     if (!(st.cand[open] & 1)) continue;
     return { rule: 'No 2\u00d72 shaded', cells: [open],
-      text: 'Three cells of the 2\u00d72 at ' + rc(st, cells[0]) + ' are blank; the coral may not contain a 2\u00d72 of blanks, so ' + rc(st, open) + ' holds a digit.',
+      text: 'Three cells of the 2\u00d72 at ' + rc(st, cells[0]) + ' are shaded; a 2\u00d72 of shaded cells is not allowed, so ' + rc(st, open) + ' holds a digit.',
       apply() { filterCand(st, open, ~1); } };
   }
   return null;
 }
 
-// rule (coral): no checkerboard — a 2x2 with one diagonal blank and the other
-// diagonal filled is impossible: the coral path joining the two blanks, plus
+// rule (shape): no checkerboard — a 2x2 with one diagonal shaded and the other
+// diagonal filled is impossible: the shaded path joining the two blanks, plus
 // their corner touch, closes a loop that seals one filled cell off the edge
-function ruleCoralChecker(st, clues) {
+function ruleChecker(st, clues) {
   // the checkerboard ban needs one type orthogonally connected AND the other
   // type all touching the edge: the connected type's path plus the corner
   // touch closes a loop that seals one cell of the other type off the border
@@ -1012,7 +1154,7 @@ function ruleNumConnect(st, clues) {
     seen[committed[0]] = 1;
     while (stack.length) {
       const i = stack.pop();
-      for (const j of coralNeighbors(st, i)) if (!seen[j] && j !== block && canUse(j)) { seen[j] = 1; stack.push(j); }
+      for (const j of orthNeighbors(st, i)) if (!seen[j] && j !== block && canUse(j)) { seen[j] = 1; stack.push(j); }
     }
     return seen;
   }
@@ -1034,9 +1176,9 @@ function ruleNumConnect(st, clues) {
   return null;
 }
 
-// rule (coral): all blanks are orthogonally connected — a lone cut cell on
+// rule (shape): all shaded cells are orthogonally connected — a lone cut cell on
 // every path between two committed-blank regions must itself be blank
-function ruleCoralConnect(st, clues) {
+function ruleShadedConnect(st, clues) {
   if (!st.variants.blankConn) return null;
   const N = st.R * st.C;
   const committed = [];
@@ -1049,16 +1191,16 @@ function ruleCoralConnect(st, clues) {
     seen[committed[0]] = 1;
     while (stack.length) {
       const i = stack.pop();
-      for (const j of coralNeighbors(st, i)) if (!seen[j] && j !== block && canBlank(j)) { seen[j] = 1; stack.push(j); }
+      for (const j of orthNeighbors(st, i)) if (!seen[j] && j !== block && canBlank(j)) { seen[j] = 1; stack.push(j); }
     }
     return seen;
   }
   const base = reachable(-1);
   for (const i of committed) if (!base[i]) {
     return { rule: 'Shaded connected', contradiction: true, cells: [i],
-      text: 'The blank at ' + rc(st, i) + ' cannot connect to the rest of the coral \u2014 the position is contradictory.' };
+      text: 'The blank at ' + rc(st, i) + ' cannot connect to the rest of the shaded cells \u2014 the position is contradictory.' };
   }
-  // cut cells: undecided blank-capable cells whose loss disconnects the coral
+  // cut cells: undecided blank-capable cells whose loss disconnects the shading
   for (let i = 0; i < N; i++) {
     if (st.cand[i] === 1 || !canBlank(i)) continue;   // committed blanks are not deduction targets
     const seen = reachable(i);
@@ -1066,7 +1208,7 @@ function ruleCoralConnect(st, clues) {
     for (const j of committed) if (!seen[j]) { cut = true; break; }
     if (!cut) continue;
     return { rule: 'Shaded connected', cells: [i],
-      text: 'Every path joining the coral\u2019s parts runs through ' + rc(st, i) + ' \u2014 the coral is one connected group of blanks, so ' + rc(st, i) + ' is blank.',
+      text: 'Every path joining the shaded parts runs through ' + rc(st, i) + ' \u2014 the shaded cells form one connected group, so ' + rc(st, i) + ' is blank.',
       apply() { filterCand(st, i, 1); } };
   }
   return null;
@@ -1086,10 +1228,10 @@ function lineMustBlank(st, line) {
   return true;
 }
 
-// rule (coral): the one coral must place a shaded cell in every line whose
+// rule (shape): the one connected shaded group must place a shaded cell in every line whose
 // clue forces one, all connected - blank-capable pockets that cannot reach
 // such a line hold digits; a lone bridge on every route must be shaded
-function ruleCoralSpine(st, clues) {
+function ruleShadedSpine(st, clues) {
   if (!st.variants.blankConn) return null;
   const N = st.R * st.C;
   const canBlank = i => (st.cand[i] & 1) !== 0;
@@ -1117,7 +1259,7 @@ function ruleCoralSpine(st, clues) {
     comp[i] = nComp;
     while (stack.length) {
       const x = stack.pop();
-      for (const j of coralNeighbors(st, x)) if (canBlank(j) && comp[j] < 0) { comp[j] = nComp; stack.push(j); }
+      for (const j of orthNeighbors(st, x)) if (canBlank(j) && comp[j] < 0) { comp[j] = nComp; stack.push(j); }
     }
     nComp++;
   }
@@ -1126,7 +1268,7 @@ function ruleCoralSpine(st, clues) {
   for (let c = 0; c < nComp; c++) if (hitsAll(c)) okComps.push(c);
   if (!okComps.length) {
     return { rule: 'Shaded spine', contradiction: true, cells: [],
-      text: 'No connected region of blank-capable cells can reach every line whose clue forces a shaded cell \u2014 the single coral cannot exist.' };
+      text: 'No connected region of blank-capable cells can reach every line whose clue forces a shaded cell \u2014 the one connected shaded group cannot exist.' };
   }
   // (a) a blank-capable cell outside every viable component cannot be shaded
   const hits = [];
@@ -1152,7 +1294,7 @@ function ruleCoralSpine(st, clues) {
         seen[i] = nc2;
         while (stack.length) {
           const y = stack.pop();
-          for (const j of coralNeighbors(st, y)) if (canBlank(j) && j !== x && seen[j] < 0) { seen[j] = nc2; stack.push(j); }
+          for (const j of orthNeighbors(st, y)) if (canBlank(j) && j !== x && seen[j] < 0) { seen[j] = nc2; stack.push(j); }
         }
         nc2++;
       }
@@ -1164,7 +1306,7 @@ function ruleCoralSpine(st, clues) {
       }
       if (!any) {
         return { rule: 'Shaded spine', cells: [x],
-          text: 'Every route the coral could take between the lines that must hold shaded cells passes through ' + rc(st, x) + ' \u2014 so ' + rc(st, x) + ' is shaded.',
+          text: 'Every route the connected shaded group could take between the lines that must hold shaded cells passes through ' + rc(st, x) + ' \u2014 so ' + rc(st, x) + ' is shaded.',
           apply() { filterCand(st, x, 1); } };
       }
     }
@@ -1172,9 +1314,9 @@ function ruleCoralSpine(st, clues) {
   return null;
 }
 
-// rule (coral): every group of digit cells touches the grid edge — a digit
+// rule (shape): every group of digit cells touches the grid edge — a digit
 // region whose only escape runs through one cell forces that cell used
-function ruleCoralReach(st, clues) {
+function ruleNumbersReach(st, clues) {
   if (!st.variants.reach) return null;
   const N = st.R * st.C;
   const canUse = i => (st.cand[i] & ~1) !== 0;
@@ -1190,7 +1332,7 @@ function ruleCoralReach(st, clues) {
     if (onEdge(from) && from !== block) return true;
     while (stack.length) {
       const i = stack.pop();
-      for (const j of coralNeighbors(st, i)) {
+      for (const j of orthNeighbors(st, i)) {
         if (seen[j] || j === block || !canUse(j)) continue;
         if (onEdge(j)) return true;
         seen[j] = 1; stack.push(j);
@@ -1209,7 +1351,7 @@ function ruleCoralReach(st, clues) {
     for (const i of committedUsed) {
       if (escapes(i, j)) continue;
       return { rule: 'Numbers reach edge', cells: [j],
-        text: 'The digit region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 digit groups may not be locked in by the coral, so ' + rc(st, j) + ' holds a digit.',
+        text: 'The digit region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 digit groups may not be locked in by the shading, so ' + rc(st, j) + ' holds a digit.',
         apply() { filterCand(st, j, ~1); } };
     }
   }
@@ -1233,7 +1375,7 @@ function ruleBlankReach(st, clues) {
     if (onEdge(from) && from !== block) return true;
     while (stack.length) {
       const i = stack.pop();
-      for (const j of coralNeighbors(st, i)) {
+      for (const j of orthNeighbors(st, i)) {
         if (seen[j] || j === block || !canBlank(j)) continue;
         if (onEdge(j)) return true;
         seen[j] = 1; stack.push(j);
@@ -1310,9 +1452,24 @@ function ruleFullLine(st, clues) {
   const fullSum = st.maxTotal + st.minTotal;   // sum of the entire palette
   for (const line of eachSumsLine(st, clues)) {
     if (!line.clue) continue;
-    const parsed = line.clue.map(tokenParse);
-    if (parsed.some(p => p.exact === undefined)) continue;
-    const tot = parsed.reduce((a, p) => a + p.exact, 0);
+    const parsed = line.clue.map(t => tokenParse(t, st));
+    let tot;
+    if (st.alien) {
+      // every candidate base must read the clue's total as the whole palette
+      tot = null;
+      let ok = true;
+      for (const b of baseList(st)) {
+        const vals = parsed.map(p => tokenFixedValue(p, b));
+        if (vals.some(v => v === null)) { ok = false; break; }
+        const t = vals.reduce((a, v) => a + v, 0);
+        if (tot === null) tot = t;
+        if (t !== fullSum) { ok = false; break; }
+      }
+      if (!ok || tot === null) continue;
+    } else {
+      if (parsed.some(p => p.exact === undefined)) continue;
+      tot = parsed.reduce((a, p) => a + p.exact, 0);
+    }
     if (tot !== fullSum) continue;
     for (let d = 1; d <= st.D; d++) {
       const need = st.cnt[d - 1];
@@ -1336,9 +1493,9 @@ function ruleFullLine(st, clues) {
 
 // rule: line placements — enumerate the group layouts (spans only) and keep
 // what every layout shares: cells filled in all of them, cells blank in all
-// does the coral certainly extend beyond this line? (another line's clue
+// does the shading certainly extend beyond this line? (another line's clue
 // forces a shaded cell, or a blank is committed outside this line)
-function coralBeyondLine(st, clues, line) {
+function shadedBeyondLine(st, clues, line) {
   if (!st.variants.blankConn) return false;
   const inLine = new Set(line.cells);
   for (let i = 0; i < st.R * st.C; i++) if (st.cand[i] === 1 && !inLine.has(i)) return true;
@@ -1389,7 +1546,7 @@ function ruleLinePlacements(st, clues) {
     });
     const spanStart = new Int32Array(G), spanLen = new Int32Array(G);
     const sizeFeas = new Map();
-    const escapeGate = coralBeyondLine(st, clues, line);
+    const escapeGate = shadedBeyondLine(st, clues, line);
     const lineSet = new Set(line.cells);
     let escapeRejects = 0;
     function place(g, from) {
@@ -1398,7 +1555,7 @@ function ruleLinePlacements(st, clues) {
         // trailing cells must allow blank
         let last = G ? spanStart[G - 1] + spanLen[G - 1] : 0;
         for (let p = last; p < n; p++) if (!(st.cand[line.cells[p]] & 1)) return;
-        // coral escape: every maximal shaded stretch of this layout needs a
+        // shaded escape: every maximal shaded stretch of this layout needs a
         // blank-capable neighbour outside the line, or it is a sealed pocket
         if (escapeGate) {
           const inG2 = new Int8Array(n);
@@ -1408,7 +1565,7 @@ function ruleLinePlacements(st, clues) {
             if (inG2[p]) { p++; continue; }
             let q = p, esc = false;
             while (q < n && !inG2[q]) {
-              for (const j of coralNeighbors(st, line.cells[q])) {
+              for (const j of orthNeighbors(st, line.cells[q])) {
                 if (!lineSet.has(j) && (st.cand[j] & 1)) { esc = true; break; }
               }
               q++;
@@ -1456,7 +1613,7 @@ function ruleLinePlacements(st, clues) {
         return '\u201c' + tokenLabel(tok) + '\u201d = ' + (ss.length <= 4 ? ss.join('/') : ss[0] + '\u2026' + ss[ss.length - 1]) + (ls.length ? ' needing ' + (ls.length === 1 ? ls[0] : ls[0] + '\u2013' + ls[ls.length - 1]) + ' cell' + (ls.length === 1 && ls[0] === 1 ? '' : 's') : ' with no feasible length');
       }).join('; ');
       return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', contradiction: true, cells: line.cells.slice(),
-        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the coral' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed') + '.' };
+        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the rest of the shading' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed') + '.' };
     }
     if (count > 4000) continue;
     const mkFilled = [], mkBlank = [];
@@ -1482,7 +1639,7 @@ function ruleLinePlacements(st, clues) {
     if (mkFilled.length) bits.push('wherever the group' + (G === 1 ? ' slides' : 's slide') + ', ' + mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkFilled.length === 1 ? 'is' : 'are') + ' covered');
     if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' out of reach and blank');
     return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
-      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + (escapeRejects ? ' \u2014 arrangements leaving a shaded stretch sealed off from the coral (no blank-capable neighbour outside the line) were discarded' : '') + ' \u2014 ' + bits.join('; ') + '.'),
+      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + (escapeRejects ? ' \u2014 arrangements leaving a shaded stretch sealed off from the rest of the shading (no blank-capable neighbour outside the line) were discarded' : '') + ' \u2014 ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
         for (const p of mkBlank) filterCand(st, line.cells[p], 1);
@@ -1644,12 +1801,12 @@ function ruleSpanAlgebra(st, clues) {
       function tryBind(idx) {
         if (idx === complete.length) return true;
         const { s2, sum } = complete[idx];
-        const p2 = tokenParse(s2.sp.tok);
+        const p2 = tokenParse(s2.sp.tok, st);
         for (const dv of displayedOptions(st, sum)) {
           if (p2.exact !== undefined) { if (p2.exact !== dv) continue; if (tryBind(idx + 1)) return true; continue; }
           if (p2.any) { if (tryBind(idx + 1)) return true; continue; }
           if (!dvSignOk(p2, dv)) continue;
-          const dsx = digitsOfValue(dv);
+          const dsx = digitsOfValueB(Math.abs(dv), baseList(st)[0]);
           if (dsx.length !== p2.chars.length) continue;
           const bound = [];
           let ok2 = true;
@@ -1670,6 +1827,9 @@ function ruleSpanAlgebra(st, clues) {
       return tryBind(0);
     }
     const assign = new Map();
+    const saBases = st.alien ? baseList(st) : [10];
+    for (const saB of saBases) {
+    if (st.alien) st.__forceBase = saB;
     (function rec(idx) {
       if (overflow || count > 20000) { overflow = count > 20000; return; }
       if (idx === cells.length) {
@@ -1695,6 +1855,8 @@ function ruleSpanAlgebra(st, clues) {
         assign.delete(i);
       }
     })(0);
+    if (st.alien) st.__forceBase = undefined;
+    }
     if (overflow || count === 0) {
       if (count === 0 && !overflow) return { rule: 'Span algebra', contradiction: true, cells,
         text: 'The interlocking groups over ' + cells.map(i => rc(st, i)).join(', ') + ' admit no joint completion \u2014 the position is contradictory.' };
@@ -1725,6 +1887,17 @@ function ruleLineAnalysis(st, clues) {
     if (!line.clue) continue;
     const res = cachedLineUnion(st, clues, line);
     if (!res) continue;
+    if (st.alien && res.deadBases && res.deadBases.length) {
+      const dead = res.deadBases.filter(b => st.baseCand.has(b));
+      if (dead.length) {
+        if (dead.length >= st.baseCand.size) return { rule: 'Base deduction', contradiction: true, cells: line.cells.slice(),
+          text: 'No candidate base lets ' + line.name.toLowerCase() + ' be completed at all \u2014 the position is contradictory.' };
+        const keep = new Set([...st.baseCand].filter(b => !dead.includes(b)));
+        return { rule: 'Base deduction', cells: [],
+          text: 'If the base were ' + dead.join(' or ') + ', ' + line.name.toLowerCase() + ' could not be completed at all (no arrangement matches its clue) \u2014 so the base is ' + [...keep].sort((a, b) => a - b).join('/') + '.',
+          apply() { filterBase(st, keep); } };
+      }
+    }
     const union = res.union;
     const targets = [];
     for (let p = 0; p < line.cells.length; p++) {
@@ -1765,7 +1938,7 @@ function letterDeductionCore(st, clues, peekOnly) {
     const res = cachedLineUnion(st, clues, line, peekOnly);
     if (!res) continue;
     for (let g = 0; g < line.clue.length; g++) {
-      const p2 = tokenParse(line.clue[g]);
+      const p2 = tokenParse(line.clue[g], st);
       if (!p2.chars || !p2.chars.some(ch => ch.L !== undefined)) continue;
       const sums = res.gSums[g];
       if (!sums.size) continue;
@@ -1791,7 +1964,7 @@ function letterDeductionCore(st, clues, peekOnly) {
   }
   return null;
 }
-function digitsOf2(mask) { const a = []; for (let d = 0; d <= 9; d++) if (mask & (1 << d)) a.push(d); return a; }
+function digitsOf2(mask) { const a = []; for (let d = 0; d <= 30; d++) if (mask & (1 << d)) a.push(d); return a; }
 
 // rule: letter uniqueness — two crypto letters never share a digit
 function ruleLetterUniqueness(st, clues) {
@@ -1814,7 +1987,7 @@ function ruleLetterUniqueness(st, clues) {
 function cellTrialCore(st, clues, fastTier) {
   if (st.noTrial) return null;
   const N = st.R * st.C;
-  const big = st.R * st.C > 100 || st.D >= 8;
+  const big = st.R * st.C >= 100;
   // letter trials first: a cipher letter down to 2-3 digits is a natural
   // hypothesis, and a quick contradiction removes the digit for good
   const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 4);
@@ -1867,11 +2040,127 @@ function cellTrialCore(st, clues, fastTier) {
 function ruleCellTrialFast(st, clues) { return cellTrialCore(st, clues, true); }
 function ruleCellTrialFull(st, clues) { return cellTrialCore(st, clues, false); }
 
+// rule (alien): base bounds — arithmetic on the unknown base: every written
+// digit is below it, distinct letters need distinct digits, a k-digit numeral
+// is worth at least base^(k-1), and every clue must stay within the line's
+// value budget under each surviving base
+function ruleBaseBounds(st, clues) {
+  if (!st.alien) return null;
+  ensureBaseCand(st, clues);
+  const bases = [...st.baseCand].sort((a, b) => a - b);
+  if (!st.__baseNarrated) {
+    // narrate the opening bounds once
+    let maxDigit = 0, maxLen = 1;
+    const letterSet = new Set();
+    for (const list of (clues.rows || []).concat(clues.cols || [])) {
+      if (!list) continue;
+      for (const tok of list) {
+        const p = tokenParse(tok, st);
+        if (!p.chars) continue;
+        maxLen = Math.max(maxLen, p.chars.length);
+        for (const ch of p.chars) { if (ch.d !== undefined) maxDigit = Math.max(maxDigit, ch.d); if (ch.L !== undefined) letterSet.add(ch.L); }
+      }
+    }
+    const lo = bases[0], hi = bases[bases.length - 1];
+    const parts = [];
+    if (letterSet.size >= 2) parts.push('the ' + letterSet.size + ' distinct letters need ' + letterSet.size + ' different digits, so the base is at least ' + letterSet.size);
+    if (maxDigit + 1 > letterSet.size && maxDigit > 1) parts.push('the digit ' + maxDigit + ' appears, so the base is at least ' + (maxDigit + 1));
+    if (maxLen >= 2) parts.push('a ' + maxLen + '-digit numeral is worth at least base' + (maxLen === 2 ? '' : '^' + (maxLen - 1)) + ', which must stay within the largest possible sum ' + (st.maxTotal + (st.kd ? 1 : 0)));
+    parts.push('(bases beyond 31 are outside this solver\u2019s range)');
+    return { rule: 'Base bounds', cells: [],
+      text: 'The clues are written in an unknown number base: ' + parts.join('; ') + ' \u2014 the base is ' + (lo === hi ? lo : lo + '\u2013' + hi) + '.',
+      apply() { st.__baseNarrated = true; } };
+  }
+  // letters stand for digits below the base
+  const maxB = bases[bases.length - 1];
+  const capMask = maxB >= 31 ? 0x7FFFFFFF : (1 << maxB) - 1;
+  for (const L of activeLetterIds(clues)) {
+    if (st.letterCand[L] & ~capMask) {
+      const lost = digitsOf2(st.letterCand[L] & ~capMask);
+      return { rule: 'Base bounds', cells: [],
+        text: 'The base is at most ' + maxB + ' and every letter stands for a digit below the base \u2014 ' + String.fromCharCode(65 + L) + ' cannot be ' + lost.join('/') + '.',
+        apply() { filterLetter(st, L, capMask); } };
+    }
+    // a letter whose smallest remaining digit is k forces base > k
+    const ds = digitsOf2(st.letterCand[L]);
+    const minD = ds[0];
+    if (bases[0] <= minD) {
+      const keep = new Set(bases.filter(b => b > minD));
+      return { rule: 'Base bounds', cells: [],
+        text: 'Letter ' + String.fromCharCode(65 + L) + ' stands for a digit of at least ' + minD + ', and digits are below the base \u2014 the base is at least ' + (minD + 1) + '.',
+        apply() { filterBase(st, keep); } };
+    }
+  }
+  // per-base value budgets: under base b every token needs a possible sum;
+  // all the bases the same line/token rules out fall in one step
+  if (bases.length >= 2) {
+    for (const b of bases) {
+      st.__forceBase = b;
+      let bad = null;
+      for (const line of eachSumsLine(st, clues)) {
+        if (!line.clue || !line.clue.length) continue;
+        const sets = lineSumSets(st, line);
+        const g = sets.findIndex(s2 => !s2.size);
+        if (g >= 0) { bad = { line, g }; break; }
+      }
+      st.__forceBase = undefined;
+      if (bad) {
+        const dead = [b];
+        for (const b2 of bases) {
+          if (b2 === b) continue;
+          st.__forceBase = b2;
+          const sets2 = lineSumSets(st, bad.line);
+          st.__forceBase = undefined;
+          if (!sets2[bad.g].size) dead.push(b2);
+        }
+        dead.sort((a2, b2) => a2 - b2);
+        const keep = new Set(bases.filter(b2 => !dead.includes(b2)));
+        const deadTxt = dead.length === 1 ? String(dead[0]) : (dead.every((d2, q) => q === 0 || d2 === dead[q - 1] + 1) ? dead[0] + '\u2013' + dead[dead.length - 1] : dead.join('/'));
+        return { rule: 'Base bounds', cells: [],
+          text: 'If the base were ' + deadTxt + ', ' + bad.line.name.toLowerCase() + '\u2019s group \u201c' + tokenLabel(bad.line.clue[bad.g]) + '\u201d could take no possible sum within the line\u2019s budget \u2014 the base is ' + [...keep].sort((a2, b2) => a2 - b2).join('/') + '.',
+          apply() { filterBase(st, keep); } };
+      }
+    }
+  }
+  return null;
+}
+
+// rule (alien): base trial — suppose the base were one of its candidates and
+// follow the quick consequences; a contradiction removes that base
+function baseTrialCore(st, clues, fastTier) {
+  if (!st.alien || st.noTrial || !st.baseCand || st.baseCand.size < 2 || st.baseCand.size > 12) return null;
+  const bases = [...st.baseCand].sort((a, b) => a - b);
+  const big = st.R * st.C >= 100;
+  const tier = fastTier
+    ? { fast: true, deadline: Date.now() + 4000, steps: 16 }
+    : { fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 30 };
+  for (const b of bases) {
+    if (Date.now() > tier.deadline) break;
+    const capMask = b >= 31 ? 0x7FFFFFFF : (1 << b) - 1;
+    const res = ghostRun(st, clues, g => { filterBase(g, new Set([b])); for (const L of activeLetterIds(clues)) filterLetter(g, L, capMask); }, tier.fast, tier.steps);
+    if (!res.dead || !res.chain.length) continue;
+    const contra = res.chain[res.chain.length - 1];
+    if (!contra.contradiction) continue;
+    return { rule: 'Base trial', cells: [], chain: res.chain,
+      chainIntro: 'Suppose the base were ' + b + '. Then:',
+      chainOutro: 'So the base is <b>not ' + b + '</b>.',
+      text: 'Suppose the base were ' + b + ': it fails after ' + res.chain.length + ' step' + (res.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So the base is not ' + b + '.',
+      apply() { filterBase(st, new Set(bases.filter(b2 => b2 !== b))); } };
+  }
+  return null;
+}
+function ruleBaseTrialFast(st, clues) { return baseTrialCore(st, clues, true); }
+function ruleBaseTrialFull(st, clues) { return baseTrialCore(st, clues, false); }
+
 // hypothesise on a clone and follow the ladder a few steps; returns the ghost,
 // the narrated chain, and whether the hypothesis died in a contradiction
 function ghostRun(st, clues, hyp, fast, maxSteps) {
   const g = cloneSumsState(st);
-  g.fastLadder = fast; g.noTrial = true; g.__lineCache = undefined;
+  g.fastLadder = fast; g.noTrial = true;
+  // the line cache is keyed by every input that affects a line's enumeration
+  // (candidates, clue letters, candidate bases, escape gates), so ghosts can
+  // share it with the parent state safely
+  g.__lineCache = st.__lineCache;
   try { hyp(g); } catch (e) { return { dead: true, chain: [], g: null }; }
   const chain = [];
   for (let k = 0; k < maxSteps; k++) {
@@ -1895,7 +2184,7 @@ function shadeTrialOrder(st, minPop) {
     if (!(m & 1) || !(m & ~1)) continue;   // must be undecided both ways
     if (popc(m) < minPop) continue;
     let nearBlank = false, nearDigit = false;
-    for (const j of coralNeighbors(st, i)) {
+    for (const j of orthNeighbors(st, i)) {
       if (st.cand[j] === 1) nearBlank = true;
       else if ((st.cand[j] & 1) === 0) nearDigit = true;
     }
@@ -1912,7 +2201,7 @@ function shadeTrialCore(st, clues, fastTier) {
   // popc >= 4 leaves the nearly-decided cells to Cell trial's finer hypotheses
   const cells = shadeTrialOrder(st, 4);
   if (!cells.length) return null;
-  const big = st.R * st.C > 100 || st.D >= 8;
+  const big = st.R * st.C >= 100;
   const tiers = fastTier
     ? [{ fast: true, deadline: Date.now() + 4000, steps: 16, list: cells }]
     : [{ fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 24, list: cells.slice(0, 24) }];
@@ -1964,54 +2253,90 @@ function caseMergeCore(st, clues, fastTier) {
     const parts = digitsOf2(st.letterCand[L]).map(d => ({ mask: 1 << d, label: String(d) }));
     hyps.push({ kind: 'letter', L, parts, what: 'letter ' + String.fromCharCode(65 + L) + ' is either ' + parts[0].label + ' or ' + parts[1].label });
   }
+  // a small set of candidate bases splits the same way (n cases)
+  if (st.alien && st.baseCand && st.baseCand.size >= 2 && st.baseCand.size <= 5) {
+    const bs = [...st.baseCand].sort((a, b) => a - b);
+    hyps.push({ kind: 'base', parts: bs.map(b => ({ b, label: 'base ' + b })),
+      what: 'the base is one of ' + bs.join('/') });
+  }
   if (!hyps.length) return null;
-  const big = st.R * st.C > 100 || st.D >= 8;
+  const big = st.R * st.C >= 100;
   const tiers = fastTier
     ? [{ fast: true, deadline: Date.now() + 4000, steps: 14, list: hyps }]
     : [{ fast: false, deadline: Date.now() + (big ? 120000 : 12000), steps: 20, list: hyps }];
   for (const tier of tiers) {
     for (const h of tier.list) {
       if (Date.now() > tier.deadline) break;
-      const apply = (g, part) => h.kind === 'cell' ? filterCand(g, h.i, part.mask) : filterLetter(g, h.L, part.mask);
+      const apply = (g, part) => {
+        if (h.kind === 'cell') return filterCand(g, h.i, part.mask);
+        if (h.kind === 'letter') return filterLetter(g, h.L, part.mask);
+        const capMask = part.b >= 31 ? 0x7FFFFFFF : (1 << part.b) - 1;
+        filterBase(g, new Set([part.b]));
+        for (const L of activeLetterIds(clues)) filterLetter(g, L, capMask);
+      };
       const runs = h.parts.map(part => ghostRun(st, clues, g => apply(g, part), tier.fast, tier.steps));
-      const alive = runs.filter(r => !r.dead);
+      const alive = runs.map((r, q) => ({ r, q })).filter(x => !x.r.dead);
+      const commit = part => {
+        if (h.kind === 'cell') filterCand(st, h.i, part.mask);
+        else if (h.kind === 'letter') filterLetter(st, h.L, part.mask);
+        else filterBase(st, new Set([part.b]));
+      };
+      const who = h.kind === 'cell' ? rc(st, h.i) : h.kind === 'letter' ? 'letter ' + String.fromCharCode(65 + h.L) : 'the base';
       if (alive.length === 0) {
         return { rule: 'Case analysis', contradiction: true, cells: h.kind === 'cell' ? [h.i] : [],
-          text: h.what + ', but both cases fail \u2014 the position is contradictory.' };
+          text: h.what + ', but every case fails \u2014 the position is contradictory.' };
       }
       if (alive.length === 1) {
-        // classic trial: the dead case is eliminated
-        const deadIdx = runs.findIndex(r => r.dead);
-        const dead = runs[deadIdx], live = h.parts[1 - deadIdx];
-        if (!dead.chain.length) {
-          // the hypothesis itself was immediately impossible: commit the other
+        // classic trial: the sole survivor is committed
+        const deadIdx = runs.findIndex(r => r.dead && r.chain.length);
+        const live = h.parts[alive[0].q];
+        if (deadIdx < 0) {
           return { rule: 'Case analysis', cells: h.kind === 'cell' ? [h.i] : [],
-            text: h.what + ', but ' + h.parts[deadIdx].label + ' is immediately impossible \u2014 so it is ' + live.label + '.',
-            apply() { h.kind === 'cell' ? filterCand(st, h.i, live.mask) : filterLetter(st, h.L, live.mask); } };
+            text: h.what + ', but every other case is immediately impossible \u2014 so it is ' + live.label + '.',
+            apply() { commit(live); } };
         }
+        const dead = runs[deadIdx];
         const contra = dead.chain[dead.chain.length - 1];
-        const who = h.kind === 'cell' ? rc(st, h.i) : 'letter ' + String.fromCharCode(65 + h.L);
+        const others = h.parts.length > 2 ? ' (the other cases fail too)' : '';
         return { rule: 'Case analysis', cells: h.kind === 'cell' ? [h.i] : [], chain: dead.chain,
           chainIntro: 'Suppose ' + who + ' were ' + h.parts[deadIdx].label + '. Then:',
-          chainOutro: 'So ' + who + ' is <b>' + live.label + '</b>.',
-          text: 'Suppose ' + who + ' were ' + h.parts[deadIdx].label + ': it fails after ' + dead.chain.length + ' step' + (dead.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + who + ' is ' + live.label + '.',
-          apply() { h.kind === 'cell' ? filterCand(st, h.i, live.mask) : filterLetter(st, h.L, live.mask); } };
+          chainOutro: 'So ' + who + ' is <b>' + live.label + '</b>' + others + '.',
+          text: 'Suppose ' + who + ' were ' + h.parts[deadIdx].label + ': it fails after ' + dead.chain.length + ' step' + (dead.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + who + ' is ' + live.label + others + '.',
+          apply() { commit(live); } };
       }
-      // both cases alive: merge — keep only what every case still allows
+      if (alive.length < h.parts.length && h.kind === 'base') {
+        // some bases die outright: eliminate them, keep the survivors' merge for later
+        const deadParts = h.parts.filter((p, q) => runs[q].dead);
+        const firstDead = runs.find(r => r.dead && r.chain.length);
+        const keep = new Set(alive.map(x => h.parts[x.q].b));
+        return { rule: 'Case analysis', cells: [], chain: firstDead ? firstDead.chain : undefined,
+          chainIntro: firstDead ? 'Suppose the base were ' + deadParts[0].label.replace('base ', '') + '. Then:' : undefined,
+          chainOutro: firstDead ? 'So the base is <b>' + [...keep].join('/') + '</b>.' : undefined,
+          text: 'Trying each candidate base a few steps: base' + (deadParts.length > 1 ? 's' : '') + ' ' + deadParts.map(p => p.label.replace('base ', '')).join(', ') + ' fail' + (deadParts.length > 1 ? '' : 's') + ' \u2014 the base is ' + [...keep].join('/') + '.',
+          apply() { filterBase(st, keep); } };
+      }
+      // all surviving cases: merge — keep only what every case still allows
       const cellHits = [], letterHits = [];
+      let baseHit = null;
       for (let j = 0; j < N; j++) {
         let u = 0;
-        for (const r of alive) u |= r.g.cand[j];
+        for (const x of alive) u |= x.r.g.cand[j];
         const nm = st.cand[j] & u;
         if (nm !== st.cand[j] && nm !== 0) cellHits.push({ j, nm });
       }
       for (let L = 0; L < 26; L++) {
         let u = 0;
-        for (const r of alive) u |= r.g.letterCand[L];
+        for (const x of alive) u |= x.r.g.letterCand[L];
         const nm = st.letterCand[L] & u;
         if (nm !== st.letterCand[L] && nm !== 0) letterHits.push({ L, nm });
       }
-      if (!cellHits.length && !letterHits.length) continue;
+      if (st.alien && st.baseCand) {
+        const u = new Set();
+        for (const x of alive) for (const b of x.r.g.baseCand || []) u.add(b);
+        const keep = new Set([...st.baseCand].filter(b => u.has(b)));
+        if (keep.size && keep.size < st.baseCand.size) baseHit = keep;
+      }
+      if (!cellHits.length && !letterHits.length && !baseHit) continue;
       const bits = [];
       if (cellHits.length) bits.push(cellHits.slice(0, 6).map(t => {
         const parts = [];
@@ -2020,12 +2345,14 @@ function caseMergeCore(st, clues, fastTier) {
         return rc(st, t.j) + ' = ' + parts.join(' or ');
       }).join('; ') + (cellHits.length > 6 ? '; and ' + (cellHits.length - 6) + ' more cells' : ''));
       if (letterHits.length) bits.push(letterHits.map(t => String.fromCharCode(65 + t.L) + ' = ' + digitsOf2(t.nm).join('/')).join('; '));
+      if (baseHit) bits.push('the base = ' + [...baseHit].sort((a, b) => a - b).join('/'));
       return { rule: 'Case analysis', cells: cellHits.map(t => t.j),
         cases: h.parts.map((part, q) => ({ intro: 'Case ' + (q + 1) + ' \u2014 ' + (h.kind === 'cell' ? rc(st, h.i) : 'letter ' + String.fromCharCode(65 + h.L)) + ' is ' + part.label + ':', chain: runs[q].chain })),
         text: h.what + ' \u2014 following each case ' + Math.max(...runs.map(r => r.chain.length)) + ' steps at most, every case agrees: ' + bits.join('; ') + '.',
         apply() {
           for (const t of cellHits) filterCand(st, t.j, t.nm);
           for (const t of letterHits) filterLetter(st, t.L, t.nm);
+          if (baseHit) filterBase(st, baseHit);
         } };
     }
   }
@@ -2037,8 +2364,8 @@ function ruleCaseMergeFull(st, clues) { return caseMergeCore(st, clues, false); 
 
 // trial rules run cheapest hypotheses first: every quick (fast-ladder) sweep
 // across all hypothesis kinds precedes any deep (full-ladder) sweep
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleShadeTrialFast, ruleCellTrialFast, ruleCaseMergeFast, ruleShadeTrialFull, ruleCellTrialFull, ruleCaseMergeFull];
-const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleShadeTrialFast, ruleCellTrialFast, ruleBaseTrialFast, ruleCaseMergeFast, ruleShadeTrialFull, ruleCellTrialFull, ruleBaseTrialFull, ruleCaseMergeFull];
+const SUMS_FAST = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 // per line and clue index, the group's sum where it is already exactly
 // determined by committed cells and blanks (for UI display of resolved ?/#).
@@ -2090,6 +2417,7 @@ function resolvedClueSums(st, clues) {
 }
 
 function takeSumsStep(st, clues) {
+  if (st.alien && !st.baseCand) ensureBaseCand(st, clues);
   const rules = st.fastLadder ? SUMS_FAST : SUMS_RULES;
   for (const rule of rules) {
     let mv = null;
@@ -2137,13 +2465,16 @@ const SUMS_STRATEGIES = [
   { name: 'Shaded spine', variant: 'blankConn', desc: 'The one connected shaded group must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
   { name: 'Shaded reach edge', variant: 'blankReach', desc: 'Every connected shaded group touches the grid\u2019s edge \u2014 a shaded region\u2019s last escape route to the border stays shaded.' },
   { name: 'Numbers reach edge', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
+  { name: 'Base bounds', variant: 'alien', desc: 'Arithmetic on the unknown base: every written digit is below it, distinct letters need distinct digits, a k-digit numeral is worth at least base^(k\u22121), and every clue must fit its line\u2019s value budget under each surviving base.' },
+  { name: 'Base deduction', variant: 'alien', desc: 'A line enumerated in isolation under one candidate base: if no completion matches its clue in that base, the base is eliminated.' },
+  { name: 'Base trial', variant: 'alien', desc: 'Suppose the base were one of its candidates and follow the quick consequences \u2014 a contradiction removes that base, chain shown.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
   { name: 'Shading trial', desc: 'Suppose an undecided cell held a digit (or was shaded), without fixing which digit, and follow the quick consequences \u2014 a contradiction decides the cell\u2019s shading, chain shown.' },
   { name: 'Case analysis', desc: 'A binary split \u2014 a two-candidate cell, an undecided cell\u2019s shaded-vs-digit dichotomy, or a two-digit letter \u2014 is followed a few steps in both cases; whatever every case agrees on is true outright, both chains shown.' },
 ];
 
-const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, takeSumsStep, sumsComplete, eachSumsLine, committedDigit, popc, digitsOf, digitsOf2: (m) => { const a = []; for (let d = 0; d <= 9; d++) if (m & (1 << d)) a.push(d); return a; }, tokenLetters, allowedSums, SUMS_STRATEGIES };
+const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, filterBase, ensureBaseCand, baseList, numeralOf, takeSumsStep, sumsComplete, eachSumsLine, committedDigit, popc, digitsOf, digitsOf2: (m) => { const a = []; for (let d = 0; d <= 30; d++) if (m & (1 << d)) a.push(d); return a; }, tokenLetters, allowedSums, SUMS_STRATEGIES };
 api.resolvedClueSums = resolvedClueSums;
 if (typeof module !== 'undefined') module.exports = api;
 else global.sums = api;

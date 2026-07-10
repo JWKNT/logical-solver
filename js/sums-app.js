@@ -43,6 +43,7 @@ function readSlotClue(prefix) {
     const t = (el ? (el.dataset.orig !== undefined ? el.dataset.orig : el.value) : '').trim();
     if (!t) continue;
     if (/^-?[0-9]+$/.test(t)) vals.push(parseInt(t, 10));
+    else if ($('sumsAlien').checked && /^[0-9A-Za-z?#.]+$/.test(t)) vals.push(t.toUpperCase());
     else if (/^-?[0-9A-Za-z?#]+$/.test(t)) vals.push(t.toUpperCase());
   }
   if (!vals.length) return null;
@@ -84,13 +85,15 @@ function buildGrid(keepClues) {
   $('sumsDigits').closest('label').style.display = customOn ? 'none' : '';
   st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
+  st.alien = $('sumsAlien').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map();
   stepNo = 0;
   const wrap = $('sumsGridWrap');
   const slotBox = (prefix, vertical) => {
     let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
-    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="3" spellcheck="false">';
+    const ml = $('sumsAlien').checked ? 12 : 3;   // alien numerals may use '.'-separated digits
+    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false">';
     return h + '</div>';
   };
   let html = '<table class="sums-grid"><tr><td class="sums-corner"></td>';
@@ -141,6 +144,8 @@ function solvedLetterMap() {
 }
 function refreshClueDisplays() {
   const map = solvedLetterMap();
+  const alien = $('sumsAlien').checked;
+  const pinnedBase = alien && st.baseCand && st.baseCand.size === 1 ? [...st.baseCand][0] : (alien ? null : 10);
   const resolved = sums.resolvedClueSums(st, readClues());
   const origOf = el2 => (el2 ? (el2.dataset.orig !== undefined ? el2.dataset.orig : el2.value) : '').trim();
   document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
@@ -156,18 +161,21 @@ function refreshClueDisplays() {
       let tokIdx = 0;
       for (let g = 0; g < slotNo; g++) if (origOf($('sums' + m2[1] + li + '_' + g))) tokIdx++;
       const arr = resolved[kind][li];
-      if (arr && arr[tokIdx] !== null && arr[tokIdx] !== undefined) {
-        el.value = String(arr[tokIdx]);
+      if (arr && arr[tokIdx] !== null && arr[tokIdx] !== undefined && pinnedBase) {
+        el.value = pinnedBase === 10 ? String(arr[tokIdx]) : sums.numeralOf(arr[tokIdx], pinnedBase);
         el.classList.add('resolved');
         return;
       }
     }
-    let out = '', subbed = false;
-    for (const ch of orig.toUpperCase()) {
-      if (map[ch] !== undefined) { out += map[ch]; subbed = true; }
-      else out += ch;
-    }
-    if (subbed) { el.value = out; el.classList.add('resolved'); }
+    // substitute solved cipher letters; alien digits of 10+ force dotted form
+    const fields = alien && orig.includes('.') ? orig.toUpperCase().split('.') : orig.toUpperCase().split('');
+    let subbed = false, anyWide = false;
+    const outF = fields.map(f => {
+      if (map[f] !== undefined) { subbed = true; if (+map[f] >= 10) anyWide = true; return map[f]; }
+      if (/^[0-9]+$/.test(f) && +f >= 10) anyWide = true;
+      return f;
+    });
+    if (subbed) { el.value = anyWide ? outF.join('.') : outF.join(''); el.classList.add('resolved'); }
     else { el.value = orig; el.classList.remove('resolved'); }
   });
 }
@@ -180,12 +188,29 @@ function activeLetters() {
   for (const list of cl.rows.concat(cl.cols)) if (list) for (const tok of list) for (const L of sums.tokenLetters(tok)) set.add(L);
   return [...set].sort((a, b) => a - b);
 }
-function renderLetters(engineCand) {
+function renderLetters(engineCand, engineBases) {
   const box = $('sumsLetters');
   const letters = activeLetters();
-  if (!letters.length) { box.hidden = true; return; }
+  const alien = $('sumsAlien').checked;
+  if (!letters.length && !alien) { box.hidden = true; return; }
   box.hidden = false;
   let html = '<div class="crypto-boxes">';
+  if (alien) {
+    // the base box: candidates like a cipher letter, solved when pinned
+    if (st.alien && !st.baseCand) sums.ensureBaseCand(st, clues || readClues());
+    const bs = engineBases ? engineBases : (st.baseCand ? [...st.baseCand].sort((x, y) => x - y) : []);
+    html += '<div class="crypto-box"><div class="crypto-box-letter">base</div>';
+    if (bs.length === 1) html += '<div class="crypto-box-solved">' + bs[0] + '</div>';
+    else if (!bs.length) html += '<div class="crypto-box-solved">?</div>';
+    else {
+      html += '<div class="crypto-box-marks">';
+      const lo = bs[0], hi = bs[bs.length - 1];
+      for (let b = lo; b <= hi; b++) html += '<span class="' + (bs.includes(b) ? '' : 'off') + '">' + b + '</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  const maxD = alien && st.baseCand && st.baseCand.size ? Math.max(...st.baseCand) - 1 : 9;
   for (const L of letters) {
     const mask = engineCand ? engineCand[L] : st.letterCand[L];
     const ds = sums.digitsOf2(mask);
@@ -193,7 +218,7 @@ function renderLetters(engineCand) {
     if (ds.length === 1) html += '<div class="crypto-box-solved">' + ds[0] + '</div>';
     else {
       html += '<div class="crypto-box-marks">';
-      for (let d = 0; d <= 9; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
+      for (let d = 0; d <= maxD; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
       html += '</div>';
     }
     html += '</div>';
@@ -215,7 +240,7 @@ function buildStrategyPanel() {
   for (const s of sums.SUMS_STRATEGIES.filter(s2 => !s2.variant)) ol.appendChild(mk(s));
   const vs = readVariants();
   const ruleOn = key => key === 'checker' ? ((vs.blankConn && vs.reach) || (vs.numConn && vs.blankReach)) : !!vs[key];
-  const shapeRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant && s2.variant !== 'kd');
+  const shapeRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant && s2.variant !== 'kd' && s2.variant !== 'alien');
   if (shapeRules.length) {
     const anyOn = shapeRules.some(s2 => ruleOn(s2.variant));
     const bar = document.createElement('li');
@@ -223,6 +248,15 @@ function buildStrategyPanel() {
     bar.innerHTML = 'Shape & order' + (anyOn ? '' : ' <span class="voff">(off)</span>');
     ol.appendChild(bar);
     for (const s of shapeRules) { const li = mk(s); if (!ruleOn(s.variant)) li.className = 'vdim'; ol.appendChild(li); }
+  }
+  const alienRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant === 'alien');
+  if (alienRules.length) {
+    const on = $('sumsAlien').checked;
+    const bar = document.createElement('li');
+    bar.className = 'variant-bar' + (on ? ' on' : '');
+    bar.innerHTML = 'Alien' + (on ? '' : ' <span class="voff">(off)</span>');
+    ol.appendChild(bar);
+    for (const s of alienRules) { const li = mk(s); if (!on) li.className = 'vdim'; ol.appendChild(li); }
   }
   const kdRules = sums.SUMS_STRATEGIES.filter(s2 => s2.variant === 'kd');
   if (kdRules.length) {
@@ -254,31 +288,35 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 $('sumsBuild').onclick = () => buildGrid(true);
 $('sumsSolve').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
     if (!res.firstSol) { status(res.timedOut ? '<span class="warn">No solution found within the time limit.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     st = sums.makeSumsState(R, C, D, VALUES || undefined);
+    st.alien = $('sumsAlien').checked;
+    if (st.alien && res.base) st.baseCand = new Set([res.base]);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
     if (res.firstLetters) for (let L = 0; L < 26; L++) if (res.firstLetters[L] >= 0) st.letterCand[L] = 1 << res.firstLetters[L];
     renderCells();
     renderLetters();
     const letterTxt = (res.letterIds || []).filter(L => res.firstLetters[L] >= 0).map(L => String.fromCharCode(65 + L) + '=' + res.firstLetters[L]).join(', ');
-    status('<span class="good">Solved</span> in ' + ms + ' ms (' + res.nodes.toLocaleString() + ' nodes).' + (letterTxt ? ' Letters: <b>' + letterTxt + '</b>.' : '') + (res.timedOut ? ' <span class="warn">(search truncated)</span>' : ''));
+    status('<span class="good">Solved</span> in ' + ms + ' ms (' + res.nodes.toLocaleString() + ' nodes).' + (res.base ? ' Base: <b>' + res.base + '</b>.' : '') + (letterTxt ? ' Letters: <b>' + letterTxt + '</b>.' : '') + (res.timedOut ? ' <span class="warn">(search truncated)</span>' : ''));
   }, 'Solving');
 };
 $('sumsCands').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
+  runWorker({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
     if (!res.cand || res.solCount === 0) { status(res.timedOut ? '<span class="warn">Timed out before finding solutions.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     if (!res.complete) {
       status('<span class="warn">Search truncated</span> after ' + res.solCount.toLocaleString() + ' solutions (' + ms + ' ms) \u2014 the grid is too underconstrained for exact candidates, so no marks were drawn (a partial union would be misleading). Add clues or raise the time limit.');
       return;
     }
     st = sums.makeSumsState(R, C, D, VALUES || undefined);
+    st.alien = $('sumsAlien').checked;
+    if (st.alien && res.bases && res.bases.length) st.baseCand = new Set(res.bases);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
     if (res.letterCand) for (const L of res.letterIds || []) if (res.letterCand[L]) st.letterCand[L] = res.letterCand[L];
     renderCells();
-    renderLetters();
-    status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.');
+    renderLetters(null, st.alien && res.bases ? res.bases : null);
+    status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.' + (st.alien && res.bases ? ' Feasible base' + (res.bases.length === 1 ? '' : 's') + ': <b>' + res.bases.join(', ') + '</b>.' : ''));
   }, 'Enumerating solutions');
 };
 $('sumsStep').onclick = () => {
@@ -307,7 +345,7 @@ $('sumsStep').onclick = () => {
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
 };
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 const VARIANT_BOXES = [
@@ -323,11 +361,18 @@ function readVariants() {
 function variantChanged(msg) {
   st = sums.makeSumsState(R, C, D, VALUES || undefined);
   st.kd = $('sumsKD').checked;
+  st.alien = $('sumsAlien').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map(); stepNo = 0;
   renderCells(); renderLetters(); buildStrategyPanel();
   status(msg + ' Marks reset.');
 }
+$('sumsAlien').addEventListener('change', () => {
+  buildGrid(true);
+  status($('sumsAlien').checked
+    ? '<b>Alien</b> on: the clues\u2019 number base is unknown (2\u201331) \u2014 digits and cipher letters are read in that base. Write a two-decimal-character base digit with dots (<code>11.3</code>). Marks reset, clues kept.'
+    : 'Alien off: clues are decimal again. Marks reset, clues kept.');
+});
 $('sumsKD').addEventListener('change', () => variantChanged($('sumsKD').checked
   ? '<b>Knapp daneben</b> on: every clue is one off its true value (a 10 is really 9 or 11).'
   : 'Knapp daneben off: clues are exact again.'));

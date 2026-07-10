@@ -66,6 +66,13 @@
     <span><span class="sw"><svg width="16" height="14"><circle cx="8" cy="7" r="4" fill="none" stroke="#B9C0C8" stroke-width="2"/></svg></span>cell empty in every solution</span>
     <span><span class="sw" style="width:14px;height:14px;background:var(--shaded);border-radius:3px;"></span>shaded (click a cell to toggle)</span>
     </div>
+      <details class="help">
+        <summary>Rules &amp; how to use this tool</summary>
+        <p><b>U-Bahn rules.</b> Draw one totally connected network through the centers of some unshaded cells. The network may branch or turn but may never dead-end: every used cell connects in 2, 3, or 4 directions. A clue outside the grid gives the exact count of a line shape in that row or column, regardless of the shape's rotation: <b style="color:var(--c-cross)">┼ cross</b> (4 connections), <b style="color:var(--c-branch)">├ branch</b> (3), <b style="color:var(--c-straight)">─ straight</b> (2 opposite), <b style="color:var(--c-turn)">└ turn</b> (2 adjacent) — or, in the outermost band, of <b style="color:var(--c-empty)">· empty cells</b> the network never visits (shaded cells count as empty).</p>
+        <p><b>Entering clues.</b> Clues are arranged the traditional U-Bahn way: the five rows above the grid hold column clues and the five columns on the left hold row clues — one band per shape, in the order shown by the icons on the corner diagonal (each icon labels the band to its right and the band below it). Leave a box empty for "no clue"; enter <code>0</code> to require zero of that shape. Click any grid cell to shade it (shaded cells can’t be used by the network).</p>
+        <p><b>Solve</b> finds one valid network and tells you whether it is unique. <b>True candidates</b> proves, for every individual segment, whether it appears in <b>every</b> solution (solid blue), in <b>some but not all</b> (dashed gray), or in <b>none</b> (a small × on that border) — each segment is tested independently, so the result is exact even when there are far too many solutions to enumerate. The solid network is the guaranteed partial solution: it can legitimately contain loose ends and partial pieces, because a cell’s remaining connections may differ from solution to solution. Tinted cells are used in every solution (even when no single segment through them is fixed); × marks cells used in none. Amber dashed segments could not be proven either way before the time limit — everything else shown is proven. Raise the limit and re-run to resolve them.</p>
+          <p><b>Take step</b> makes exactly one logical deduction at a time, sudoku-solver style: it keeps pencil marks for each cell (remaining shapes among <code>L</code> turn, <code>I</code> straight, <code>T</code> branch, <code>X</code> cross, <code>·</code> empty), draws borders it can prove (line or ×), and explains each move. The full ladder of ideas it tries — from clue counting through cross pigeonholes, connectivity (sealed loops, unreachable regions, forced bridges), segment capacity, and the parity tricks of the classic solving guides — is listed under <b>Step deduction types</b> beside the board, with the idea behind the last step highlighted. When no human-style rule applies it falls back to an exhaustive test of a single border and says so. Steps reset automatically whenever you change clues or shading.</p>
+      </details>
     </div>
     <aside class="strategies-side" id="strategiesSide">
       <details class="help strategies" open>
@@ -75,15 +82,6 @@
   </details>
     </aside>
   </div>
-
-  <details class="help">
-    <summary>Rules &amp; how to use this tool</summary>
-    <p><b>U-Bahn rules.</b> Draw one totally connected network through the centers of some unshaded cells. The network may branch or turn but may never dead-end: every used cell connects in 2, 3, or 4 directions. A clue outside the grid gives the exact count of a line shape in that row or column, regardless of the shape's rotation: <b style="color:var(--c-cross)">┼ cross</b> (4 connections), <b style="color:var(--c-branch)">├ branch</b> (3), <b style="color:var(--c-straight)">─ straight</b> (2 opposite), <b style="color:var(--c-turn)">└ turn</b> (2 adjacent) — or, in the outermost band, of <b style="color:var(--c-empty)">· empty cells</b> the network never visits (shaded cells count as empty).</p>
-    <p><b>Entering clues.</b> Clues are arranged the traditional U-Bahn way: the five rows above the grid hold column clues and the five columns on the left hold row clues — one band per shape, in the order shown by the icons on the corner diagonal (each icon labels the band to its right and the band below it). Leave a box empty for "no clue"; enter <code>0</code> to require zero of that shape. Click any grid cell to shade it (shaded cells can’t be used by the network).</p>
-    <p><b>Solve</b> finds one valid network and tells you whether it is unique. <b>True candidates</b> proves, for every individual segment, whether it appears in <b>every</b> solution (solid blue), in <b>some but not all</b> (dashed gray), or in <b>none</b> (a small × on that border) — each segment is tested independently, so the result is exact even when there are far too many solutions to enumerate. The solid network is the guaranteed partial solution: it can legitimately contain loose ends and partial pieces, because a cell’s remaining connections may differ from solution to solution. Tinted cells are used in every solution (even when no single segment through them is fixed); × marks cells used in none. Amber dashed segments could not be proven either way before the time limit — everything else shown is proven. Raise the limit and re-run to resolve them.</p>
-      <p><b>Take step</b> makes exactly one logical deduction at a time, sudoku-solver style: it keeps pencil marks for each cell (remaining shapes among <code>L</code> turn, <code>I</code> straight, <code>T</code> branch, <code>X</code> cross, <code>·</code> empty), draws borders it can prove (line or ×), and explains each move. The full ladder of ideas it tries — from clue counting through cross pigeonholes, connectivity (sealed loops, unreachable regions, forced bridges), segment capacity, and the parity tricks of the classic solving guides — is listed under <b>Step deduction types</b> below, with the idea behind the last step highlighted. When no human-style rule applies it falls back to an exhaustive test of a single border and says so. Steps reset automatically whenever you change clues or shading.</p>
-  </details>
-
 
 </section>
 
@@ -105,6 +103,7 @@
       <label class="chk"><input type="checkbox" id="sumsVReach"> Numbers reach edge</label>
       <label class="chk"><input type="checkbox" id="sumsVBlankReach"> Shaded reach edge</label>
       <label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label>
+      <label class="chk"><input type="checkbox" id="sumsAlien"> Alien</label>
     </span>
     <span class="sep"></span>
     <button id="sumsBuild">Resize</button>
@@ -124,7 +123,7 @@
         <p>Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</p>
         <p><code>?</code> = one unknown digit (so <code>?</code> is 1–9, <code>1?</code> is 10–19, <code>??</code> two digits); <code>#</code> = a group of any sum. Letters are crypto digits 0–9 — each letter one digit, all letters different, no leading zeros.</p>
         <p>The <i>Custom values</i> field replaces digits 1…D with a palette, e.g. <code>1,2,3,4,5,5,6,7,9,9</code>: no 8s, two 5s and two 9s per line. Negatives and double-digit values work; clue sums may then be negative, written like <code>-7</code>.</p>
-        <p>Coral = shaded connected + no 2×2 shaded + ascending clues + numbers reach edge.</p>
+        <p><i>Alien</i> = the clues are written in an unknown number base (2–31) that the solver must determine — every clue digit and cipher letter is a digit of that base, so letters can stand for values of 10 or more. A base digit needing two decimal characters is written with dots: <code>11.3</code> is the two-digit numeral with digits 11 and 3. The <b>base</b> box beside the cipher tracks the remaining candidates.</p>
       </details>
     </div>
     <aside class="strategies-side">

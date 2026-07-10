@@ -203,9 +203,9 @@ for (let t = 0; t < 12; t++) {
     fails++;
   }
 }
-// coral: clues ascending (unordered), blanks connected, no 2x2 blank, filled
+// shape variants: clues ascending (unordered), shaded connected, no 2x2 shaded, filled
 // components touch the edge
-function coralShapeOk(g, R, C) {
+function shapeOk(g, R, C) {
   const N = R * C;
   let start = -1, blanks = 0;
   for (let i = 0; i < N; i++) if (g[i] === 0) { blanks++; if (start < 0) start = i; }
@@ -230,7 +230,7 @@ function coralShapeOk(g, R, C) {
   for (let i = 0; i < N; i++) if (g[i] > 0 && !seenF[i]) return false;
   return true;
 }
-function bruteCoral(R, C, D, rowClues, colClues) {
+function bruteShaped(R, C, D, rowClues, colClues) {
   const g = new Int8Array(R * C);
   const rm = new Int32Array(R), cm = new Int32Array(C);
   let count = 0;
@@ -249,7 +249,7 @@ function bruteCoral(R, C, D, rowClues, colClues) {
     if (i === R * C) {
       for (let r = 0; r < R; r++) if (!lineOk(g.slice(r * C, (r + 1) * C), rowClues[r])) return;
       for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g[r * C + c]); if (!lineOk(col, colClues[c])) return; }
-      if (!coralShapeOk(g, R, C)) return;
+      if (!shapeOk(g, R, C)) return;
       count++;
       return;
     }
@@ -268,9 +268,9 @@ function bruteCoral(R, C, D, rowClues, colClues) {
 }
 for (let t = 0; t < 20; t++) {
   const R = 3 + ((Math.random() * 2) | 0), C = 3, D = 3 + ((Math.random() * 2) | 0);
-  // generate a coral-legal grid by rejection
+  // generate a shape-legal grid by rejection
   let g = null;
-  for (let a = 0; a < 3000; a++) { const cand2 = randGrid(R, C, D); if (coralShapeOk(cand2, R, C)) { g = cand2; break; } }
+  for (let a = 0; a < 3000; a++) { const cand2 = randGrid(R, C, D); if (shapeOk(cand2, R, C)) { g = cand2; break; } }
   if (!g) continue;
   const { rows, cols } = cluesOf(g, R, C, D);
   // sort clues ascending; replace some values with '?' (still ascending as patterns)
@@ -283,7 +283,7 @@ for (let t = 0; t < 20; t++) {
   const bcl = cl => cl && cl.map(t => typeof t === 'number' ? t : (String(t).length === 1 ? -1 : -2));
   function lineOkPattern(sums, cl) { return null; }
   // simpler: run brute with a matcher closure
-  function bruteCoral2(rowCl, colCl) {
+  function bruteShaped2(rowCl, colCl) {
     const match = (cl, sums) => {
       if (!cl) return true;
       if (sums.length !== cl.length) return false;
@@ -304,7 +304,7 @@ for (let t = 0; t < 20; t++) {
       if (i === R * C) {
         for (let r = 0; r < R; r++) if (!match(rowCl[r], sumsOf(g2.slice(r * C, (r + 1) * C)))) return;
         for (let c = 0; c < C; c++) { const col = []; for (let r = 0; r < R; r++) col.push(g2[r * C + c]); if (!match(colCl[c], sumsOf(col))) return; }
-        if (!coralShapeOk(g2, R, C)) return;
+        if (!shapeOk(g2, R, C)) return;
         count++;
         return;
       }
@@ -321,13 +321,13 @@ for (let t = 0; t < 20; t++) {
     rec(0);
     return count;
   }
-  const bruteN = bruteCoral2(rowClues, colClues);
-  const eng = E.runAny({ R, C, D, coral: true, rowClues, colClues, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
+  const bruteN = bruteShaped2(rowClues, colClues);
+  const eng = E.runAny({ R, C, D, variants: { blankConn: true, no22blank: true, asc: true, reach: true }, rowClues, colClues, mode: 'count', timeLimit: 15000, maxSolutions: 1e9 });
   if (!eng.complete || eng.solCount !== bruteN) {
-    console.log('CORAL FAIL:', R + 'x' + C, 'D=' + D, 'rows=', JSON.stringify(rowClues), 'cols=', JSON.stringify(colClues), 'brute=' + bruteN, 'engine=' + eng.solCount);
+    console.log('SHAPE FAIL:', R + 'x' + C, 'D=' + D, 'rows=', JSON.stringify(rowClues), 'cols=', JSON.stringify(colClues), 'brute=' + bruteN, 'engine=' + eng.solCount);
     fails++;
   }
-  if (bruteN < 1) { console.log('CORAL FAIL: generated puzzle unsolvable'); fails++; }
+  if (bruteN < 1) { console.log('SHAPE FAIL: generated puzzle unsolvable'); fails++; }
 }
 // custom value palettes: arbitrary values (negative/double-digit) with
 // per-line multiplicities; grid stores palette indices, sums use values
