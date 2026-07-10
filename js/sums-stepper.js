@@ -2,7 +2,7 @@
 // each returning a prose explanation. Mirrors the U-Bahn stepper design.
 //
 // State: cand[i] bitmask — bit 0 = the cell is blank, bits 1..D = digits.
-(function (global) {
+function sumsStepperMain(global) {
 'use strict';
 
 function makeSumsState(R, C, D, values) {
@@ -561,7 +561,11 @@ function cachedLineUnion(st, clues, line, peekOnly) {
   const sf = makeShadedStretchFilter(st, clues, line);
   let h = 2166136261 >>> 0;
   for (const i of line.cells) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; }
-  for (const tok of line.clue || []) for (const L of tokenLetters(tok)) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; }
+  for (const tok of line.clue || []) {
+    for (const ch of String(tok)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+    h = Math.imul(h ^ 47, 16777619) >>> 0;
+    for (const L of tokenLetters(tok)) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; }
+  }
   if (st.alien) for (const b of baseList(st)) { h ^= b * 131; h = Math.imul(h, 16777619) >>> 0; }
   if (sf) for (let p = 0; p < sf.escAt.length; p++) { h ^= sf.escAt[p] + 7; h = Math.imul(h, 16777619) >>> 0; }
   const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + h;
@@ -2478,4 +2482,6 @@ const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, filterBas
 api.resolvedClueSums = resolvedClueSums;
 if (typeof module !== 'undefined') module.exports = api;
 else global.sums = api;
-})(typeof self !== 'undefined' ? self : this);
+return api;
+}
+sumsStepperMain(typeof self !== 'undefined' ? self : this);

@@ -34,6 +34,52 @@ if (!root) return;
 
 const workerUrl = URL.createObjectURL(new Blob(['(' + sumsWorkerMain.toString() + ')()'], { type: 'application/javascript' }));
 
+// the Take-step ladder runs in a persistent worker so heavy deductions never
+// freeze the page; the worker owns the stepping state (and its line cache)
+// between steps, and the main thread mirrors it for rendering
+const stepWorkerUrl = URL.createObjectURL(new Blob([
+  sumsStepperMain.toString() + '\n(' + function () {
+    const api = sumsStepperMain(self);
+    let wst = null;
+    self.onmessage = e => {
+      const m = e.data;
+      if (m.cmd === 'load') {
+        wst = api.makeSumsState(m.R, m.C, m.D, m.values || undefined);
+        wst.kd = m.kd; wst.alien = m.alien;
+        Object.assign(wst.variants, m.variants);
+        if (m.cand) wst.cand.set(m.cand);
+        if (m.letterCand) wst.letterCand.set(m.letterCand);
+        if (m.baseCand) wst.baseCand = new Set(m.baseCand);
+        if (m.baseNarrated) wst.__baseNarrated = true;
+        return;
+      }
+      if (m.cmd === 'step') {
+        let mv = null;
+        try { mv = api.takeSumsStep(wst, m.clues); }
+        catch (err) { mv = { rule: 'Error', text: String((err && err.message) || err), contradiction: true }; }
+        const lite = mv && {
+          rule: mv.rule, text: mv.text, cells: mv.cells || [], contradiction: !!mv.contradiction,
+          chainIntro: mv.chainIntro, chainOutro: mv.chainOutro,
+          chain: mv.chain && mv.chain.map(x => ({ rule: x.rule, text: x.text, contradiction: !!x.contradiction })),
+          cases: mv.cases && mv.cases.map(c => ({ intro: c.intro, chain: (c.chain || []).map(x => ({ rule: x.rule, text: x.text })) })),
+        };
+        self.postMessage({ mv: lite,
+          state: { cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated },
+          complete: api.sumsComplete(wst) });
+      }
+    };
+  }.toString() + ')()'
+], { type: 'application/javascript' }));
+let stepWorker = null;
+let stepBusy = false;
+let stepStale = true;   // main-thread st changed: the worker must reload it before stepping
+function markStepStale() { stepStale = true; }
+function stepWorkerLoadMsg() {
+  return { cmd: 'load', R, C, D, values: VALUES || undefined, kd: st.kd, alien: st.alien,
+    variants: st.variants, cand: Array.from(st.cand), letterCand: Array.from(st.letterCand),
+    baseCand: st.baseCand ? [...st.baseCand] : null, baseNarrated: !!st.__baseNarrated };
+}
+
 function readSlotClue(prefix) {
   // per-slot boxes: numbers >= 1 in order, '?' = unknown-sum group, a single '0'
   // = explicitly empty line (zero groups); all boxes empty = unclued line
@@ -93,7 +139,7 @@ function buildGrid(keepClues) {
   const slotBox = (prefix, vertical) => {
     let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
     const ml = $('sumsAlien').checked ? 12 : 3;   // alien numerals may use '.'-separated digits
-    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false">';
+    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false" autocomplete="off">';
     return h + '</div>';
   };
   let html = '<table class="sums-grid"><tr><td class="sums-corner"></td>';
@@ -110,7 +156,11 @@ function buildGrid(keepClues) {
   document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
     el.addEventListener('focus', () => slotFocus(el));
     el.addEventListener('blur', () => slotBlur(el));
+    // typing is the single source of truth: the canonical clue follows every
+    // keystroke, so a substituted display can never be mistaken for input
+    el.addEventListener('input', () => { el.dataset.orig = el.value; el.classList.remove('resolved'); });
   });
+  markStepStale();
   renderCells();
   renderLetters();
   buildStrategyPanel();
@@ -151,7 +201,12 @@ function refreshClueDisplays() {
   document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
     if (document.activeElement === el) return;
     const orig = el.dataset.orig !== undefined ? el.dataset.orig : el.value;
-    if (el.dataset.orig === undefined && el.value) el.dataset.orig = el.value;
+    if (el.dataset.orig === undefined && el.value) {
+      // a page restored by the browser may refill values with old substituted
+      // displays; never adopt a value while it carries the resolved styling
+      if (el.classList.contains('resolved')) { el.value = ''; return; }
+      el.dataset.orig = el.value;
+    }
     if (!orig) { el.classList.remove('resolved'); return; }
     // a fully determined ?/# (or any unknown-bearing) token shows its true sum
     const m2 = el.id.match(/^sums(Row|Col)(\d+)_(\d+)$/);
@@ -295,6 +350,7 @@ $('sumsSolve').onclick = () => {
     if (st.alien && res.base) st.baseCand = new Set([res.base]);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
     if (res.firstLetters) for (let L = 0; L < 26; L++) if (res.firstLetters[L] >= 0) st.letterCand[L] = 1 << res.firstLetters[L];
+    markStepStale();
     renderCells();
     renderLetters();
     const letterTxt = (res.letterIds || []).filter(L => res.firstLetters[L] >= 0).map(L => String.fromCharCode(65 + L) + '=' + res.firstLetters[L]).join(', ');
@@ -314,17 +370,39 @@ $('sumsCands').onclick = () => {
     if (st.alien && res.bases && res.bases.length) st.baseCand = new Set(res.bases);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
     if (res.letterCand) for (const L of res.letterIds || []) if (res.letterCand[L]) st.letterCand[L] = res.letterCand[L];
+    markStepStale();
     renderCells();
     renderLetters(null, st.alien && res.bases ? res.bases : null);
     status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.' + (st.alien && res.bases ? ' Feasible base' + (res.bases.length === 1 ? '' : 's') + ': <b>' + res.bases.join(', ') + '</b>.' : ''));
   }, 'Enumerating solutions');
 };
 $('sumsStep').onclick = () => {
+  if (stepBusy) return;
   clues = readClues();
-  const mv = sums.takeSumsStep(st, clues);
+  if (!stepWorker) {
+    stepWorker = new Worker(stepWorkerUrl);
+    stepWorker.onmessage = onStepReply;
+    stepWorker.onerror = err => { stepBusy = false; $('sumsStep').disabled = false; status('<span class="bad">Step worker error:</span> ' + esc(String(err.message || err))); };
+    stepStale = true;
+  }
+  if (stepStale) { stepWorker.postMessage(stepWorkerLoadMsg()); stepStale = false; }
+  stepBusy = true;
+  $('sumsStep').disabled = true;
+  status('Thinking\u2026 (deeper deductions can take a little while)');
+  stepWorker.postMessage({ cmd: 'step', clues });
+};
+function onStepReply(e) {
+  stepBusy = false;
+  $('sumsStep').disabled = false;
+  const { mv, state, complete } = e.data;
+  // mirror the worker's state for rendering and the other tools
+  st.cand.set(state.cand);
+  st.letterCand.set(state.letterCand);
+  st.baseCand = state.baseCand ? new Set(state.baseCand) : null;
+  if (state.baseNarrated) st.__baseNarrated = true;
   renderLetters();
   if (!mv) {
-    if (sums.sumsComplete(st)) { status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }
+    if (complete) { status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }
     status('No deduction found \u2014 the ladder is out of ideas here. Try <b>True candidates</b> for the engine\u2019s view.');
     return;
   }
@@ -341,11 +419,10 @@ $('sumsStep').onclick = () => {
       ? '<ol>' + cs.chain.map(m => '<li><b>' + m.rule + '</b>: ' + esc(m.text) + '</li>').join('') + '</ol>'
       : ' (nothing further follows quickly.)')).join('');
   }
-  const done = sums.sumsComplete(st);
-  status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
+  status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (complete ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
-};
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+}
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; markStepStale(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 const VARIANT_BOXES = [
@@ -364,6 +441,7 @@ function variantChanged(msg) {
   st.alien = $('sumsAlien').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map(); stepNo = 0;
+  markStepStale();
   renderCells(); renderLetters(); buildStrategyPanel();
   status(msg + ' Marks reset.');
 }
