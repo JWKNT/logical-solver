@@ -132,6 +132,7 @@ function makeSolver(cfg) {
   function negLeft(pack) { let s = 0; for (let k = 0; k < M; k++) if (pal[k] < 0) s += pal[k] * (cnt[k] - usedOf(pack, k)); return s; }
   function anyLeft(pack) { for (let k = 0; k < M; k++) if (usedOf(pack, k) < cnt[k]) return true; return false; }
 
+  const LMASK = cfg.letterMask || null;   // per-letter allowed digit bits (digits <= 30)
   function bindDisplayed(g, dv) {
     if (dv < 0) return null;
     // numerals may not carry leading zeros (single-char displays may be 0)
@@ -143,6 +144,7 @@ function makeSolver(cfg) {
       const ch = g.chars[p], d = ds[p];
       if (ch.d !== undefined) { if (ch.d !== d) { undoLetters(bound); return null; } }
       else if (ch.L !== undefined) {
+        if (LMASK && d <= 30 && !((LMASK[ch.L] >>> d) & 1)) { undoLetters(bound); return null; }
         const cur = letterVal[ch.L];
         if (cur >= 0) { if (cur !== d) { undoLetters(bound); return null; } }
         else {
@@ -278,9 +280,19 @@ function search(cfg, opts) {
   let nodes = 0, solCount = 0, timedOut = false;
   const maxSol = opts.maxSolutions || Infinity;
   let firstSol = null, firstLetters = null;
-  const cand = opts.collect ? new Int32Array(N) : null;
-  const letterCand = opts.collect ? new Int32Array(26) : null;
+  const cand = opts.collect ? (opts.candInto || new Int32Array(N)) : null;
+  const letterCand = opts.collect ? (opts.letterInto || new Int32Array(26)) : null;
   const post = opts.onSolution || null;
+  // saturation: once the harvested unions equal the seed masks, nothing more
+  // can be learned from further solutions of this space
+  const sat = opts.saturate || null;
+  let satStop = false;
+  function satCheck() {
+    if (!sat) return false;
+    for (let j = 0; j < N; j++) if (cand[j] !== sat.candMask[j]) return false;
+    for (const L of sat.letters) if (letterCand[L] !== sat.letterMask[L]) return false;
+    return true;
+  }
   const V = S.V;
   // under ascending (unordered) clues, equal group sums can close into
   // different clue indices and reach the same solution twice - dedupe
@@ -370,12 +382,12 @@ function search(cfg, opts) {
       if (rec2 === null) continue;
       withCloses(closes, k + 1, body);
       S.undoClose(cl.clue, cl.usedRef, cl.vals, rec2);
-      if (timedOut || solCount >= maxSol) return;
+      if (timedOut || satStop || solCount >= maxSol) return;
     }
   }
 
   function rec(i) {
-    if (timedOut || solCount >= maxSol) return;
+    if (timedOut || satStop || solCount >= maxSol) return;
     if ((++nodes & 2047) === 0 && Date.now() > deadline) { timedOut = true; return; }
     if (i === N) {
       const closes = [];
@@ -398,6 +410,7 @@ function search(cfg, opts) {
         if (!firstSol) { firstSol = Int16Array.from(S.grid, k => k === 0 ? 0 : S.pal[k - 1]); firstLetters = Int8Array.from(S.letterVal); }
         if (cand) for (let j = 0; j < N; j++) cand[j] |= 1 << S.grid[j];
         if (letterCand) for (const L of S.letterIds) if (S.letterVal[L] >= 0 && S.letterVal[L] <= 30) letterCand[L] |= 1 << S.letterVal[L];
+        if (sat && !satStop && satCheck()) satStop = true;
         if (post) post(S.grid, S.letterVal);
       });
       return;
@@ -463,11 +476,11 @@ function search(cfg, opts) {
           S.rowRun[r] = svRRun; S.colRun[c] = svCRun; S.rowLen[r] = svRLen; S.colLen[c] = svCLen;
         }
       }
-      if (timedOut || solCount >= maxSol) return;
+      if (timedOut || satStop || solCount >= maxSol) return;
     }
   }
   rec(0);
-  return { solCount, nodes, timedOut, complete: !timedOut, firstSol, firstLetters, cand, letterCand,
+  return { solCount, nodes, timedOut, saturated: satStop, complete: !timedOut && !satStop, firstSol, firstLetters, cand, letterCand,
     letterIds: S.letterIds };
 }
 
@@ -510,6 +523,98 @@ function alienBases(cfg) {
   return out;
 }
 
+// true candidates, U-Bahn style: enumerate while cheap (stopping the moment
+// the harvest saturates the seed marks), then prove each leftover candidate
+// individually with a bounded satisfiability probe; unresolved candidates are
+// kept (a safe over-approximation) and reported
+function popcnt32(m) { let c = 0; while (m) { m &= m - 1; c++; } return c; }
+function candidatesPhased(cfg) {
+  const N = cfg.R * cfg.C;
+  const deadline = Date.now() + (cfg.timeLimit || 10000);
+  const bases = cfg.alien ? (cfg.bases || alienBases(cfg)) : [cfg.base || 10];
+  const sub = b => Object.assign({}, cfg, { alien: false, bases: undefined, base: b });
+  // seed masks: the space we enumerate within (defaults to everything)
+  let M = 0;
+  { const seen = new Set(); for (const v of (cfg.values && cfg.values.length ? cfg.values : Array.from({ length: cfg.D }, (_, d) => d + 1))) seen.add(v); M = seen.size; }
+  const fullMask = ((1 << (M + 1)) - 1);
+  const seedCand = cfg.candMask ? Int32Array.from(cfg.candMask) : new Int32Array(N).fill(fullMask);
+  const letterIds = [];
+  for (const list of (cfg.rowClues || []).concat(cfg.colClues || [])) if (list) for (const tok of list) for (const ch of String(tok).toUpperCase()) if (ch >= 'A' && ch <= 'Z' && !letterIds.includes(ch.charCodeAt(0) - 65)) letterIds.push(ch.charCodeAt(0) - 65);
+  const maxDigitBits = (() => { const mb = Math.max(...bases); return mb >= 31 ? 0x7FFFFFFF : (1 << mb) - 1; })();
+  const seedLetter = new Int32Array(26);
+  for (const L of letterIds) seedLetter[L] = cfg.letterMask ? cfg.letterMask[L] : (cfg.alien ? maxDigitBits : 1023);
+  const cand = new Int32Array(N), letterCand = new Int32Array(26);
+  let solCount = 0, nodes = 0, timedOut = false, saturated = false;
+  let allComplete = true;
+  const baseState = new Map();   // base -> 'sat' | 'unsat' | 'open'
+  const probeCfg = Object.assign({}, cfg, { letterMask: Array.from(seedLetter) });
+
+  // ---- phase 1: enumeration per base, stopping on saturation ----
+  for (const b of bases) {
+    if (Date.now() >= deadline) { allComplete = false; baseState.set(b, 'open'); continue; }
+    const r = search(Object.assign(sub(b), { letterMask: probeCfg.letterMask }), {
+      timeLimit: Math.max(1, deadline - Date.now()), collect: true,
+      maxSolutions: saturated ? 1 : (cfg.maxSolutions || 100000),
+      candInto: cand, letterInto: letterCand,
+      saturate: { candMask: seedCand, letterMask: seedLetter, letters: letterIds },
+    });
+    nodes += r.nodes; timedOut = timedOut || r.timedOut;
+    solCount += r.solCount;
+    if (r.saturated) saturated = true;
+    baseState.set(b, r.solCount > 0 ? 'sat' : (r.complete ? 'unsat' : 'open'));
+    if (!r.complete && !r.saturated) allComplete = false;
+    if (r.saturated) allComplete = false;   // the count is a floor once we stop early
+  }
+
+  // ---- phase 2: per-candidate probes for everything not yet witnessed ----
+  // pointless without a single witnessed solution: if the whole enumeration
+  // could not find one, individual restrictions will not find one faster -
+  // everything unwitnessed is simply reported unresolved
+  let unresolved = 0;
+  if (!allComplete && !saturated && solCount === 0) {
+    for (let i = 0; i < N; i++) { unresolved += popcnt32(seedCand[i] & ~cand[i]); cand[i] |= seedCand[i]; }
+    for (const L of letterIds) { unresolved += popcnt32(seedLetter[L] & ~letterCand[L]); letterCand[L] |= seedLetter[L]; }
+  } else if (!allComplete && !saturated) {
+    const probes = [];
+    // most-constrained first: witnesses arrive sooner and each harvest of a
+    // full solution proves many other candidates for free
+    for (let i = 0; i < N; i++) for (let v = 0; v <= M; v++) if (((seedCand[i] >>> v) & 1) && !((cand[i] >>> v) & 1)) probes.push({ kind: 'cell', i, v, w: popcnt32(seedCand[i]) });
+    for (const L of letterIds) for (let d = 0; d <= 30; d++) if (((seedLetter[L] >>> d) & 1) && !((letterCand[L] >>> d) & 1)) probes.push({ kind: 'letter', L, d, w: popcnt32(seedLetter[L]) });
+    probes.sort((a, b) => a.w - b.w);
+    const openBases = bases.filter(b => baseState.get(b) !== 'unsat');
+    for (let q = 0; q < probes.length; q++) {
+      const left = deadline - Date.now();
+      if (left <= 0) { unresolved += probes.length - q; for (let q2 = q; q2 < probes.length; q2++) keep(probes[q2]); break; }
+      const p = probes[q];
+      // already witnessed by a probe harvest in the meantime?
+      if (p.kind === 'cell' ? ((cand[p.i] >>> p.v) & 1) : ((letterCand[p.L] >>> p.d) & 1)) continue;
+      const slice = Math.max(50, Math.min(2000, left / (probes.length - q + 1) * 2));
+      let witnessed = false, provenOut = true;
+      for (const b of openBases) {
+        if (p.kind === 'cell' ? ((cand[p.i] >>> p.v) & 1) : ((letterCand[p.L] >>> p.d) & 1)) { witnessed = true; break; }
+        const cm = Array.from(seedCand);
+        const lm = Array.from(probeCfg.letterMask);
+        if (p.kind === 'cell') cm[p.i] = 1 << p.v; else lm[p.L] = 1 << p.d;
+        const r = search(Object.assign(sub(b), { candMask: cm, letterMask: lm }), {
+          timeLimit: Math.max(1, Math.min(slice, deadline - Date.now())), collect: true, maxSolutions: 1,
+          candInto: cand, letterInto: letterCand,   // a witness proves many candidates at once
+        });
+        nodes += r.nodes;
+        if (r.solCount > 0) { witnessed = true; solCount += r.solCount; if (baseState.get(b) !== 'sat') baseState.set(b, 'sat'); break; }
+        if (!r.complete) provenOut = false;
+      }
+      if (!witnessed && !provenOut) { unresolved++; keep(p); }
+      // !witnessed && provenOut: truly impossible - the bit stays off
+    }
+    function keep(p) { if (p.kind === 'cell') cand[p.i] |= 1 << p.v; else letterCand[p.L] |= 1 << p.d; }
+  }
+  const okBases = bases.filter(b => baseState.get(b) === 'sat');
+  const openBaseList = bases.filter(b => baseState.get(b) === 'open');
+  return { solCount, bases: okBases.concat(openBaseList), nodes,
+    complete: allComplete, saturated, unresolved, timedOut,
+    cand: Array.from(cand), letterCand: Array.from(letterCand), letterIds };
+}
+
 function runAny(cfg) {
   if (cfg.alien) {
     const bases = cfg.bases || alienBases(cfg);
@@ -517,12 +622,14 @@ function runAny(cfg) {
     let nodes = 0, timedOut = false;
     const sub = b => Object.assign({}, cfg, { alien: false, bases: undefined, base: b, timeLimit: Math.max(1, deadline - Date.now()) });
     if (cfg.mode === 'solve') {
+      let allComplete = true;
       for (const b of bases) {
         const r = search(sub(b), { timeLimit: Math.max(1, deadline - Date.now()), maxSolutions: 1 });
         nodes += r.nodes; timedOut = timedOut || r.timedOut;
-        if (r.firstSol) return { firstSol: Array.from(r.firstSol), firstLetters: Array.from(r.firstLetters), letterIds: r.letterIds, base: b, nodes, timedOut };
+        if (!r.complete) allComplete = false;
+        if (r.firstSol) return { firstSol: Array.from(r.firstSol), firstLetters: Array.from(r.firstLetters), letterIds: r.letterIds, base: b, nodes, timedOut, complete: true };
       }
-      return { firstSol: null, firstLetters: null, letterIds: [], nodes, timedOut };
+      return { firstSol: null, firstLetters: null, letterIds: [], nodes, timedOut, complete: allComplete };
     }
     if (cfg.mode === 'count') {
       let solCount = 0; const perBase = {};
@@ -535,23 +642,7 @@ function runAny(cfg) {
       }
       return { solCount, perBase, bases: Object.keys(perBase).map(Number), nodes, complete, timedOut };
     }
-    if (cfg.mode === 'candidates') {
-      const N = cfg.R * cfg.C;
-      const cand = new Int32Array(N), letterCand = new Int32Array(26);
-      let solCount = 0, complete = true, letterIds = [];
-      const okBases = [];
-      for (const b of bases) {
-        const r = search(sub(b), { timeLimit: Math.max(1, deadline - Date.now()), collect: true, maxSolutions: cfg.maxSolutions || 100000 });
-        nodes += r.nodes; timedOut = timedOut || r.timedOut; complete = complete && r.complete;
-        solCount += r.solCount;
-        if (r.solCount) okBases.push(b);
-        if (r.cand) for (let i = 0; i < N; i++) cand[i] |= r.cand[i];
-        if (r.letterCand) for (let L = 0; L < 26; L++) letterCand[L] |= r.letterCand[L];
-        for (const L of r.letterIds) if (!letterIds.includes(L)) letterIds.push(L);
-      }
-      return { solCount, bases: okBases, nodes, complete, timedOut,
-        cand: Array.from(cand), letterCand: Array.from(letterCand), letterIds };
-    }
+    if (cfg.mode === 'candidates') return candidatesPhased(cfg);
     return { error: 'unknown mode' };
   }
   if (cfg.mode === 'solve') {
@@ -564,13 +655,7 @@ function runAny(cfg) {
     const r = search(cfg, { timeLimit: cfg.timeLimit, maxSolutions: cfg.maxSolutions || 10000 });
     return { solCount: r.solCount, nodes: r.nodes, complete: r.complete, timedOut: r.timedOut };
   }
-  if (cfg.mode === 'candidates') {
-    const r = search(cfg, { timeLimit: cfg.timeLimit, collect: true, maxSolutions: cfg.maxSolutions || 100000 });
-    return { solCount: r.solCount, nodes: r.nodes, complete: r.complete, timedOut: r.timedOut,
-      cand: r.cand ? Array.from(r.cand) : null,
-      letterCand: r.letterCand ? Array.from(r.letterCand) : null,
-      letterIds: r.letterIds };
-  }
+  if (cfg.mode === 'candidates') return candidatesPhased(cfg);
   return { error: 'unknown mode' };
 }
 
@@ -578,7 +663,7 @@ if (typeof self !== 'undefined' && typeof postMessage === 'function') {
   self.onmessage = function (e) { postMessage(runAny(e.data)); };
 }
 if (typeof module !== 'undefined' && module.exports !== undefined) {
-  module.exports = { runAny, search, makeSolver, compileClue };
+  module.exports = { runAny, search, makeSolver, compileClue, alienBases };
 }
 }
 if (typeof module !== 'undefined') {

@@ -544,5 +544,40 @@ for (let t = 0; t < 8; t++) {
   const eng = E.runAny({ R, C, D, variants: { blankReach: true }, rowClues, colClues, mode: 'count', timeLimit: 10000, maxSolutions: 1e9 });
   if (!eng.complete || eng.solCount !== bruteN) { console.log('BLANKREACH FAIL: brute=' + bruteN, 'engine=' + eng.solCount); fails++; }
 }
+{
+  // phased true candidates must equal exhaustive per-base enumeration when
+  // both complete (masks, letters, count), plain and seeded
+  let done = 0, bad = 0;
+  const t0 = Date.now();
+  while (done < 6 && Date.now() - t0 < 120000) {
+    const R = 4, C = 4, D = 4 + ((Math.random() * 2) | 0);
+    const base = 3 + ((Math.random() * 6) | 0);
+    const g = new Int8Array(R * C);
+    { const rm = new Int32Array(R), cm = new Int32Array(C);
+      for (let i = 0; i < R * C; i++) { const r = (i / C) | 0, c = i % C; const opts = [0, 0]; for (let v = 1; v <= D; v++) if (!(rm[r] & (1 << v)) && !(cm[c] & (1 << v))) opts.push(v); const v = opts[(Math.random() * opts.length) | 0]; g[i] = v; if (v) { rm[r] |= 1 << v; cm[c] |= 1 << v; } } }
+    const numeral = v => { const ds = []; let x = v; while (x > 0) { ds.unshift(x % base); x = (x / base) | 0; } return ds.join(''); };
+    const mk = (n, len, get) => { const out = []; for (let a = 0; a < n; a++) { const cl = []; let run = 0; for (let bx = 0; bx < len; bx++) { const v = get(a, bx); if (v) run += v; else if (run) { cl.push(numeral(run)); run = 0; } } if (run) cl.push(numeral(run)); out.push(Math.random() < 0.2 ? null : cl); } return out; };
+    const cfg = { R, C, D, alien: true, rowClues: mk(R, C, (r, c) => g[r * C + c]), colClues: mk(C, R, (c, r) => g[r * C + c]) };
+    const phased = E.runAny({ ...cfg, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+    if (!phased.complete) continue;
+    const N = R * C;
+    const refCand = new Int32Array(N), refLet = new Int32Array(26);
+    let refCount = 0, refOk = true;
+    for (const b of E.alienBases(cfg)) {
+      const r = E.runAny({ ...cfg, bases: [b], mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
+      if (!r.complete) { refOk = false; break; }
+      refCount += r.solCount;
+      for (let i = 0; i < N; i++) refCand[i] |= r.cand[i];
+      for (let L = 0; L < 26; L++) refLet[L] |= r.letterCand[L];
+    }
+    if (!refOk) continue;
+    done++;
+    for (let i = 0; i < N; i++) if (refCand[i] !== phased.cand[i]) bad++;
+    for (let L = 0; L < 26; L++) if (refLet[L] !== phased.letterCand[L]) bad++;
+    if (refCount !== phased.solCount) bad++;
+  }
+  if (bad || done < 3) { console.log('FAIL: phased TC equivalence (' + bad + ' mismatches over ' + done + ' puzzles)'); fails++; }
+  else console.log('ok: phased true candidates equal exhaustive enumeration on ' + done + ' random alien puzzles');
+}
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS ENGINE TESTS PASSED');
 process.exit(fails ? 1 : 0);

@@ -67,7 +67,7 @@ if (RUN_SCENARIOS) {
   let mv, k = 0, sawPairs = false, sawDisjoint = false, sawSpan = false, trials = 0;
   while (k++ < 1500 && (mv = S.takeSumsStep(st, clues))) {
     if (mv.rule === 'Case analysis') trials++;
-    if (mv.rule === 'Letter pairs') sawPairs = true;
+    if (mv.rule === 'Letter subsets') sawPairs = true;
     if (mv.rule === 'Disjoint sums') sawDisjoint = true;
     if (mv.rule === 'Span algebra') sawSpan = true;
     if (/trial/i.test(mv.rule)) trials++;

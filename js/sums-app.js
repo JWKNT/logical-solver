@@ -75,6 +75,14 @@ let stepBusy = false;
 let stepStale = true;   // main-thread st changed: the worker must reload it before stepping
 let stFromEngine = false;   // st holds Solve / True-candidates results worth continuing from
 function markStepStale() { stepStale = true; }
+// Solve / True candidates run within the current marks: the ladder's progress
+// (and the user's own pencil work) massively narrows the engine's search.
+// A pristine state contributes nothing, so this is always safe to pass.
+function seedFromMarks() {
+  const seed = { candMask: Array.from(st.cand), letterMask: Array.from(st.letterCand) };
+  if (st.alien && st.baseCand) seed.bases = [...st.baseCand];
+  return seed;
+}
 function stepWorkerLoadMsg() {
   return { cmd: 'load', R, C, D, values: VALUES || undefined, kd: st.kd, alien: st.alien,
     variants: st.variants, cand: Array.from(st.cand), letterCand: Array.from(st.letterCand),
@@ -353,8 +361,13 @@ function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 $('sumsBuild').onclick = () => buildGrid(true);
 $('sumsSolve').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, (res, ms) => {
-    if (!res.firstSol) { status(res.timedOut ? '<span class="warn">No solution found within the time limit.</span>' : '<span class="bad">No solution exists.</span>'); return; }
+  runWorker(Object.assign({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'solve', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000 }, seedFromMarks()), (res, ms) => {
+    if (!res.firstSol) {
+      status(res.timedOut
+        ? '<span class="warn">No solution found within the time limit.</span> The search runs within your current marks \u2014 taking more steps first makes it much faster.'
+        : '<span class="bad">No solution exists within the current marks.</span> Reset steps to search the whole puzzle, or check the clues.');
+      return;
+    }
     st = sums.makeSumsState(R, C, D, VALUES || undefined);
     st.alien = $('sumsAlien').checked;
     if (st.alien && res.base) st.baseCand = new Set([res.base]);
@@ -370,7 +383,7 @@ $('sumsSolve').onclick = () => {
 };
 $('sumsCands').onclick = () => {
   clues = readClues();
-  runWorker({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, (res, ms) => {
+  runWorker(Object.assign({ R, C, D, kd: $('sumsKD').checked, alien: $('sumsAlien').checked, variants: readVariants(), values: VALUES || undefined, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: (parseInt($('sumsTime').value, 10) || 10) * 1000, maxSolutions: 1e9 }, seedFromMarks()), (res, ms) => {
     if (!res.cand || res.solCount === 0) { status(res.timedOut ? '<span class="warn">Timed out before finding solutions.</span>' : '<span class="bad">No solution exists.</span>'); return; }
     if (!res.complete) {
       status('<span class="warn">Search truncated</span> after ' + res.solCount.toLocaleString() + ' solutions (' + ms + ' ms) \u2014 the grid is too underconstrained for exact candidates, so no marks were drawn (a partial union would be misleading). Add clues or raise the time limit.');
@@ -385,7 +398,12 @@ $('sumsCands').onclick = () => {
     markStepStale();
     renderCells();
     renderLetters(null, st.alien && res.bases ? res.bases : null);
-    status('<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.' + (st.alien && res.bases ? ' Feasible base' + (res.bases.length === 1 ? '' : 's') + ': <b>' + res.bases.join(', ') + '</b>.' : ''));
+    let countTxt;
+    if (res.complete) countTxt = '<span class="good">True candidates</span> over <b>' + res.solCount.toLocaleString() + '</b> solution' + (res.solCount === 1 ? '' : 's') + ' (exact)';
+    else if (res.saturated) countTxt = '<span class="good">True candidates</span>: the current marks are already tight \u2014 every mark appears in some solution (<b>\u2265' + res.solCount.toLocaleString() + '</b> solutions witnessed, enumeration stopped early)';
+    else if (res.solCount > 0) countTxt = '<span class="good">True candidates</span> over <b>\u2265' + res.solCount.toLocaleString() + '</b> solutions' + (res.unresolved ? ' \u2014 <span class="warn">' + res.unresolved.toLocaleString() + ' candidates unproven either way (kept)</span>' : '');
+    else countTxt = '<span class="warn">No solution found within the time limit</span> \u2014 all current marks kept as unproven; raise the time limit or take more steps first';
+    status(countTxt + ' \u2014 ' + ms + ' ms. Cells show every digit (and \u00b7 = possibly blank) that appears in some solution.' + (st.alien && res.bases && res.bases.length ? ' Feasible base' + (res.bases.length === 1 ? '' : 's') + ': <b>' + res.bases.join(', ') + '</b>.' : ''));
   }, 'Enumerating solutions');
 };
 $('sumsStep').onclick = () => {

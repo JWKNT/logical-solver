@@ -753,8 +753,12 @@ function activeLetterIds(clues) {
 function ruleLetterPairs(st, clues) {
   const act = activeLetterIds(clues);
   if (act.length < 3) return null;
-  const idxs = act.filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 3);
-  for (let size = 2; size <= 3; size++) {
+  // naked subsets of any size, sudoku-style: k letters confined to the same
+  // k digits use them all up, so those digits leave every other letter
+  // (pairs, triples, ... up to a pointing sextuple and beyond)
+  const idxs = act.filter(L => popc(st.letterCand[L]) >= 2).sort((a, b) => popc(st.letterCand[a]) - popc(st.letterCand[b]));
+  const maxSize = Math.min(act.length - 1, 10);
+  for (let size = 2; size <= maxSize; size++) {
     const pick = [];
     function rec(from, union) {
       if (pick.length === size) {
@@ -766,7 +770,7 @@ function ruleLetterPairs(st, clues) {
       }
       for (let q = from; q < idxs.length; q++) {
         const L = idxs[q];
-        if ((st.letterCand[L] & ~union) && popc(st.letterCand[L] | union) > size) continue;
+        if (popc(st.letterCand[L] | union) > size) continue;
         pick.push(L);
         const r2 = rec(q + 1, union | st.letterCand[L]);
         pick.pop();
@@ -778,8 +782,9 @@ function ruleLetterPairs(st, clues) {
     if (found) {
       const names = found.members.map(L => String.fromCharCode(65 + L));
       const digs = digitsOf2(found.union);
-      return { rule: 'Letter pairs', cells: [],
-        text: names.join(', ') + ' are confined to the digits ' + digs.join(', ') + ' between them \u2014 since every letter takes a different digit, ' + (size === 2 ? 'this pair uses both' : 'this triple uses all three') + ', and ' + found.hits.map(L => String.fromCharCode(65 + L)).join(', ') + ' cannot be ' + (digs.length === 2 ? 'either' : 'any of them') + '.',
+      const nWord = { 2: 'pair uses both', 3: 'triple uses all three', 4: 'quadruple uses all four', 5: 'quintuple uses all five', 6: 'sextuple uses all six' }[size] || ('set of ' + size + ' uses all ' + size);
+      return { rule: 'Letter subsets', cells: [],
+        text: names.join(', ') + ' are confined to the digits ' + digs.join(', ') + ' between them \u2014 since every letter takes a different digit, this ' + nWord + ', and ' + found.hits.map(L => String.fromCharCode(65 + L)).join(', ') + ' cannot be ' + (digs.length === 2 ? 'either' : 'any of them') + '.',
         apply() { for (const L of found.hits) filterLetter(st, L, ~found.union); } };
     }
   }
@@ -2484,7 +2489,7 @@ const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
   { name: 'Sum cap', desc: 'No group can exceed the clue\u2019s largest possible sum (under ascending clues the last token caps every group) \u2014 a committed run near the cap sheds big values from the cells that would join it.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
-  { name: 'Letter pairs', desc: 'Two (or three) crypto letters confined to the same two (or three) digits use them all up \u2014 those digits leave every other letter (naked pairs, sudoku-style).' },
+  { name: 'Letter subsets', desc: 'Any k crypto letters confined to the same k digits use them all up \u2014 those digits leave every other letter (naked pairs, triples, \u2026 sextuples, sudoku-style).' },
   { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k separate digit sets with the same sum (each value within its per-line multiplicity) \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
   { name: 'Disjoint sums', desc: 'All of a line\u2019s groups need pairwise-disjoint sets of the digits 1\u2026D, fitting in the line with gaps \u2014 a group sum no joint assignment can realise alongside the others is impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
