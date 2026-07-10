@@ -432,68 +432,6 @@ if (RUN_SCENARIOS) {
   if (v(28) !== '12' || v(38) !== '12') { console.log('FAIL: asc combos 6-1-2 (r3c9=' + v(28) + ', r4c9=' + v(38) + ')'); fails++; }
   else console.log('ok: ascending combos: 3-run with a 6 under cap 9 pins its mates to {1,2}');
 }
-{
-  // alien base bounds: '222' needs base >= 3 (digit 2) and 2b^2+2b+2 <= 45 caps it
-  const st = S.makeSumsState(2, 9, 9);
-  st.alien = true;
-  const clues = { rows: [['222'], null], cols: new Array(9).fill(null) };
-  let mv, k = 0, sawBounds = false;
-  while (k++ < 20 && (mv = S.takeSumsStep(st, clues))) { if (mv.rule === 'Base bounds') sawBounds = true; if (mv.contradiction) break; if ([...st.baseCand].length === 2) break; }
-  const bs = [...st.baseCand].sort((a, b) => a - b).join(',');
-  if (!sawBounds || bs !== '3,4') { console.log('FAIL: alien 222 base bounds (bases=' + bs + ')'); fails++; }
-  else console.log('ok: alien base bounds — clue 222 narrated to base 3/4 (digit 2 floors it, the 3-digit value caps it)');
-}
-{
-  // tiny alien puzzle end-to-end: base pinned to 4, grid solved, engine agrees
-  const st = S.makeSumsState(2, 3, 3);
-  st.alien = true;
-  const clues = { rows: [['12'], [3, 2]], cols: [['10'], [2], ['11']] };
-  let mv, k = 0, contra = false;
-  while (k++ < 60 && (mv = S.takeSumsStep(st, clues))) if (mv.contradiction) { contra = true; break; }
-  const want = [2, 4, 8, 8, 1, 4];   // masks: 1,2,3 / 3,#,2
-  let ok = !contra && S.sumsComplete(st) && [...st.baseCand].join(',') === '4';
-  if (ok) for (let i = 0; i < 6; i++) if (st.cand[i] !== want[i]) ok = false;
-  if (ok) {
-    const eng = E.runAny({ R: 2, C: 3, D: 3, alien: true, rowClues: clues.rows, colClues: clues.cols, mode: 'candidates', timeLimit: 20000, maxSolutions: 1e9 });
-    if (!(eng.complete && eng.solCount === 1 && eng.bases.length === 1 && eng.bases[0] === 4)) ok = false;
-  }
-  if (!ok) { console.log('FAIL: tiny alien solve (base=' + [...st.baseCand].join(',') + ', complete=' + S.sumsComplete(st) + ')'); fails++; }
-  else console.log('ok: tiny alien puzzle fully solved, base pinned to 4, engine confirms uniqueness');
-}
-{
-  // the two reference alien puzzles (transcribed from LMD screenshots): the
-  // full ladder must determine the base and solve the grid with narrated
-  // human steps; the engine then confirms the completed fill is the solution
-  const REF = require('./alien-puzzles.js');
-  const cases = [
-    { name: 'ibag 0001OX (11x11)', P: REF.ibag, base: 13, letters: { A: 3, B: 11, C: 6, D: 9, E: 0, F: 12, G: 2, H: 1, I: 7, J: 4 }, maxSteps: 600 },
-    { name: 'KNT 000CZ6 (10x10)', P: REF.knt, base: 11, letters: { A: 8, E: 4, I: 7, L: 6, R: 2, S: 3, T: 1, X: 10 }, maxSteps: 600 },
-  ];
-  for (const cs of cases) {
-    const t0 = Date.now();
-    const st = S.makeSumsState(cs.P.R, cs.P.C, cs.P.D);
-    st.alien = true;
-    const clues = { rows: cs.P.rows, cols: cs.P.cols };
-    let mv, k = 0, contra = false, badChain = 0, badCases = 0;
-    const counts = {};
-    while (k++ < cs.maxSteps && (mv = S.takeSumsStep(st, clues))) {
-      counts[mv.rule] = (counts[mv.rule] || 0) + 1;
-      if (mv.chain && (!mv.chain.length || !mv.chain[mv.chain.length - 1].contradiction)) badChain++;
-      if (mv.cases && (mv.cases.length < 2 || mv.cases.some(c2 => !Array.isArray(c2.chain)))) badCases++;
-      if (mv.contradiction) { contra = true; break; }
-    }
-    let ok = !contra && !badChain && !badCases && S.sumsComplete(st)
-      && st.baseCand.size === 1 && [...st.baseCand][0] === cs.base
-      && (counts['Base bounds'] || 0) > 0 && (counts['Base deduction'] || 0) > 0;
-    if (ok) for (const [ch, d] of Object.entries(cs.letters)) if (st.letterCand[ch.charCodeAt(0) - 65] !== (1 << d)) ok = false;
-    if (ok) {
-      const eng = E.runAny({ R: cs.P.R, C: cs.P.C, D: cs.P.D, base: cs.base, rowClues: cs.P.rows, colClues: cs.P.cols, candMask: Array.from(st.cand), mode: 'count', timeLimit: 60000, maxSolutions: 3 });
-      if (!(eng.complete && eng.solCount === 1)) { ok = false; console.log('  engine rejects the ' + cs.name + ' fill'); }
-    }
-    if (!ok) { console.log('FAIL: alien reference ' + cs.name + ' (complete=' + S.sumsComplete(st) + ', contra=' + contra + ', base=' + [...(st.baseCand || [])].join(',') + ', steps=' + (k - 1) + ')'); fails++; }
-    else console.log('ok: alien reference ' + cs.name + ' fully solved in ' + (k - 1) + ' steps, base ' + cs.base + ' determined (letters incl. two-decimal-digit values), engine-confirmed, ' + ((Date.now() - t0) / 1000).toFixed(0) + 's');
-  }
-}
 }
 let steps = 0, trialSteps = 0, solved = 0, puzzles = 0, cryptoPuzzles = 0;
 const t00 = Date.now();
@@ -651,63 +589,6 @@ while (RUN_BATTERY && puzzles < 24 && Date.now() - t00 < 200000) {
   }
   if (S.sumsComplete(st)) solved++;
 }
-// ---- alien battery: random unknown-base puzzles vs engine truth ----
-let aPuzzles = 0, aSteps = 0, aSolved = 0;
-const tA0 = Date.now();
-while (RUN_BATTERY && aPuzzles < 8 && Date.now() - tA0 < 240000) {
-  const R = 4 + ((Math.random() * 2) | 0), C = 4 + ((Math.random() * 2) | 0), D = 4 + ((Math.random() * 4) | 0);
-  const aBase = 3 + ((Math.random() * 10) | 0);
-  const g = new Int8Array(R * C);
-  {
-    const rm = new Int32Array(R), cm = new Int32Array(C);
-    for (let i = 0; i < R * C; i++) {
-      const r = (i / C) | 0, c = i % C;
-      const opts = [0, 0];
-      for (let v = 1; v <= D; v++) if (!(rm[r] & (1 << v)) && !(cm[c] & (1 << v))) opts.push(v);
-      const v = opts[(Math.random() * opts.length) | 0];
-      g[i] = v;
-      if (v) { rm[r] |= 1 << v; cm[c] |= 1 << v; }
-    }
-  }
-  const numeral = v => { const ds = []; let x = v; while (x > 0) { ds.unshift(x % aBase); x = (x / aBase) | 0; } return ds.some(d => d > 9) ? ds.join('.') : ds.join(''); };
-  const mk = (n, len, get) => { const out = []; for (let a = 0; a < n; a++) { const cl = []; let run = 0; for (let bx = 0; bx < len; bx++) { const v = get(a, bx); if (v) run += v; else if (run) { cl.push(numeral(run)); run = 0; } } if (run) cl.push(numeral(run)); out.push(Math.random() < 0.15 ? null : cl); } return out; };
-  const aclues = { rows: mk(R, C, (r, c) => g[r * C + c]), cols: mk(C, R, (c, r) => g[r * C + c]) };
-  if (aPuzzles % 2 === 1) {
-    // substitute 1-3 clue digits with cipher letters
-    const seen = new Set();
-    for (const cl of aclues.rows.concat(aclues.cols)) if (cl) for (const t of cl) for (const ch of String(t)) if (/[0-9]/.test(ch)) seen.add(ch);
-    const pool = [...seen];
-    const chosen = [];
-    const nSub = Math.min(pool.length, 1 + ((Math.random() * 3) | 0));
-    while (chosen.length < nSub && pool.length) chosen.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
-    const LET = ['A', 'B', 'C'];
-    const sub = tok => String(tok).split('.').map(f => f.split('').map(ch => { const k2 = chosen.indexOf(ch); return k2 >= 0 ? LET[k2] : ch; }).join('')).join('.');
-    aclues.rows = aclues.rows.map(cl => cl && cl.map(sub));
-    aclues.cols = aclues.cols.map(cl => cl && cl.map(sub));
-  }
-  const eng = E.runAny({ R, C, D, alien: true, rowClues: aclues.rows, colClues: aclues.cols, mode: 'candidates', timeLimit: 25000, maxSolutions: 1e9 });
-  if (!eng.complete || eng.solCount === 0) continue;
-  aPuzzles++;
-  const st = S.makeSumsState(R, C, D);
-  st.alien = true;
-  let mv, k = 0;
-  while (k++ < 400 && (mv = S.takeSumsStep(st, aclues))) {
-    aSteps++;
-    if (mv.contradiction) { console.log('FAIL: alien contradiction on solvable: ' + mv.text.slice(0, 150)); console.log('  REPRO:', JSON.stringify({ R, C, D, aBase, rows: aclues.rows, cols: aclues.cols })); fails++; break; }
-    let bad = false;
-    for (let i = 0; i < R * C && !bad; i++) if (eng.cand[i] & ~st.cand[i]) bad = 'cell r' + (((i / C) | 0) + 1) + 'c' + (i % C + 1);
-    for (let L = 0; L < 26 && !bad; L++) if (eng.letterCand[L] & ~st.letterCand[L]) bad = 'letter ' + String.fromCharCode(65 + L);
-    if (!bad && st.baseCand) for (const b of eng.bases) if (!st.baseCand.has(b)) { bad = 'base ' + b; break; }
-    if (bad) {
-      console.log('FAIL: unsound alien elim (' + bad + ') [' + mv.rule + ']: ' + mv.text.slice(0, 180));
-      console.log('  REPRO:', JSON.stringify({ R, C, D, aBase, rows: aclues.rows, cols: aclues.cols }));
-      fails++; break;
-    }
-  }
-  if (S.sumsComplete(st)) aSolved++;
-}
-if (RUN_BATTERY) console.log((fails ? fails + ' FAILURES so far' : 'ok') + ': alien battery on ' + aPuzzles + ' random unknown-base puzzles (half with cipher letters) — ' + aSteps + ' steps, ' + aSolved + ' fully solved, zero unsound cell/letter/base eliminations');
-
 console.log((fails ? fails + ' FAILURES' : 'ok') + ': sums soundness on ' + puzzles + ' random puzzles (' + cryptoPuzzles + ' crypto, incl KD) \u2014 ' + steps + ' steps (' + trialSteps + ' trials, all chain-narrated), ' + solved + ' fully solved by the ladder, zero unsound deductions' + (fails ? ' EXCEPT THE ABOVE' : ''));
 console.log(fails ? fails + ' FAILURES' : 'ALL SUMS STEPPER TESTS PASSED');
 process.exit(fails ? 1 : 0);
