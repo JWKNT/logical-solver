@@ -152,13 +152,13 @@ function buildGrid(keepClues) {
   }
   html += '</table>';
   wrap.innerHTML = html;
-  for (const id in saved) { const el = $(id); if (el) { el.value = saved[id]; el.dataset.orig = saved[id]; } }
+  for (const id in saved) { const el = $(id); if (el) { el.value = saved[id]; el.dataset.orig = saved[id]; fitSlot(el); } }
   document.querySelectorAll('#sumsGridWrap .sums-slots input').forEach(el => {
     el.addEventListener('focus', () => slotFocus(el));
     el.addEventListener('blur', () => slotBlur(el));
     // typing is the single source of truth: the canonical clue follows every
     // keystroke, so a substituted display can never be mistaken for input
-    el.addEventListener('input', () => { el.dataset.orig = el.value; el.classList.remove('resolved'); });
+    el.addEventListener('input', () => { el.dataset.orig = el.value; el.classList.remove('resolved'); fitSlot(el); });
   });
   markStepStale();
   renderCells();
@@ -219,6 +219,7 @@ function refreshClueDisplays() {
       if (arr && arr[tokIdx] !== null && arr[tokIdx] !== undefined && pinnedBase) {
         el.value = pinnedBase === 10 ? String(arr[tokIdx]) : sums.numeralOf(arr[tokIdx], pinnedBase);
         el.classList.add('resolved');
+        fitSlot(el);
         return;
       }
     }
@@ -232,9 +233,18 @@ function refreshClueDisplays() {
     });
     if (subbed) { el.value = anyWide ? outF.join('.') : outF.join(''); el.classList.add('resolved'); }
     else { el.value = orig; el.classList.remove('resolved'); }
+    fitSlot(el);
   });
 }
-function slotFocus(el) { if (el.dataset.orig !== undefined) { el.value = el.dataset.orig; el.classList.remove('resolved'); } }
+// long alien tokens ('11.3', a substituted '1.10') shrink to stay inside the box
+function fitSlot(el) {
+  const n = (el.value || '').length;
+  el.classList.toggle('fit4', n >= 4 && n < 6);
+  el.classList.toggle('fit6', n >= 6 && n < 8);
+  el.classList.toggle('fit8', n >= 8);
+  el.title = n >= 4 ? el.value : '';
+}
+function slotFocus(el) { if (el.dataset.orig !== undefined) { el.value = el.dataset.orig; el.classList.remove('resolved'); fitSlot(el); } }
 function slotBlur(el) { el.dataset.orig = el.value; refreshClueDisplays(); }
 
 function activeLetters() {
@@ -257,25 +267,22 @@ function renderLetters(engineCand, engineBases) {
     html += '<div class="crypto-box"><div class="crypto-box-letter">base</div>';
     if (bs.length === 1) html += '<div class="crypto-box-solved">' + bs[0] + '</div>';
     else if (!bs.length) html += '<div class="crypto-box-solved">?</div>';
-    else {
-      html += '<div class="crypto-box-marks">';
-      const lo = bs[0], hi = bs[bs.length - 1];
-      for (let b = lo; b <= hi; b++) html += '<span class="' + (bs.includes(b) ? '' : 'off') + '">' + b + '</span>';
-      html += '</div>';
-    }
+    else if (bs.length > 10) html += '<div class="crypto-box-many">' + bs.length + ' possible</div>';
+    else html += '<div class="crypto-box-marks">' + bs.map(b => '<span>' + b + '</span>').join('') + '</div>';
     html += '</div>';
   }
-  const maxD = alien && st.baseCand && st.baseCand.size ? Math.max(...st.baseCand) - 1 : 9;
   for (const L of letters) {
     const mask = engineCand ? engineCand[L] : st.letterCand[L];
     const ds = sums.digitsOf2(mask);
     html += '<div class="crypto-box"><div class="crypto-box-letter">' + String.fromCharCode(65 + L) + '</div>';
     if (ds.length === 1) html += '<div class="crypto-box-solved">' + ds[0] + '</div>';
-    else {
+    else if (!alien) {
+      // classic decimal cipher: the familiar fixed 0-9 grid, gaps hidden
       html += '<div class="crypto-box-marks">';
-      for (let d = 0; d <= maxD; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
+      for (let d = 0; d <= 9; d++) html += '<span class="' + ((mask & (1 << d)) ? '' : 'off') + '">' + d + '</span>';
       html += '</div>';
-    }
+    } else if (ds.length > 10) html += '<div class="crypto-box-many">' + ds.length + ' possible</div>';
+    else html += '<div class="crypto-box-marks">' + ds.map(d => '<span>' + d + '</span>').join('') + '</div>';
     html += '</div>';
   }
   box.innerHTML = html + '</div>';

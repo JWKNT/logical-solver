@@ -509,6 +509,14 @@
   font-family: "Menlo", monospace; font-size: 11px; color: #555; line-height: 1.6;
 }
 .crypto-box-marks span.off { visibility: hidden; }
+.crypto-box-many {
+  font-family: "Menlo", monospace; font-size: 10.5px; color: #999;
+  padding: 12px 0 11px; font-style: italic;
+}
+/* long clue tokens (alien numerals like 11.3) shrink to fit their box */
+.sums-slots input.fit4 { font-size: 9.5px; letter-spacing: -0.4px; padding: 1px 0; }
+.sums-slots input.fit6 { font-size: 7.5px; letter-spacing: -0.5px; padding: 2px 0; }
+.sums-slots input.fit8 { font-size: 6px; letter-spacing: -0.5px; padding: 3px 0; }
 
 /* variant sections in the strategies panel */
 #sumsStrats { counter-reset: strat; list-style: none; padding-left: 30px; }
@@ -566,6 +574,7 @@ html.dark .sums-slots input:focus { border-color: #8a8a90; }
 html.dark .sums-slots input.resolved { color: #d89090; border-color: #7a4848; }
 html.dark .sums-cell.hl { background: #4a4433; outline-color: #8a7c4a; }
 html.dark .crypto-box-letter { background: #3a3a40; }
+html.dark .crypto-box-many { color: #77777d; }
 html.dark .crypto-letter { background: #3a3a40; }
 html.dark .crypto-digit.off { color: #5c5c62; background: #2c2c30; }
 html.dark .crypto-digit.solo { background: #37453a; }
