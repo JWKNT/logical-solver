@@ -1811,46 +1811,31 @@ function ruleLetterUniqueness(st, clues) {
 
 // rule: cell trial — hypothesise a value at a nearly-decided cell and follow
 // the quick consequences; a contradiction eliminates it (chain shown)
-function ruleCellTrial(st, clues) {
+function cellTrialCore(st, clues, fastTier) {
   if (st.noTrial) return null;
   const N = st.R * st.C;
+  const big = st.R * st.C > 100 || st.D >= 8;
   // letter trials first: a cipher letter down to 2-3 digits is a natural
   // hypothesis, and a quick contradiction removes the digit for good
   const act = activeLetterIds(clues).filter(L => popc(st.letterCand[L]) >= 2 && popc(st.letterCand[L]) <= 4);
   act.sort((a, b) => popc(st.letterCand[a]) - popc(st.letterCand[b]));
-  // two tiers: a cheap fast-ladder sweep over every hypothesis, then full
-  // ghosts (line analysis included) with a budget that scales to the grid
   const hyps = [];
   for (const L of act) for (const d of digitsOf2(st.letterCand[L])) hyps.push({ L, d });
-  const big = st.R * st.C > 100 || st.D >= 8;
-  const tiers = [
-    { fast: true, deadline: Date.now() + 3000, steps: 20, list: hyps },
-    { fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 50, list: hyps },
-  ];
-  for (const tier of tiers) {
-    for (const { L, d } of tier.list) {
-      if (Date.now() > tier.deadline) break;
-      const ghost = cloneSumsState(st);
-      ghost.fastLadder = tier.fast; ghost.noTrial = true; ghost.__lineCache = undefined;
-      try { filterLetter(ghost, L, 1 << d); } catch (e) { continue; }
-      const chain = [];
-      let contra = null;
-      for (let k = 0; k < tier.steps && !contra; k++) {
-        let mv = null;
-        try { mv = takeSumsStep(ghost, clues); } catch (e) { break; }
-        if (!mv) break;
-        chain.push(mv);
-        if (mv.contradiction) contra = mv;
-      }
-      if (contra) {
-        const name = String.fromCharCode(65 + L);
-        return { rule: 'Letter trial', cells: [], chain,
-          chainIntro: 'Suppose letter ' + name + ' stood for ' + d + '. Then:',
-          chainOutro: 'So ' + name + ' is <b>not ' + d + '</b>.',
-          text: 'Suppose ' + name + ' stood for ' + d + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + name + ' is not ' + d + '.',
-          apply() { filterLetter(st, L, ~(1 << d)); } };
-      }
-    }
+  const tierL = fastTier
+    ? { fast: true, deadline: Date.now() + 3000, steps: 20, list: hyps }
+    : { fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 50, list: hyps };
+  for (const { L, d } of tierL.list) {
+    if (Date.now() > tierL.deadline) break;
+    const res = ghostRun(st, clues, g => filterLetter(g, L, 1 << d), tierL.fast, tierL.steps);
+    if (!res.dead || !res.chain.length) continue;
+    const contra = res.chain[res.chain.length - 1];
+    if (!contra.contradiction) continue;
+    const name = String.fromCharCode(65 + L);
+    return { rule: 'Letter trial', cells: [], chain: res.chain,
+      chainIntro: 'Suppose letter ' + name + ' stood for ' + d + '. Then:',
+      chainOutro: 'So ' + name + ' is <b>not ' + d + '</b>.',
+      text: 'Suppose ' + name + ' stood for ' + d + ': it fails after ' + res.chain.length + ' step' + (res.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + name + ' is not ' + d + '.',
+      apply() { filterLetter(st, L, ~(1 << d)); } };
   }
   const cands = [];
   for (let i = 0; i < N; i++) {
@@ -1858,44 +1843,201 @@ function ruleCellTrial(st, clues) {
     if (pc >= 2 && pc <= 3) cands.push(i);
   }
   cands.sort((a, b) => popc(st.cand[a]) - popc(st.cand[b]));
-  const big2 = st.R * st.C > 100 || st.D >= 8;
-  const tiers2 = [
-    { fast: true, deadline: Date.now() + 3000, steps: 20, list: cands.slice(0, 80) },
-    { fast: false, deadline: Date.now() + (big2 ? 90000 : 8000), steps: 50, list: cands.slice(0, 24) },
-  ];
-  for (const tier of tiers2) {
+  const tier = fastTier
+    ? { fast: true, deadline: Date.now() + 3000, steps: 20, list: cands.slice(0, 80) }
+    : { fast: false, deadline: Date.now() + (big ? 90000 : 8000), steps: 50, list: cands.slice(0, 24) };
   for (const i of tier.list) {
     if (Date.now() > tier.deadline) break;
     for (let v = 0; v <= st.D; v++) {
       if (!(st.cand[i] & (1 << v))) continue;
-      const ghost = cloneSumsState(st);
-      ghost.fastLadder = tier.fast; ghost.noTrial = true;
-      ghost.__lineCache = undefined;
-      try { filterCand(ghost, i, 1 << v); } catch (e) { continue; }
-      const chain = [];
-      let contra = null;
-      for (let k = 0; k < tier.steps && !contra; k++) {
-        let mv = null;
-        try { mv = takeSumsStep(ghost, clues); } catch (e) { break; }
-        if (!mv) break;
-        chain.push(mv);
-        if (mv.contradiction) contra = mv;
-      }
-      if (contra) {
-        const what = v === 0 ? 'blank' : 'a ' + v;
-        return { rule: 'Cell trial', cells: [i], chain,
-          chainIntro: 'Suppose ' + rc(st, i) + ' were ' + what + '. Then:',
-          chainOutro: 'So ' + rc(st, i) + ' is <b>not ' + what + '</b>.',
-          text: 'Suppose ' + rc(st, i) + ' were ' + what + ': it fails after ' + chain.length + ' step' + (chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + rc(st, i) + ' is not ' + what + '.',
-          apply() { filterCand(st, i, ~(1 << v)); } };
+      const res = ghostRun(st, clues, g => filterCand(g, i, 1 << v), tier.fast, tier.steps);
+      if (!res.dead || !res.chain.length) continue;
+      const contra = res.chain[res.chain.length - 1];
+      if (!contra.contradiction) continue;
+      const what = v === 0 ? 'blank' : 'a ' + v;
+      return { rule: 'Cell trial', cells: [i], chain: res.chain,
+        chainIntro: 'Suppose ' + rc(st, i) + ' were ' + what + '. Then:',
+        chainOutro: 'So ' + rc(st, i) + ' is <b>not ' + what + '</b>.',
+        text: 'Suppose ' + rc(st, i) + ' were ' + what + ': it fails after ' + res.chain.length + ' step' + (res.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + rc(st, i) + ' is not ' + what + '.',
+        apply() { filterCand(st, i, ~(1 << v)); } };
+    }
+  }
+  return null;
+}
+function ruleCellTrialFast(st, clues) { return cellTrialCore(st, clues, true); }
+function ruleCellTrialFull(st, clues) { return cellTrialCore(st, clues, false); }
+
+// hypothesise on a clone and follow the ladder a few steps; returns the ghost,
+// the narrated chain, and whether the hypothesis died in a contradiction
+function ghostRun(st, clues, hyp, fast, maxSteps) {
+  const g = cloneSumsState(st);
+  g.fastLadder = fast; g.noTrial = true; g.__lineCache = undefined;
+  try { hyp(g); } catch (e) { return { dead: true, chain: [], g: null }; }
+  const chain = [];
+  for (let k = 0; k < maxSteps; k++) {
+    let mv = null;
+    try { mv = takeSumsStep(g, clues); } catch (e) { break; }
+    if (!mv) break;
+    chain.push(mv);
+    if (mv.contradiction) return { dead: true, chain, g };
+  }
+  return { dead: false, chain, g };
+}
+
+// undecided cells ordered the way a human scans: next to a committed blank
+// first (where does this shaded region escape?), then next to a committed
+// digit, then the rest — each class in reading order
+function shadeTrialOrder(st, minPop) {
+  const N = st.R * st.C;
+  const frontierBlank = [], frontierDigit = [], rest = [];
+  for (let i = 0; i < N; i++) {
+    const m = st.cand[i];
+    if (!(m & 1) || !(m & ~1)) continue;   // must be undecided both ways
+    if (popc(m) < minPop) continue;
+    let nearBlank = false, nearDigit = false;
+    for (const j of coralNeighbors(st, i)) {
+      if (st.cand[j] === 1) nearBlank = true;
+      else if ((st.cand[j] & 1) === 0) nearDigit = true;
+    }
+    (nearBlank ? frontierBlank : nearDigit ? frontierDigit : rest).push(i);
+  }
+  return frontierBlank.concat(frontierDigit, rest);
+}
+
+// rule: shading trial — suppose an undecided cell held a digit (or was
+// shaded blank) without fixing which digit; quick consequences; a
+// contradiction decides the cell's shading (chain shown)
+function shadeTrialCore(st, clues, fastTier) {
+  if (st.noTrial) return null;
+  // popc >= 4 leaves the nearly-decided cells to Cell trial's finer hypotheses
+  const cells = shadeTrialOrder(st, 4);
+  if (!cells.length) return null;
+  const big = st.R * st.C > 100 || st.D >= 8;
+  const tiers = fastTier
+    ? [{ fast: true, deadline: Date.now() + 4000, steps: 16, list: cells }]
+    : [{ fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 24, list: cells.slice(0, 24) }];
+  for (const tier of tiers) {
+    for (const i of tier.list) {
+      if (Date.now() > tier.deadline) break;
+      for (const used of [true, false]) {
+        const what = used ? 'held a digit' : 'were shaded blank';
+        const res = ghostRun(st, clues, g => filterCand(g, i, used ? ~1 : 1), tier.fast, tier.steps);
+        if (!res.dead || !res.chain.length) continue;
+        const contra = res.chain[res.chain.length - 1];
+        return { rule: 'Shading trial', cells: [i], chain: res.chain,
+          chainIntro: 'Suppose ' + rc(st, i) + ' ' + what + '. Then:',
+          chainOutro: 'So ' + rc(st, i) + ' is <b>' + (used ? 'shaded blank' : 'a digit') + '</b>.',
+          text: 'Suppose ' + rc(st, i) + ' ' + what + ': it fails after ' + res.chain.length + ' step' + (res.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + rc(st, i) + ' ' + (used ? 'is shaded blank' : 'holds a digit') + '.',
+          apply() { filterCand(st, i, used ? 1 : ~1); } };
       }
     }
   }
+  return null;
+}
+function ruleShadeTrialFast(st, clues) { return shadeTrialCore(st, clues, true); }
+function ruleShadeTrialFull(st, clues) { return shadeTrialCore(st, clues, false); }
+
+// rule: case analysis — a binary split (a two-candidate cell, an undecided
+// cell's shaded-vs-digit dichotomy, or a two-digit letter) is followed a few
+// steps in BOTH cases; whatever every case agrees on is true outright.
+// One case dying is the classic trial; both dying is a contradiction.
+function caseMergeCore(st, clues, fastTier) {
+  if (st.noTrial) return null;
+  const N = st.R * st.C;
+  const hyps = [];
+  // two-candidate cells: the split is the two values themselves
+  for (let i = 0; i < N; i++) {
+    if (popc(st.cand[i]) !== 2) continue;
+    const parts = [];
+    if (st.cand[i] & 1) parts.push({ mask: 1, label: 'shaded blank' });
+    for (const k of digitsOf(st.cand[i])) parts.push({ mask: 1 << k, label: 'a ' + st.pal[k - 1] });
+    hyps.push({ kind: 'cell', i, parts, what: rc(st, i) + ' is either ' + parts[0].label + ' or ' + parts[1].label });
+  }
+  // undecided cells split shaded-vs-digit (frontier cells first)
+  for (const i of shadeTrialOrder(st, 4)) {
+    hyps.push({ kind: 'cell', i, parts: [{ mask: 1, label: 'shaded blank' }, { mask: ~1, label: 'a digit' }],
+      what: rc(st, i) + ' is either shaded blank or holds a digit' });
+  }
+  // two-digit letters
+  for (const L of activeLetterIds(clues)) {
+    if (popc(st.letterCand[L]) !== 2) continue;
+    const parts = digitsOf2(st.letterCand[L]).map(d => ({ mask: 1 << d, label: String(d) }));
+    hyps.push({ kind: 'letter', L, parts, what: 'letter ' + String.fromCharCode(65 + L) + ' is either ' + parts[0].label + ' or ' + parts[1].label });
+  }
+  if (!hyps.length) return null;
+  const big = st.R * st.C > 100 || st.D >= 8;
+  const tiers = fastTier
+    ? [{ fast: true, deadline: Date.now() + 4000, steps: 14, list: hyps }]
+    : [{ fast: false, deadline: Date.now() + (big ? 120000 : 12000), steps: 20, list: hyps }];
+  for (const tier of tiers) {
+    for (const h of tier.list) {
+      if (Date.now() > tier.deadline) break;
+      const apply = (g, part) => h.kind === 'cell' ? filterCand(g, h.i, part.mask) : filterLetter(g, h.L, part.mask);
+      const runs = h.parts.map(part => ghostRun(st, clues, g => apply(g, part), tier.fast, tier.steps));
+      const alive = runs.filter(r => !r.dead);
+      if (alive.length === 0) {
+        return { rule: 'Case analysis', contradiction: true, cells: h.kind === 'cell' ? [h.i] : [],
+          text: h.what + ', but both cases fail \u2014 the position is contradictory.' };
+      }
+      if (alive.length === 1) {
+        // classic trial: the dead case is eliminated
+        const deadIdx = runs.findIndex(r => r.dead);
+        const dead = runs[deadIdx], live = h.parts[1 - deadIdx];
+        if (!dead.chain.length) {
+          // the hypothesis itself was immediately impossible: commit the other
+          return { rule: 'Case analysis', cells: h.kind === 'cell' ? [h.i] : [],
+            text: h.what + ', but ' + h.parts[deadIdx].label + ' is immediately impossible \u2014 so it is ' + live.label + '.',
+            apply() { h.kind === 'cell' ? filterCand(st, h.i, live.mask) : filterLetter(st, h.L, live.mask); } };
+        }
+        const contra = dead.chain[dead.chain.length - 1];
+        const who = h.kind === 'cell' ? rc(st, h.i) : 'letter ' + String.fromCharCode(65 + h.L);
+        return { rule: 'Case analysis', cells: h.kind === 'cell' ? [h.i] : [], chain: dead.chain,
+          chainIntro: 'Suppose ' + who + ' were ' + h.parts[deadIdx].label + '. Then:',
+          chainOutro: 'So ' + who + ' is <b>' + live.label + '</b>.',
+          text: 'Suppose ' + who + ' were ' + h.parts[deadIdx].label + ': it fails after ' + dead.chain.length + ' step' + (dead.chain.length === 1 ? '' : 's') + ' \u2014 ' + contra.text + ' So ' + who + ' is ' + live.label + '.',
+          apply() { h.kind === 'cell' ? filterCand(st, h.i, live.mask) : filterLetter(st, h.L, live.mask); } };
+      }
+      // both cases alive: merge — keep only what every case still allows
+      const cellHits = [], letterHits = [];
+      for (let j = 0; j < N; j++) {
+        let u = 0;
+        for (const r of alive) u |= r.g.cand[j];
+        const nm = st.cand[j] & u;
+        if (nm !== st.cand[j] && nm !== 0) cellHits.push({ j, nm });
+      }
+      for (let L = 0; L < 26; L++) {
+        let u = 0;
+        for (const r of alive) u |= r.g.letterCand[L];
+        const nm = st.letterCand[L] & u;
+        if (nm !== st.letterCand[L] && nm !== 0) letterHits.push({ L, nm });
+      }
+      if (!cellHits.length && !letterHits.length) continue;
+      const bits = [];
+      if (cellHits.length) bits.push(cellHits.slice(0, 6).map(t => {
+        const parts = [];
+        if (t.nm & 1) parts.push('blank');
+        const ds = digitsOf(t.nm).map(k2 => st.pal[k2 - 1]); if (ds.length) parts.push(ds.join('/'));
+        return rc(st, t.j) + ' = ' + parts.join(' or ');
+      }).join('; ') + (cellHits.length > 6 ? '; and ' + (cellHits.length - 6) + ' more cells' : ''));
+      if (letterHits.length) bits.push(letterHits.map(t => String.fromCharCode(65 + t.L) + ' = ' + digitsOf2(t.nm).join('/')).join('; '));
+      return { rule: 'Case analysis', cells: cellHits.map(t => t.j),
+        cases: h.parts.map((part, q) => ({ intro: 'Case ' + (q + 1) + ' \u2014 ' + (h.kind === 'cell' ? rc(st, h.i) : 'letter ' + String.fromCharCode(65 + h.L)) + ' is ' + part.label + ':', chain: runs[q].chain })),
+        text: h.what + ' \u2014 following each case ' + Math.max(...runs.map(r => r.chain.length)) + ' steps at most, every case agrees: ' + bits.join('; ') + '.',
+        apply() {
+          for (const t of cellHits) filterCand(st, t.j, t.nm);
+          for (const t of letterHits) filterLetter(st, t.L, t.nm);
+        } };
+    }
   }
   return null;
 }
 
-const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleCellTrial];
+function ruleCaseMergeFast(st, clues) { return caseMergeCore(st, clues, true); }
+function ruleCaseMergeFull(st, clues) { return caseMergeCore(st, clues, false); }
+
+// trial rules run cheapest hypotheses first: every quick (fast-ladder) sweep
+// across all hypothesis kinds precedes any deep (full-ladder) sweep
+const SUMS_RULES = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleShadeTrialFast, ruleCellTrialFast, ruleCaseMergeFast, ruleShadeTrialFull, ruleCellTrialFull, ruleCaseMergeFull];
 const SUMS_FAST = [ruleUniqueness, ruleLetterUniqueness, ruleLetterPairs, ruleCoral2x2, ruleNo22Numbers, ruleCoralChecker, ruleCoralConnect, ruleCoralSpine, ruleNumConnect, ruleCoralReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
 
 // per line and clue index, the group's sum where it is already exactly
@@ -1997,6 +2139,8 @@ const SUMS_STRATEGIES = [
   { name: 'Numbers reach edge', variant: 'reach', desc: 'Every connected group of digit cells touches the grid\u2019s edge \u2014 a digit region\u2019s last escape route to the border must hold digits.' },
   { name: 'KD off-by-one', variant: 'kd', desc: 'A clue is one off its true value, so a group truly sums to clue\u22121 or clue+1 \u2014 same parity either way; a decided group\u2019s last open cell is pinned to the two completing values.' },
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
+  { name: 'Shading trial', desc: 'Suppose an undecided cell held a digit (or was shaded), without fixing which digit, and follow the quick consequences \u2014 a contradiction decides the cell\u2019s shading, chain shown.' },
+  { name: 'Case analysis', desc: 'A binary split \u2014 a two-candidate cell, an undecided cell\u2019s shaded-vs-digit dichotomy, or a two-digit letter \u2014 is followed a few steps in both cases; whatever every case agrees on is true outright, both chains shown.' },
 ];
 
 const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, takeSumsStep, sumsComplete, eachSumsLine, committedDigit, popc, digitsOf, digitsOf2: (m) => { const a = []; for (let d = 0; d <= 9; d++) if (m & (1 << d)) a.push(d); return a; }, tokenLetters, allowedSums, SUMS_STRATEGIES };

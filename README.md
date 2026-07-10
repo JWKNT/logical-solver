@@ -37,8 +37,11 @@ Place digits 1..D in some cells; a digit appears at most once per row and per
 column; clues list, in order, the sums of the consecutive digit groups in each
 line (`?` = unknown sum, blank = unclued line). Same feature set: Solve, True
 candidates, and a Take-step ladder (digit uniqueness, full lines, group
-placements, killer-style group combinations, exact line analysis, cell trials
-with contradiction chains). Switch apps with the tabs in the header.
+placements, killer-style group combinations, exact line analysis, and
+hypothesis steps with narrated chains: cell trials, shading trials — is this
+cell a digit or shaded? — and case analysis, which follows a binary split a
+few steps in both cases and keeps whatever every case agrees on). Switch apps
+with the tabs in the header.
 
 ## Layout
 

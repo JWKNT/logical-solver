@@ -298,6 +298,10 @@ $('sumsStep').onclick = () => {
   if (mv.chain && mv.chain.length) {
     html = head + esc(mv.chainIntro) + '<ol>' +
       mv.chain.map(m => '<li><b>' + m.rule + '</b>: ' + esc(m.text) + '</li>').join('') + '</ol>' + mv.chainOutro;
+  } else if (mv.cases && mv.cases.length) {
+    html = head + esc(mv.text) + mv.cases.map(cs => '<br>' + esc(cs.intro) + (cs.chain.length
+      ? '<ol>' + cs.chain.map(m => '<li><b>' + m.rule + '</b>: ' + esc(m.text) + '</li>').join('') + '</ol>'
+      : ' (nothing further follows quickly.)')).join('');
   }
   const done = sums.sumsComplete(st);
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (done ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));

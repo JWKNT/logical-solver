@@ -61,6 +61,7 @@ let fails = 0;
   const st = S.makeSumsState(8, 8, 6);
   let mv, k = 0, sawPairs = false, sawDisjoint = false, sawSpan = false, trials = 0;
   while (k++ < 1500 && (mv = S.takeSumsStep(st, clues))) {
+    if (mv.rule === 'Case analysis') trials++;
     if (mv.rule === 'Letter pairs') sawPairs = true;
     if (mv.rule === 'Disjoint sums') sawDisjoint = true;
     if (mv.rule === 'Span algebra') sawSpan = true;
@@ -138,7 +139,7 @@ let fails = 0;
   let mv, k = 0, trials = 0;
   const t0 = Date.now();
   while (k++ < 6000 && (mv = S.takeSumsStep(st, P))) {
-    if (/trial/i.test(mv.rule)) trials++;
+    if (/trial/i.test(mv.rule) || mv.rule === 'Case analysis') trials++;
     if (mv.contradiction) { console.log('FAIL: 12x12 hit a contradiction: ' + mv.text.slice(0, 100)); fails++; break; }
   }
   const want = { A: 3, B: 1, C: 7, D: 9, E: 5, F: 2, G: 6, H: 4, J: 0 };
@@ -255,6 +256,87 @@ let fails = 0;
   if (!escFired || contra || !used(8) || !used(9)) {
     console.log('FAIL: shaded escape regression (fired=' + escFired + ', contra=' + contra + ', r1c9 used=' + used(8) + ', r1c10 used=' + used(9) + ')'); fails++;
   } else console.log('ok: "Coral escape" seals row 1\'s pocket layouts; r1c9, r1c10 forced used, no contradiction');
+
+  // with trials on, the whole coral puzzle must fall to the ladder: the stall
+  // in the middle (r1c8's shaded stretch must escape DOWN through r2c8 -
+  // escaping left would run to r1c3 and leave no room for the 20) is broken
+  // by a Shading trial (suppose the cell held a digit - contradiction)
+  {
+    const st2 = S.makeSumsState(10, 10, 9);
+    Object.assign(st2.variants, { blankConn: true, no22blank: true, reach: true });
+    let mv2, k2 = 0, contra2 = false, shadeTrials = 0, badChain = 0;
+    const t0 = Date.now();
+    while (k2++ < 600 && (mv2 = S.takeSumsStep(st2, P))) {
+      if (mv2.rule === 'Shading trial') {
+        shadeTrials++;
+        if (!mv2.chain || !mv2.chain.length || !mv2.chain[mv2.chain.length - 1].contradiction) badChain++;
+      }
+      if (mv2.contradiction) { contra2 = true; break; }
+    }
+    const blank = i => st2.cand[i] === 1;
+    let valid = !contra2 && S.sumsComplete(st2) && blank(17);   // r2c8 shaded: the escape goes down
+    // validate the fill: clue groups and coral shape
+    const valAt = i => st2.cand[i] === 1 ? 0 : S.digitsOf(st2.cand[i])[0];
+    const grps = cells => { const out = []; let run = 0, len = 0; for (const i of cells) { const v = valAt(i); if (v) { run += v; len++; } else if (len) { out.push(run); run = 0; len = 0; } } if (len) out.push(run); return out; };
+    const tokOk = (t, s2) => typeof t === 'number' ? t === s2 : String(t).length === String(s2).length && [...String(t)].every((ch, q) => ch === '?' || ch === String(s2)[q]);
+    if (valid) {
+      for (let r = 0; r < 10 && valid; r++) { const gs = grps(Array.from({ length: 10 }, (_, c) => r * 10 + c)); if (gs.length !== P.rows[r].length || !gs.every((s2, q) => tokOk(P.rows[r][q], s2))) valid = false; }
+      for (let c = 0; c < 10 && valid; c++) { const gs = grps(Array.from({ length: 10 }, (_, r) => r * 10 + c)); if (gs.length !== P.cols[c].length || !gs.every((s2, q) => tokOk(P.cols[c][q], s2))) valid = false; }
+      for (let r = 0; r + 1 < 10 && valid; r++) for (let c = 0; c + 1 < 10; c++) if (!valAt(r * 10 + c) && !valAt(r * 10 + c + 1) && !valAt(r * 10 + c + 10) && !valAt(r * 10 + c + 11)) valid = false;
+      const conn = memb => { let start = -1, tot = 0; for (let i = 0; i < 100; i++) if (memb(i)) { tot++; if (start < 0) start = i; } if (!tot) return true; const seen = new Uint8Array(100), stk = [start]; seen[start] = 1; let n = 0; while (stk.length) { const i = stk.pop(); n++; const r = (i / 10) | 0, c = i % 10; for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const r2 = r + dr, c2 = c + dc; if (r2 < 0 || r2 > 9 || c2 < 0 || c2 > 9) continue; const j = r2 * 10 + c2; if (!seen[j] && memb(j)) { seen[j] = 1; stk.push(j); } } } return n === tot; };
+      if (!conn(i => !valAt(i))) valid = false;
+    }
+    if (valid) {
+      // the engine, given the completed grid, must accept it (clues + shape)
+      const eng = E.runAny({ R: 10, C: 10, D: 9, variants: { blankConn: true, no22blank: true, reach: true },
+        rowClues: P.rows, colClues: P.cols, candMask: Array.from(st2.cand), mode: 'count', timeLimit: 60000, maxSolutions: 5 });
+      if (eng.solCount !== 1) { valid = false; console.log('  engine rejects the coral fill (' + eng.solCount + ' solutions)'); }
+    }
+    if (!valid || badChain || !shadeTrials) {
+      console.log('FAIL: 10x10 coral full solve (complete=' + S.sumsComplete(st2) + ', contra=' + contra2 + ', r2c8 blank=' + blank(17) + ', shadeTrials=' + shadeTrials + ', badChain=' + badChain + ', steps=' + (k2 - 1) + ')'); fails++;
+    } else console.log('ok: 10x10 coral fully solved in ' + (k2 - 1) + ' steps (' + shadeTrials + ' shading trials, all chain-narrated), r2c8\u2019s escape-down forced, fill validates + engine-confirmed, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+  }
+}
+{
+  // the user's ascending 10x10 (image 2): the mid-solve stall is broken by
+  // Case analysis - one of r3c9/r3c10 holds row 3's fifth group, and in both
+  // cases the C9/C10 clue cap of 9 forces that column's r2..r4 run to 6-1-2;
+  // deductions every case agrees on stand (both chains narrated)
+  const P = {
+    rows: [['#',12,'#'], ['#',15,'#'], ['#','#',7,'#','#'], [7,'#','#',7], ['#',8,'#'],
+           [6,'#','#',8], [21,'#'], [9,24], ['#','#',3], [7,'#',20]],
+    cols: [[4,'#','#',9], [5,'#',22], [8,'#','#',8], ['#',10], [13,'#',16],
+           ['#',12,15], [1,16,18], ['#'], ['#',9,9], ['#',7,'#',9]]
+  };
+  const st = S.makeSumsState(10, 10, 9);
+  Object.assign(st.variants, { asc: true });
+  let mv, k = 0, contra = false, merges = 0, badCases = 0;
+  const t0 = Date.now();
+  while (k++ < 800 && (mv = S.takeSumsStep(st, P))) {
+    if (mv.rule === 'Case analysis' && mv.cases) {
+      merges++;
+      if (mv.cases.length < 2 || mv.cases.some(cs => !Array.isArray(cs.chain))) badCases++;
+    }
+    if (mv.contradiction) { contra = true; break; }
+  }
+  const valAt = i => st.cand[i] === 1 ? 0 : S.digitsOf(st.cand[i])[0];
+  let valid = !contra && S.sumsComplete(st);
+  // the user's waypoint: column 9 carries the 6-1-2 run under the cap of 9
+  if (valid && !(valAt(18) === 6 && valAt(28) === 1 && valAt(38) === 2 && valAt(19) === 9)) valid = false;
+  if (valid) {
+    const grps = cells => { const out = []; let run = 0, len = 0; for (const i of cells) { const v = valAt(i); if (v) { run += v; len++; } else if (len) { out.push(run); run = 0; len = 0; } } if (len) out.push(run); return out; };
+    const matchAsc = (tokens, sums) => { if (tokens.length !== sums.length) return false; const s2 = [...sums].sort((a, b) => a - b); return tokens.every((t, q) => t === '#' || t === s2[q]); };
+    for (let r = 0; r < 10 && valid; r++) if (!matchAsc(P.rows[r], grps(Array.from({ length: 10 }, (_, c) => r * 10 + c)))) valid = false;
+    for (let c = 0; c < 10 && valid; c++) if (!matchAsc(P.cols[c], grps(Array.from({ length: 10 }, (_, r) => r * 10 + c)))) valid = false;
+  }
+  if (valid) {
+    const eng = E.runAny({ R: 10, C: 10, D: 9, variants: { asc: true },
+      rowClues: P.rows, colClues: P.cols, candMask: Array.from(st.cand), mode: 'count', timeLimit: 60000, maxSolutions: 5 });
+    if (eng.solCount !== 1) { valid = false; console.log('  engine rejects the ascending fill (' + eng.solCount + ' solutions)'); }
+  }
+  if (!valid || !merges || badCases) {
+    console.log('FAIL: ascending 10x10 case-analysis solve (complete=' + S.sumsComplete(st) + ', contra=' + contra + ', merges=' + merges + ', badCases=' + badCases + ', steps=' + (k - 1) + ')'); fails++;
+  } else console.log('ok: ascending 10x10 fully solved in ' + (k - 1) + ' steps via ' + merges + ' Case analyses (both chains narrated), col 9 = 6-1-2 under the cap of 9, fill validates + engine-confirmed, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
 }
 {
   // Coral spine: a pocket that cannot reach the only line forced to hold a
@@ -478,6 +560,10 @@ while (puzzles < 24 && Date.now() - t00 < 200000) {
     if (mv.chain) {
       trialSteps++;
       if (!mv.chain.length || !mv.chain[mv.chain.length - 1].contradiction) { console.log('FAIL: trial without complete chain'); fails++; }
+    }
+    if (mv.cases) {
+      trialSteps++;
+      if (mv.cases.length < 2 || mv.cases.some(cs => !cs.intro || !Array.isArray(cs.chain))) { console.log('FAIL: case analysis without narrated cases'); fails++; }
     }
     if (mv.contradiction) { console.log('FAIL: contradiction on a solvable puzzle:', mv.text.slice(0, 120)); console.log('  REPRO:', JSON.stringify({ R, C, D, values, kd, coral, rows: clues.rows, cols: clues.cols })); fails++; break; }
     // soundness: no cell may have lost a value that some solution uses
