@@ -1,2 +1,10 @@
 node_modules/
 *.log
+.cache/
+.config/
+.local/
+.npm/
+.npm-global/
+.npmrc
+.wget-hsts
+.DS_Store
