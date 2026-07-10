@@ -2075,6 +2075,41 @@ function ruleBaseBounds(st, clues) {
       text: 'The clues are written in an unknown number base: ' + parts.join('; ') + ' \u2014 the base is ' + (lo === hi ? lo : lo + '\u2013' + hi) + '.',
       apply() { st.__baseNarrated = true; } };
   }
+  // self-healing floors: the syntactic bounds are re-derived from the CURRENT
+  // clues, so a base range initialised before the clues were complete (or
+  // loaded from elsewhere) still gets floored correctly, with narration
+  {
+    let maxDigit = 0, maxLen = 1;
+    const letterSet = new Set();
+    for (const list of (clues.rows || []).concat(clues.cols || [])) {
+      if (!list) continue;
+      for (const tok of list) {
+        const p = tokenParse(tok, st);
+        if (!p.chars) continue;
+        maxLen = Math.max(maxLen, p.chars.length);
+        for (const ch of p.chars) { if (ch.d !== undefined) maxDigit = Math.max(maxDigit, ch.d); if (ch.L !== undefined) letterSet.add(ch.L); }
+      }
+    }
+    if (bases[0] < letterSet.size) {
+      const keep = new Set(bases.filter(b => b >= letterSet.size));
+      return { rule: 'Base bounds', cells: [],
+        text: 'The ' + letterSet.size + ' distinct letters need ' + letterSet.size + ' different digits, all below the base \u2014 the base is at least ' + letterSet.size + '.',
+        apply() { filterBase(st, keep); } };
+    }
+    if (bases[0] <= maxDigit) {
+      const keep = new Set(bases.filter(b => b > maxDigit));
+      return { rule: 'Base bounds', cells: [],
+        text: 'The digit ' + maxDigit + ' appears in the clues, and every written digit is below the base \u2014 the base is at least ' + (maxDigit + 1) + '.',
+        apply() { filterBase(st, keep); } };
+    }
+    const cap = st.maxTotal + (st.kd ? 1 : 0);
+    if (maxLen >= 2 && Math.pow(bases[bases.length - 1], maxLen - 1) > cap) {
+      const keep = new Set(bases.filter(b => Math.pow(b, maxLen - 1) <= cap));
+      if (keep.size < bases.length) return { rule: 'Base bounds', cells: [],
+        text: 'A ' + maxLen + '-digit numeral is worth at least base' + (maxLen === 2 ? '' : '^' + (maxLen - 1)) + ', which must stay within the largest possible sum ' + cap + ' \u2014 the base is at most ' + Math.max(...keep) + '.',
+        apply() { filterBase(st, keep); } };
+    }
+  }
   // letters stand for digits below the base
   const maxB = bases[bases.length - 1];
   const capMask = maxB >= 31 ? 0x7FFFFFFF : (1 << maxB) - 1;

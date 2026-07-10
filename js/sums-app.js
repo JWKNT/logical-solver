@@ -73,6 +73,7 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
 let stepWorker = null;
 let stepBusy = false;
 let stepStale = true;   // main-thread st changed: the worker must reload it before stepping
+let stFromEngine = false;   // st holds Solve / True-candidates results worth continuing from
 function markStepStale() { stepStale = true; }
 function stepWorkerLoadMsg() {
   return { cmd: 'load', R, C, D, values: VALUES || undefined, kd: st.kd, alien: st.alien,
@@ -135,6 +136,7 @@ function buildGrid(keepClues) {
   Object.assign(st.variants, readVariants());
   stepCounts = new Map();
   stepNo = 0;
+  stFromEngine = false;
   const wrap = $('sumsGridWrap');
   const slotBox = (prefix, vertical) => {
     let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
@@ -261,8 +263,9 @@ function renderLetters(engineCand, engineBases) {
   box.hidden = false;
   let html = '<div class="crypto-boxes">';
   if (alien) {
-    // the base box: candidates like a cipher letter, solved when pinned
-    if (st.alien && !st.baseCand) sums.ensureBaseCand(st, clues || readClues());
+    // the base box: candidates like a cipher letter, solved when pinned;
+    // '?' until the first step derives the range from the clues as typed
+    // (initialising here from possibly-empty clue boxes poisoned the range)
     const bs = engineBases ? engineBases : (st.baseCand ? [...st.baseCand].sort((x, y) => x - y) : []);
     html += '<div class="crypto-box"><div class="crypto-box-letter">base</div>';
     if (bs.length === 1) html += '<div class="crypto-box-solved">' + bs[0] + '</div>';
@@ -357,6 +360,7 @@ $('sumsSolve').onclick = () => {
     if (st.alien && res.base) st.baseCand = new Set([res.base]);
     for (let i = 0; i < R * C; i++) st.cand[i] = 1 << res.firstSol[i];
     if (res.firstLetters) for (let L = 0; L < 26; L++) if (res.firstLetters[L] >= 0) st.letterCand[L] = 1 << res.firstLetters[L];
+    stFromEngine = true;
     markStepStale();
     renderCells();
     renderLetters();
@@ -377,6 +381,7 @@ $('sumsCands').onclick = () => {
     if (st.alien && res.bases && res.bases.length) st.baseCand = new Set(res.bases);
     for (let i = 0; i < R * C; i++) st.cand[i] = res.cand[i];
     if (res.letterCand) for (const L of res.letterIds || []) if (res.letterCand[L]) st.letterCand[L] = res.letterCand[L];
+    stFromEngine = true;
     markStepStale();
     renderCells();
     renderLetters(null, st.alien && res.bases ? res.bases : null);
@@ -386,6 +391,15 @@ $('sumsCands').onclick = () => {
 $('sumsStep').onclick = () => {
   if (stepBusy) return;
   clues = readClues();
+  if (stepNo === 0 && !stFromEngine) {
+    // first step of a session: start from a clean state so nothing derived
+    // before the clues were complete (base range, letter caps) can linger
+    st = sums.makeSumsState(R, C, D, VALUES || undefined);
+    st.kd = $('sumsKD').checked;
+    st.alien = $('sumsAlien').checked;
+    Object.assign(st.variants, readVariants());
+    markStepStale();
+  }
   if (!stepWorker) {
     stepWorker = new Worker(stepWorkerUrl);
     stepWorker.onmessage = onStepReply;
@@ -429,7 +443,7 @@ function onStepReply(e) {
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (complete ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
 }
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; markStepStale(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; stFromEngine = false; markStepStale(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 const VARIANT_BOXES = [
@@ -448,6 +462,7 @@ function variantChanged(msg) {
   st.alien = $('sumsAlien').checked;
   Object.assign(st.variants, readVariants());
   stepCounts = new Map(); stepNo = 0;
+  stFromEngine = false;
   markStepStale();
   renderCells(); renderLetters(); buildStrategyPanel();
   status(msg + ' Marks reset.');

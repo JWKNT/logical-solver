@@ -51,6 +51,20 @@ if (RUN_SCENARIOS) {
     console.log('FAIL: tiny alien end-to-end (contra=' + contra + ', grid=' + okGrid + ', base=' + [...st.baseCand] + ', eng=' + JSON.stringify({ s: eng.solCount, b: eng.bases }) + ')'); fails++;
   } else console.log('ok: tiny alien puzzle pinned to base 4 by the ladder; engine agrees (1 solution, base 4)');
 }
+{
+  // self-healing floor: a base range initialised too wide (e.g. before the
+  // clues were typed) is re-floored from the current clues, narrated
+  const P = REF.knt;
+  const st = S.makeSumsState(P.R, P.C, P.D);
+  st.alien = true;
+  st.baseCand = new Set(Array.from({ length: 30 }, (_, i) => i + 2));
+  for (let L = 0; L < 26; L++) st.letterCand[L] = 0x7FFFFFFF;
+  st.__baseNarrated = true;
+  const mv = S.takeSumsStep(st, { rows: P.rows, cols: P.cols });
+  const ok = mv && mv.rule === 'Base bounds' && /distinct letters need 8 different digits/.test(mv.text) && Math.min(...st.baseCand) >= 8;
+  if (!ok) { console.log('FAIL: self-healing base floor (' + (mv && mv.text.slice(0, 120)) + ')'); fails++; }
+  else console.log('ok: self-healing floor \u2014 a too-wide base range is re-floored by the 8 distinct letters, narrated');
+}
 }
 
 if (RUN_BATTERY) {
