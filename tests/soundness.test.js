@@ -1152,5 +1152,28 @@ function runLoop(R, C, rowClue, colClue, blockedGrid, sols, label, rowEmptyG, co
   else console.log('ok (grid branch parity): ' + mv.text);
 }
 
+{
+  // user's 6x6 (July 2026): unique puzzle that exposed two things — the
+  // branch-parity family running arithmetic on UNCLUED counts (undefined
+  // slipped past `< 0` guards; clue normalization fixes the class), and the
+  // need for the Quota exhaustion technique (cols 2+4 demand 8 straights+
+  // branches, matched exactly by row caps incl. the row-3 cross squeeze).
+  const R = 6, C = 6, U = undefined;
+  const rowClues = [[U,U,U,U,U],[U,1,1,U,U],[2,2,U,U,U],[U,1,1,U,U],[U,U,2,2,U],[U,1,1,U,U]];
+  const colClues = [[U,U,U,U,U],[U,2,2,U,U],[0,0,U,U,U],[U,2,2,U,U],[U,U,1,1,U],[U,2,2,U,U]];
+  const st = ST.makeStepState(R, C, Array.from({ length: R }, () => new Array(C).fill(false)));
+  const clues = { row: rowClues.map(a => a.slice()), col: colClues.map(a => a.slice()) };
+  let quota = false, contradiction = false, k = 0, mv;
+  while (k < 300 && (mv = ST.takeHumanStep(st, clues))) {
+    k++;
+    if (mv.rule === 'Quota exhaustion') quota = true;
+    if (mv.contradiction) { contradiction = true; break; }
+  }
+  if (contradiction) { console.log('FAIL: quota puzzle reached a contradiction (unsound rule?)'); fails++; }
+  else if (!ST.isComplete(st)) { console.log('FAIL: quota puzzle did not complete (' + k + ' steps)'); fails++; }
+  else if (!quota) { console.log('FAIL: Quota exhaustion never fired on its showcase puzzle'); fails++; }
+  else console.log('ok: quota-exhaustion showcase 6x6 solves cleanly (' + k + ' steps)');
+}
+
 console.log(fails === 0 ? '\nALL STEPPER TESTS PASSED' : '\n' + fails + ' FAILURES');
 process.exit(fails === 0 ? 0 : 1);

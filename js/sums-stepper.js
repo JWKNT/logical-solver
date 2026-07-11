@@ -627,6 +627,12 @@ function ruleUniqueness(st, clues) {
     for (let k = 1; k <= st.pal.length; k++) {
       let committed = 0;
       for (const i of line.cells) { const d = committedDigit(st, i); if (d === k) committed++; }
+      if (committed > st.cnt[k - 1]) {
+        const v = st.pal[k - 1];
+        const bad = line.cells.filter(i => committedDigit(st, i) === k);
+        return { rule: 'Digit uniqueness', contradiction: true, cells: bad,
+          text: line.name + ' contains ' + committed + ' committed ' + v + 's, but the value ' + v + ' is available only ' + st.cnt[k - 1] + ' time' + (st.cnt[k - 1] === 1 ? '' : 's') + ' per row or column. The position is contradictory.' };
+      }
       if (committed < st.cnt[k - 1]) continue;
       const hits = line.cells.filter(i => committedDigit(st, i) !== k && (st.cand[i] & (1 << k)));
       if (!hits.length) continue;

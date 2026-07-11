@@ -188,6 +188,20 @@ if (RUN_SCENARIOS) {
   else console.log('ok: custom palette 1,2,3,4,5,5,6,7,9,9 - clue 31 pins a 4-cell group to 6+7+9+9');
 }
 {
+  // Regression: Take step must never silently accept more copies of a value
+  // than the custom palette supplies in either a row or a column.
+  const st = S.makeSumsState(3, 3, 0, [1, 2, 5, 5, 9]);
+  st.cand[0] = st.cand[1] = st.cand[2] = 1 << (st.pal.indexOf(5) + 1);
+  const mv = S.takeSumsStep(st, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv || !mv.contradiction || mv.rule !== 'Digit uniqueness') { console.log('FAIL: triple custom value in row was accepted'); fails++; }
+  else console.log('ok: custom multiplicity overflow in a row is rejected');
+  const st2 = S.makeSumsState(3, 3, 0, [1, 2, 5, 5, 9]);
+  st2.cand[0] = st2.cand[3] = st2.cand[6] = 1 << (st2.pal.indexOf(5) + 1);
+  const mv2 = S.takeSumsStep(st2, { rows: [null, null, null], cols: [null, null, null] });
+  if (!mv2 || !mv2.contradiction || mv2.rule !== 'Digit uniqueness') { console.log('FAIL: triple custom value in column was accepted'); fails++; }
+  else console.log('ok: custom multiplicity overflow in a column is rejected');
+}
+{
   // negative palette end-to-end: engine truth vs stepper on a tiny puzzle
   const values = [-2, 1, 3, 4];
   const R = 3, C = 3;

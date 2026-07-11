@@ -40,10 +40,12 @@ const workerUrl = URL.createObjectURL(new Blob(['(' + sumsWorkerMain.toString() 
 const stepWorkerUrl = URL.createObjectURL(new Blob([
   sumsStepperMain.toString() + '\n(' + function () {
     const api = sumsStepperMain(self);
-    let wst = null;
+    let wst = null, loadMsg = null, hist = [];
+    const core = () => ({ cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated });
     self.onmessage = e => {
       const m = e.data;
       if (m.cmd === 'load') {
+        loadMsg = m; hist = [];
         wst = api.makeSumsState(m.R, m.C, m.D, m.values || undefined);
         wst.kd = m.kd; wst.alien = m.alien;
         Object.assign(wst.variants, m.variants);
@@ -53,7 +55,22 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
         if (m.baseNarrated) wst.__baseNarrated = true;
         return;
       }
+      if (m.cmd === 'undo') {
+        if (!hist.length || !loadMsg) { self.postMessage({ undo: true, empty: true }); return; }
+        const h = hist.pop();
+        // rebuild from scratch so no cache derived under tighter candidates survives
+        wst = api.makeSumsState(loadMsg.R, loadMsg.C, loadMsg.D, loadMsg.values || undefined);
+        wst.kd = loadMsg.kd; wst.alien = loadMsg.alien;
+        Object.assign(wst.variants, loadMsg.variants);
+        wst.cand.set(h.cand);
+        wst.letterCand.set(h.letterCand);
+        if (h.baseCand) wst.baseCand = new Set(h.baseCand);
+        if (h.baseNarrated) wst.__baseNarrated = true;
+        self.postMessage({ undo: true, state: core(), complete: api.sumsComplete(wst) });
+        return;
+      }
       if (m.cmd === 'step') {
+        const pre = core();
         let mv = null;
         try { mv = api.takeSumsStep(wst, m.clues); }
         catch (err) { mv = { rule: 'Error', text: String((err && err.message) || err), contradiction: true }; }
@@ -63,6 +80,7 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
           chain: mv.chain && mv.chain.map(x => ({ rule: x.rule, text: x.text, contradiction: !!x.contradiction })),
           cases: mv.cases && mv.cases.map(c => ({ intro: c.intro, chain: (c.chain || []).map(x => ({ rule: x.rule, text: x.text })) })),
         };
+        if (lite) { hist.push(pre); if (hist.length > 60) hist.shift(); }
         self.postMessage({ mv: lite,
           state: { cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated },
           complete: api.sumsComplete(wst) });
@@ -71,10 +89,12 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
   }.toString() + ')()'
 ], { type: 'application/javascript' }));
 let stepWorker = null;
-let stepBusy = false;
+let stepBusy = false, sumsRuleHist = [], sumsAuto = false;
+function updateSumsPrev() { $('sumsPrev').disabled = !sumsRuleHist.length; }
+function stopSumsAuto() { sumsAuto = false; $('sumsAuto').textContent = 'Full solve path'; }
 let stepStale = true;   // main-thread st changed: the worker must reload it before stepping
 let stFromEngine = false;   // st holds Solve / True-candidates results worth continuing from
-function markStepStale() { stepStale = true; }
+function markStepStale() { stepStale = true; sumsRuleHist = []; stopSumsAuto(); if ($('sumsPrev')) $('sumsPrev').disabled = true; }
 // Solve / True candidates run within the current marks: the ladder's progress
 // (and the user's own pencil work) massively narrows the engine's search.
 // A pristine state contributes nothing, so this is always safe to pass.
@@ -433,6 +453,22 @@ $('sumsStep').onclick = () => {
 function onStepReply(e) {
   stepBusy = false;
   $('sumsStep').disabled = false;
+  if (e.data.undo) {
+    if (e.data.empty) { status('Nothing to revert.'); updateSumsPrev(); return; }
+    stepNo = Math.max(0, stepNo - 1);
+    const rule = sumsRuleHist.pop();
+    if (rule) { const n = (stepCounts.get(rule) || 1) - 1; if (n > 0) stepCounts.set(rule, n); else stepCounts.delete(rule); }
+    updateSumsPrev();
+    st.cand.set(e.data.state.cand);
+    st.letterCand.set(e.data.state.letterCand);
+    st.baseCand = e.data.state.baseCand ? new Set(e.data.state.baseCand) : null;
+    st.__baseNarrated = !!e.data.state.baseNarrated;
+    buildStrategyPanel();
+    renderLetters();
+    renderCells();
+    status('Reverted to before step ' + (stepNo + 1) + '.');
+    return;
+  }
   const { mv, state, complete } = e.data;
   // mirror the worker's state for rendering and the other tools
   st.cand.set(state.cand);
@@ -441,11 +477,14 @@ function onStepReply(e) {
   if (state.baseNarrated) st.__baseNarrated = true;
   renderLetters();
   if (!mv) {
-    if (complete) { status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }
+    if (complete) { stopSumsAuto(); status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }
+    stopSumsAuto();
     status('No deduction found \u2014 the ladder is out of ideas here. Try <b>True candidates</b> for the engine\u2019s view.');
     return;
   }
   stepNo++;
+  sumsRuleHist.push(mv.rule); if (sumsRuleHist.length > 60) sumsRuleHist.shift();
+  updateSumsPrev();
   stepCounts.set(mv.rule, (stepCounts.get(mv.rule) || 0) + 1);
   markStrategy(mv.rule);
   const head = 'Step ' + stepNo + ' \u2014 <b>' + mv.rule + '</b>: ';
@@ -460,8 +499,21 @@ function onStepReply(e) {
   }
   status(html + (mv.contradiction ? ' <span class="bad">Contradiction \u2014 check the clues.</span>' : '') + (complete ? '<br><span class="good">Solved!</span> Every cell holds a digit or is shaded blank.' : ''));
   renderCells(mv.cells);
+  if (sumsAuto) { if (!mv.contradiction && !complete) setTimeout(() => { if (sumsAuto) $('sumsStep').onclick(); }, 250); else stopSumsAuto(); }
 }
-$('sumsReset').onclick = () => { st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; stFromEngine = false; markStepStale(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
+$('sumsPrev').onclick = () => {
+  if (stepBusy || !stepWorker || !sumsRuleHist.length) return;
+  stopSumsAuto();
+  stepBusy = true; $('sumsStep').disabled = true;
+  status('Reverting\u2026');
+  stepWorker.postMessage({ cmd: 'undo' });
+};
+$('sumsAuto').onclick = () => {
+  if (sumsAuto) return stopSumsAuto();
+  sumsAuto = true; $('sumsAuto').textContent = 'Stop';
+  if (!stepBusy) $('sumsStep').onclick();
+};
+$('sumsReset').onclick = () => { sumsRuleHist = []; stopSumsAuto(); updateSumsPrev(); st = sums.makeSumsState(R, C, D, VALUES || undefined); st.kd = $('sumsKD').checked; st.alien = $('sumsAlien').checked; Object.assign(st.variants, readVariants()); stepCounts = new Map(); stepNo = 0; stFromEngine = false; markStepStale(); renderCells(); renderLetters(); buildStrategyPanel(); status('Marks reset; clues kept.'); };
 $('sumsClear').onclick = () => buildGrid();
 
 const VARIANT_BOXES = [

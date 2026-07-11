@@ -247,7 +247,9 @@ function gatherConfig(mode, maxSolutions, randomize) {
 }
 
 function setRunning(on, label) {
-    ['solveBtn', 'candBtn', 'stepBtn', 'stepResetBtn', 'randomBtn', 'clearCluesBtn', 'resetBtn', 'rowsIn', 'colsIn'].forEach(id => $(id).disabled = on);
+    ['solveBtn', 'candBtn', 'stepBtn', 'prevBtn', 'randomBtn', 'clearCluesBtn', 'resetBtn', 'rowsIn', 'colsIn'].forEach(id => $(id).disabled = on);
+    $('stepResetBtn').disabled = on;
+    if (!on) updateUbPrev();
     $('cancelBtn').style.display = on ? '' : 'none';
     if (on) setStatus(label || 'Searching…');
 }
@@ -409,7 +411,11 @@ $('colsIn').addEventListener('change', onResize);
 
 /* ================= step-by-step UI ================= */
 let stepSt = null, stepClues = null, stepCount = 0, stepDead = false;
-function stepInvalidate() { stepSt = null; stepDead = false; stepCount = 0; resetStrategyMarks(); }
+let ubHist = [], ubAuto = false, ubPrevCount = -1;
+function refreshStratCounts() { STRATEGIES.forEach((st2, ix) => { const n = stratCounts[st2.name] || 0; const el = $('stratCnt' + ix); if (el) el.textContent = n ? '\u00d7' + n : ''; }); }
+function updateUbPrev() { $('prevBtn').disabled = !ubHist.length; }
+function stopUbAuto() { ubAuto = false; ubPrevCount = -1; $('autoBtn').textContent = 'Full solve path'; }
+function stepInvalidate() { stepSt = null; stepDead = false; stepCount = 0; ubHist = []; stopUbAuto(); updateUbPrev(); resetStrategyMarks(); }
 const CHAIN_SHOW = 20;      // steps of a refutation chain shown before truncating
 function narrateAssumption(kind, index, provenVal) {
     // Replay the refuted assumption through the human rules on a scratch copy.
@@ -565,6 +571,9 @@ $('stepBtn').addEventListener('click', () => {
         setStatus('<span class="good">Grid fully determined</span> — this network is forced by the clues. Press <b>Reset steps</b> to start over.');
         return;
     }
+    ubHist.push({ st: structuredClone(stepSt), count: stepCount, dead: stepDead, counts: { ...stratCounts } });
+    if (ubHist.length > 500) ubHist.shift();
+    updateUbPrev();
     const move = takeHumanStep(stepSt, stepClues);
     if (move) {
         stepCount++;
@@ -599,13 +608,44 @@ $('stepBtn').addEventListener('click', () => {
             drawStepState(null);
             setStatus('<span class="bad">Contradiction:</span> no valid network is consistent with these clues and the current marks.');
         } else if (res.result === 'none' && res.exhausted) {
+            if (ubHist.length) { ubHist.pop(); updateUbPrev(); }
+            stopUbAuto();
             drawStepState(null);
             setStatus('<span class="warn">Nothing further can be forced:</span> every undecided border differs between solutions — the puzzle has multiple solutions from this position. Run <b>True candidates</b> to map them.');
         } else {
+            if (ubHist.length) { ubHist.pop(); updateUbPrev(); }
+            stopUbAuto();
             drawStepState(null);
             setStatus('<span class="warn">No deduction found within the time limit.</span> Raise the limit and take the step again.');
         }
     });
+});
+$('prevBtn').addEventListener('click', () => {
+    if (!ubHist.length) return;
+    stopUbAuto();
+    const h = ubHist.pop();
+    stepSt = h.st; stepCount = h.count; stepDead = h.dead;
+    for (const k in stratCounts) delete stratCounts[k];
+    Object.assign(stratCounts, h.counts);
+    refreshStratCounts();
+    updateUbPrev();
+    drawStepState(null);
+    setStatus('Reverted to before step ' + (stepCount + 1) + '.');
+});
+$('autoBtn').addEventListener('click', () => {
+    if (ubAuto) return stopUbAuto();
+    ubAuto = true; ubPrevCount = -1;
+    $('autoBtn').textContent = 'Stop';
+    const tick = () => {
+        if (!ubAuto) return;
+        if ($('stepBtn').disabled) return setTimeout(tick, 150);   // exhaustive fallback still running
+        if (stepDead || (stepSt && isComplete(stepSt))) return stopUbAuto();
+        if (ubPrevCount === stepCount && ubPrevCount !== -1) return stopUbAuto();   // last click produced nothing
+        ubPrevCount = stepCount;
+        $('stepBtn').click();
+        setTimeout(tick, 250);
+    };
+    tick();
 });
 $('stepResetBtn').addEventListener('click', () => {
     stepInvalidate();

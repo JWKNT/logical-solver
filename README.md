@@ -1,6 +1,6 @@
 # Logical Solvers
 
-Two puzzle solvers with shared machinery: an engine (exact search + solution
+Three puzzle solvers with shared machinery: an engine (exact search + solution
 counting + true candidates) and a human-rule stepper (a ladder of named
 deductions, simplest first, each with a prose explanation).
 
@@ -54,6 +54,13 @@ The suite's reference puzzles — KNT's *Extraterrestrial Japanese Sums*
 (base 13, B=11, F=12) — are solved end to end by the ladder and
 engine-verified in `tests/sums-soundness.test.js`.
 
+## A38
+
+Build a directed Hamiltonian loop through all non-clue cells, with number clues
+placing permits by chronological neighbour order and stations consuming them.
+The tab includes exact solution search/counting, candidate display, one-step
+explanations, and an A38-specific human-technique ladder.
+
 `node tests/sums-soundness.test.js` runs scenario regressions plus randomized
 engine-vs-ladder batteries (`--scenarios` or `--battery` runs one half; the
 full default run takes roughly half an hour).
@@ -69,6 +76,10 @@ js/app.js           U-Bahn UI, model, board rendering
 js/sums-engine.js   Japanese Sums engine (worker + Node module)
 js/sums-stepper.js  Japanese Sums human-rule ladder
 js/sums-app.js      Japanese Sums UI
+js/a38-engine.js    A38 directed-loop and permit search
+js/a38-stepper.js   A38 named human-rule ladder
+js/a38-app.js       A38 UI and board editor
+js/vendor/logic-solver.bundle.js  Browser SAT runtime (MIT; license alongside)
 tests/            soundness, symmetry, and engine batteries
 build.js          assembles dist/ubahn-solver.html
 ```

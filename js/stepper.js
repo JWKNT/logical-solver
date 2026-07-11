@@ -1319,6 +1319,124 @@ function rulePigeonhole(st, clues) {
 
 // rule: connectivity (guide: "The entire loop network must be connected.")
 // If a shape would seal a drawn component while proven line cells exist elsewhere, it's impossible.
+// Quota exhaustion: pick a class of shapes P (say straights+branches) and a
+// set S of columns fully clued for P. The columns demand a total number of
+// P-cells. Each row can supply into S only so many: its own P quota minus
+// P-cells already certain outside S, never more than its P-capable S-cells,
+// and squeezed further when other clued shapes must occupy S-cells. When the
+// caps sum to exactly the demand, every row sits at its cap — forcing P
+// inside S where capability binds, and stripping P from the rest of every
+// quota-bound row. (Symmetrically with rows demanding and columns supplying.)
+function ruleClassQuota(st, clues) {
+    const { R, C } = st;
+    for (const demandKind of ['col', 'row']) {
+        const demandLines = eachLine(st, clues).filter(l => l.kind === demandKind);
+        const supplyLines = eachLine(st, clues).filter(l => l.kind !== demandKind);
+        for (let P = 1; P < 32; P++) {
+            const types = []; for (let s2 = 0; s2 < 5; s2++) if ((P >> s2) & 1) types.push(s2);
+            const eligible = demandLines.filter(l => types.every(s2 => l.clue[s2] >= 0));
+            if (!eligible.length) continue;
+            const maxMask = 1 << eligible.length;
+            for (let mask = 1; mask < maxMask; mask++) {
+                const S = []; for (let k = 0; k < eligible.length; k++) if ((mask >> k) & 1) S.push(eligible[k]);
+                let D = 0; for (const l of S) for (const s2 of types) D += l.clue[s2];
+                if (D === 0) continue;
+                const inSet = new Set(); for (const l of S) for (const i of l.cells) inSet.add(i);
+                const rows = [];
+                let total = 0, feasible = true;
+                for (const rl of supplyLines) {
+                    const cellsIn = rl.cells.filter(i => inSet.has(i));
+                    const cellsOut = rl.cells.filter(i => !inSet.has(i));
+                    const inP = i => { const cls = cellClasses(st, i); return (cls & P) !== 0; };
+                    const subP = i => { const cls = cellClasses(st, i); return cls !== 0 && (cls & ~P) === 0; };
+                    const capable = cellsIn.filter(inP);
+                    const forcedIn = cellsIn.filter(subP).length;
+                    const forcedOut = cellsOut.filter(subP).length;
+                    const fullyClued = types.every(s2 => rl.clue[s2] >= 0);
+                    let quotaCap = Infinity, quotaBase = 0;
+                    if (fullyClued) { for (const s2 of types) quotaBase += rl.clue[s2]; quotaCap = quotaBase - forcedOut; }
+                    let squeezeNeed = 0;
+                    for (let t = 0; t < 5; t++) {
+                        if ((P >> t) & 1) continue;
+                        if (rl.clue[t] < 0) continue;
+                        const outCapT = cellsOut.filter(i => (cellClasses(st, i) >> t) & 1).length;
+                        const inCapT = cellsIn.filter(i => (cellClasses(st, i) >> t) & 1).length;
+                        squeezeNeed += Math.min(Math.max(0, rl.clue[t] - outCapT), inCapT);
+                    }
+                    const capSqueeze = cellsIn.length - squeezeNeed;
+                    const cap = Math.min(quotaCap, capable.length, capSqueeze);
+                    if (cap < forcedIn) { feasible = false; break; }
+                    total += cap;
+                    rows.push({ rl, cap, capable, cellsOut, quotaCap, quotaBase, forcedOut, squeezeNeed, capSqueeze, fullyClued });
+                }
+                if (!feasible || total < D) {
+                    if (st.__enumBudget !== undefined) { /* fallthrough */ }
+                    if (total < D || !feasible) return {
+                        rule: 'Quota exhaustion', contradiction: true, cells: [...inSet],
+                        text: S.map(l => l.name).join(' + ') + ' need ' + D + ' ' + types.map(t => CLASS_PLURAL[t]).join('+') +
+                            ' in total, but the ' + (demandKind === 'col' ? 'rows' : 'columns') + ' can supply at most ' + total + '.'
+                    };
+                }
+                if (total !== D) {
+                    // inequality form: a single line's guaranteed minimum is the
+                    // demand minus what all the OTHER lines can possibly supply
+                    if (total > D) for (const info of rows) {
+                        const lower = D - (total - info.cap);
+                        if (lower <= 0) continue;
+                        const forcedInCnt = info.capable.filter(i => { const cls = cellClasses(st, i); return cls !== 0 && (cls & ~P) === 0; }).length;
+                        if (lower <= forcedInCnt) continue;
+                        if (lower === info.capable.length) {
+                            const targets = info.capable.filter(i => (cellClasses(st, i) & ~P) !== 0);
+                            if (!targets.length) continue;
+                            const clsWord2 = types.map(t => CLASS_PLURAL[t]).join('+');
+                            return {
+                                rule: 'Quota exhaustion', cells: targets,
+                                text: S.map(l => l.name).join(' + ') + ' need ' + D + ' ' + clsWord2 + ' in total, and every other ' +
+                                    (demandKind === 'col' ? 'row' : 'column') + ' can supply at most ' + (total - info.cap) +
+                                    ' — so ' + info.rl.name.toLowerCase() + ' must supply at least ' + lower + ', which is every capable cell it has: ' +
+                                    targets.map(i => rc(st, i)).join(', ') + ' are counted shapes.',
+                                apply() { for (const i of targets) filterCfg(st, i, m => ((P >> classOf(m)) & 1) !== 0); }
+                            };
+                        }
+                    }
+                    continue;
+                }
+                // every supply line sits exactly at its cap
+                const elims = [];
+                for (const info of rows) {
+                    if (info.cap === info.capable.length) {
+                        for (const i of info.capable) { const cls = cellClasses(st, i); if ((cls & ~P) !== 0) elims.push({ i, keep: true }); }
+                    }
+                    if (info.fullyClued && info.cap === info.quotaCap) {
+                        for (const i of info.cellsOut) { const cls = cellClasses(st, i); if ((cls & P) !== 0 && (cls & ~P) !== 0) elims.push({ i, keep: false }); }
+                    }
+                }
+                if (!elims.length) continue;
+                const clsWord = types.map(t => CLASS_PLURAL[t]).join('+');
+                const capsTxt = rows.map(info => info.cap).join('+');
+                const reasons = rows.filter(info => info.cap < info.capable.length || (info.fullyClued && info.forcedOut))
+                    .slice(0, 3)
+                    .map(info => info.rl.name.toLowerCase() + ' at most ' + info.cap +
+                        (info.fullyClued && info.cap === info.quotaCap
+                            ? (info.forcedOut ? ' (quota ' + info.quotaBase + ' minus ' + info.forcedOut + ' already certain elsewhere)' : ' (its full quota)')
+                            : info.cap === info.capSqueeze ? ' (other clued shapes must occupy its cells here)' : ' (capable cells)'));
+                const forced = elims.filter(e => e.keep), stripped = elims.filter(e => !e.keep);
+                return {
+                    rule: 'Quota exhaustion', cells: elims.map(e => e.i),
+                    text: S.map(l => l.name).join(' + ') + ' need ' + D + ' ' + clsWord + ' in total, and the ' +
+                        (demandKind === 'col' ? 'rows' : 'columns') + ' can supply at most ' + capsTxt + ' = ' + D +
+                        (reasons.length ? ' (' + reasons.join('; ') + ')' : '') +
+                        ' — every line is at its cap, so ' +
+                        [forced.length ? forced.map(e => rc(st, e.i)).join(', ') + (forced.length === 1 ? ' must be one of the counted shapes' : ' must all be counted shapes') : '',
+                         stripped.length ? stripped.map(e => rc(st, e.i)).join(', ') + (stripped.length === 1 ? ' cannot be' : ' cannot be') + ' ' + clsWord : '']
+                        .filter(Boolean).join('; ') + '.',
+                    apply() { for (const e of elims) filterCfg(st, e.i, m => e.keep ? ((P >> classOf(m)) & 1) !== 0 : ((P >> classOf(m)) & 1) === 0); }
+                };
+            }
+        }
+    }
+    return null;
+}
 function ruleConnectivity(st) {
     const { R, C } = st, N = R * C;
     const par = new Int32Array(N);
@@ -2752,6 +2870,7 @@ const RULES = [
     ruleSegmentPacking,
     ruleCountingLines,
     ruleLineRecount,
+    ruleClassQuota,
     ruleEntranceCounting,
     st => ruleForcedBorder(st, false),  // remaining plain × eliminations
     ruleShapeTrial,
@@ -2789,6 +2908,7 @@ const STRATEGIES = [
     { name: 'Segment packing', desc: 'With the segment count pinned (by clues, budgets, or the neighbours’ arm capacity), every legal placement is enumerated — also checking each segment’s interior composition and the neighbouring lines’ arms — and borders they all share are forced.' },
     { name: 'Counting lines', desc: 'Crosses in a neighbouring line each send a connection into this one, confined to where those crosses can sit; the receiving line’s clued pieces can supply only so many perpendicular arms there — an exact budget forces orientations and positions.' },
     { name: 'Single-line analysis', desc: 'One row/column considered in isolation: every completion of its clues consistent with the current marks is enumerated — options no completion uses are eliminated.' },
+    { name: 'Quota exhaustion', desc: 'A shape class demanded by a set of fully-clued columns is matched exactly by what the rows can supply (row quotas minus placements elsewhere, capable cells, and squeezes from other clued shapes) — every row sits at its cap, forcing the class inside the set and stripping it from the rest of quota-bound rows. Symmetrically for rows.' },
     { name: 'Entrance counting', desc: 'Two adjacent rows (or columns) must agree on the lines crossing between them — matching how often one side must enter against how often the other can be entered pins the crossings exactly.' },
     { name: 'Shape trial', desc: 'The last copies of a clued shape fit in only a few cells — trying each spot and following quick consequences eliminates spots that fail, chain shown.' },
     { name: 'Case agreement', desc: 'When no candidate spot fails, one of them still must be the shape — so every conclusion all the cases share is placed for free, before any chain is needed.' },
@@ -2802,7 +2922,10 @@ function effectiveClues(st, clues) {
     // Given clues merged with clue values the stepper has derived (e.g. from grid
     // branch parity). Derived values persist in the state so every rule sees them.
     if (!st.derived) {
-        const pad = a => { const v = a.slice(); while (v.length < 5) v.push(-1); return v; };
+        // normalize every unclued entry to -1: several rules guard with `< 0`,
+        // which `undefined` slips past (undefined < 0 is false) — that let the
+        // branch-parity family run arithmetic on unclued counts
+        const pad = a => { const v = a.slice(); while (v.length < 5) v.push(-1); return v.map(x => (x === undefined || x === null) ? -1 : x); };
         st.derived = { row: clues.row.map(pad), col: clues.col.map(pad) };
     }
     return st.derived;

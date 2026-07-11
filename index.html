@@ -12,6 +12,7 @@
   <nav class="tabs">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
+    <button class="tab" data-app="a38">A38</button>
     <button id="themeToggle" title="Toggle light/dark">◐</button>
   </nav>
   <script>
@@ -37,7 +38,7 @@
     <div class="sep"></div>
     <button id="solveBtn" class="primary">Solve</button>
     <button id="candBtn" class="primary">True candidates</button>
-    <button id="stepBtn">Take step</button>
+    <button id="stepBtn">Take step</button><button id="prevBtn">Previous step</button><button id="autoBtn">Full solve path</button>
     <button id="cancelBtn">Cancel</button>
     <div class="sep"></div>
     <button id="randomBtn">Random puzzle</button>
@@ -109,7 +110,7 @@
     <button id="sumsBuild">Resize</button>
     <button id="sumsSolve" class="primary">Solve</button>
     <button id="sumsCands" class="primary">True candidates</button>
-    <button id="sumsStep">Take step</button>
+    <button id="sumsStep">Take step</button><button id="sumsPrev">Previous step</button><button id="sumsAuto">Full solve path</button>
     <button id="sumsReset">Reset steps</button>
     <button id="sumsClear" class="danger">Clear all</button>
   </div>
@@ -135,6 +136,27 @@
     </aside>
   </div>
 </section>
+<section id="app-a38" hidden>
+ <div class="toolbar">
+    <div class="group"><label for="a38Rows">Rows</label><input id="a38Rows" type="number" value="6" min="3" max="12"></div>
+    <div class="group"><label for="a38Cols">Columns</label><input id="a38Cols" type="number" value="6" min="3" max="12"></div>
+    <div class="group"><label for="a38Time">Time limit (s)</label><input id="a38Time" type="number" min="1" max="600" value="10"></div>
+    <div class="sep"></div>
+    <button id="a38Solve" class="primary">Solve</button>
+    <button id="a38Cands" class="primary">True candidates</button>
+    <button id="a38Step">Take step</button><button id="a38Prev">Previous step</button><button id="a38Auto">Full solve path</button>
+    <div class="sep"></div>
+    <button id="a38Build">Resize</button>
+    <button id="a38Reset">Reset steps</button>
+    <button id="a38Clear" class="danger">Clear all</button>
+    <div class="sep"></div>
+    <span class="a38-tools" role="group" aria-label="Cell input tool"><button data-tool="cell" class="active">Route</button><button data-tool="start"><b>1</b> Start</button><button data-tool="station"><i></i> Pass</button><button data-tool="clue"># Number</button></span>
+    <label class="chk" title="A 38 I/II (2016): number clues skip an adjacent start cell in their visit counting"><input type="checkbox" id="a38IgnoreStart"> Clues ignore start</label>
+ </div>
+ <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a black circle; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
+ <div class="legend"><span><b class="a38-start-demo">1</b> start</span><span><i class="a38-pass-demo"></i> gray cell</span><span><b class="a38-clue-demo">3</b> number clue</span><span><b class="a38-permit-demo"></b> pass obtained</span><span><b class="a38-arrow-demo">—</b> forced segment</span><span><b class="a38-chevron-demo">‹</b> direction</span><span>× excluded edge</span></div>
+ <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the black circle and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces; Backspace removes them normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><details class="help strategies" open><summary>Step deduction types</summary><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></details></aside></div>
+</section>
 </main>
 
 <script src="js/engine.js"></script>
@@ -143,13 +165,18 @@
 <script src="js/sums-engine.js"></script>
 <script src="js/sums-stepper.js"></script>
 <script src="js/sums-app.js"></script>
+<script src="js/vendor/logic-solver.bundle.js"></script>
+<script src="js/a38-engine.js"></script>
+<script src="js/a38-stepper.js"></script>
+<script src="js/a38-app.js"></script>
 <script>
 // tab switching (no URL change); the title follows the active app
-const APP_TITLES = { ubahn: 'U-Bahn Solver', sums: 'Japanese Sums Solver' };
+const APP_TITLES = { ubahn: 'U-Bahn Solver', sums: 'Japanese Sums Solver', a38: 'A38 Solver' };
 document.querySelectorAll('.tabs .tab').forEach(btn => btn.addEventListener('click', () => {
   document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b === btn));
   document.getElementById('app-ubahn').hidden = btn.dataset.app !== 'ubahn';
   document.getElementById('app-sums').hidden = btn.dataset.app !== 'sums';
+  document.getElementById('app-a38').hidden = btn.dataset.app !== 'a38';
   document.getElementById('siteTitle').textContent = APP_TITLES[btn.dataset.app];
   document.title = APP_TITLES[btn.dataset.app];
 }));
