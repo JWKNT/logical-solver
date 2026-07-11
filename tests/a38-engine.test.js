@@ -37,3 +37,43 @@ console.log('A38 000TFE exact uniqueness test passed');
   assert.strictEqual(r.solutions.length, 1, 'a38-hwf2018 should solve uniquely');
   console.log('A38 hwf2018 uniqueness test passed');
 }
+
+{
+  // '?' wildcard: one extra granting ordinal, distinct from the listed
+  // numbers; solutions are deduplicated by route, and permitInfo resolves
+  // the wildcard to the LOWEST feasible ordinal
+  const base = require('./a38-10x10.js');
+  const at = (r, c) => (r - 1) * base.C + c - 1;
+  const q = at(4, 2);
+  const cfg = { ...base, clues: { ...base.clues, [q]: [1, 4, '?'] } };
+  const r = SAT.solve({ ...cfg, maxSolutions: 12 }, 180);
+  assert(r.solutions.length >= 2, 'the wildcard should open at least one extra route');
+  const orig = SAT.solve({ ...base, maxSolutions: 2 }, 60).solutions[0];
+  const start = base.kind.indexOf('start');
+  const key = p => { const s2 = p.indexOf(start); return p.slice(s2).concat(p.slice(0, s2)).join(','); };
+  assert(new Set(r.solutions.map(key)).has(key(orig)), 'the plain-clue solution must remain valid with ? = 5');
+  const si = orig.indexOf(start);
+  const info = SAT.permitInfo(orig.slice(si).concat(orig.slice(0, si)), cfg);
+  const ords = [...info.ordinals].filter(([x, m]) => m.has(q)).map(([x, m]) => m.get(q)).sort((a, b) => a - b);
+  assert.deepStrictEqual(ords, [1, 4, 5], 'permitInfo should resolve ? to the lowest feasible ordinal (5 here)');
+  console.log('A38 wildcard clue test passed');
+}
+
+{
+  // multiple wildcards: [4,'?','?'] = ordinal 4 plus TWO extra distinct
+  // granting ordinals (neither = 4); the plain-clue solution must satisfy it
+  // and permitInfo must resolve the extras lowest-first
+  const base = require('./a38-10x10.js');
+  const at = (r, c) => (r - 1) * base.C + c - 1;
+  const q = at(4, 2);
+  const cfg = { ...base, clues: { ...base.clues, [q]: [4, '?', '?'] } };
+  const r = SAT.solve({ ...cfg, maxSolutions: 1 }, 120);
+  assert(r.solutions.length >= 1, 'a multi-wildcard clue must stay satisfiable');
+  const orig = SAT.solve({ ...base, maxSolutions: 2 }, 60).solutions[0];
+  const start = base.kind.indexOf('start');
+  const si = orig.indexOf(start);
+  const info = SAT.permitInfo(orig.slice(si).concat(orig.slice(0, si)), cfg);
+  const ords = [...info.ordinals].filter(([x, m]) => m.has(q)).map(([x, m]) => m.get(q)).sort((a, b) => a - b);
+  assert.deepStrictEqual(ords, [1, 4, 5], 'the two extras should resolve to 1 and 5 on the original route');
+  console.log('A38 multi-wildcard clue test passed');
+}

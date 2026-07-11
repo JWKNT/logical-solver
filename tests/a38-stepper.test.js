@@ -145,3 +145,18 @@ if (process.argv.includes('--deep')) {
   assert([...want].every(e => state.forcedEdges.has(e)) && [...state.forcedEdges].every(e => want.has(e)), 'hwf2018 ladder route must match the unique solution');
   console.log('A38 hwf2018 full-ladder regression passed (' + k + ' steps, ' + ((Date.now() - t0) / 1000).toFixed(0) + 's)');
 }
+
+{
+  // wildcard smoke: the ladder must run on a '?' clue without crashing or
+  // contradicting (the config has solutions), and pencil marks still appear
+  const base = require('./a38-10x10.js');
+  const at = (r, c) => (r - 1) * base.C + c - 1;
+  const cfg = { ...base, clues: { ...base.clues, [at(4, 2)]: [1, 4, '?'] } };
+  const st = {};
+  let k = 0, x, permitish = 0;
+  for (let n = 0; n < 60; n++) { x = S.step(cfg, st, { noTrial: true, noBatch: true }); if (!x || x.done || x.contradiction) break; k++; if ([5, 7, 8, 9, 13, 17].includes(x.tech)) permitish++; }
+  assert(!(x && x.contradiction), 'wildcard config must not contradict');
+  assert(k >= 10, 'the ladder should make progress on a wildcard puzzle (made ' + k + ' steps)');
+  assert(permitish >= 3, 'the permit machinery should fire through the variant plumbing (' + permitish + ')');
+  console.log('A38 wildcard stepper smoke passed (' + k + ' steps, ' + permitish + ' permit-machinery)');
+}

@@ -101,8 +101,8 @@ function strandOrderStep(cfg,state){
  if(!fOut.size)return null;
  for(const qs of Object.keys(cfg.clues)){
    const q=+qs,ring=ringCells(cfg,q),m=ring.length;if(!m)continue;
-   const nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))];
-   if(nums.some(n=>n<1||n>m))continue;
+   const spec=clueSpec(cfg,q),nums=spec.nums;
+   if(specBad(spec,m))continue;
    const current=state.patternRestrictions.get(q)||new Set(Array.from({length:m},(_,i)=>['1:'+i,'-1:'+i]).flat());
    if(!current.size)continue;   // a pinned single rotation still yields contradictions below
    // physical order requirements from confirmed strands between ring mates
@@ -231,26 +231,48 @@ function computeGrantable(cfg,state){
  const out=new Set(),start=cfg.kind.indexOf('start');
  for(const qs of Object.keys(cfg.clues||{})){
    const q=+qs,ring=ringCells(cfg,q),m=ring.length;if(!m)continue;
-   const nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))];
-   if(nums.some(n=>n<1||n>m)){for(const x of ring)out.add(x);continue}
+   const spec=clueSpec(cfg,q),nums=spec.nums;
+   if(specBad(spec,m)){for(const x of ring)out.add(x);continue}
    const current=state.patternRestrictions.get(q)||new Set(Array.from({length:m},(_,i)=>['1:'+i,'-1:'+i]).flat());
    for(const sig of current){
      const [dStr,offStr]=sig.split(':');const d=+dStr,off=+offStr;
      const ranks=new Map();for(let n=1;n<=m;n++)ranks.set(ring[(off+d*(n-1)+m*3)%m],n);
-     const yes=new Set(ring.filter(x=>nums.includes(ranks.get(x))));
-     if(!grantsGeometryOk(cfg,yes))continue;
      if(ranks.has(start)&&ranks.get(start)!==1)continue;
      if(!startRankOk(cfg,state,ranks,m))continue;
+     for(const yes of yesVariants(cfg,state,ring,ranks,spec)){
+     if(!grantsGeometryOk(cfg,yes))continue;
      let ok=true;
      for(const x of ring)if((((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x)))){ok=false;break}
      if(!ok)continue;
      for(const x of yes)out.add(x);
+     }
    }
  }
  for(const x of state.permitCells)out.add(x);
  for(const x of state.noPermitCells)out.delete(x);
  return out;
 }
+// A clue entry '?' is one extra granting ordinal, distinct from the listed
+// numbers. clueSpec parses a clue; yesVariants expands one rotation into
+// every possible grant set (exactly one for plain clues, one per feasible
+// extra cell for a '?' clue, in ascending ordinal order).
+function clueSpec(cfg,q){const raw=Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]];return {nums:[...new Set(raw.filter(v=>v!=='?').map(Number))],wild:raw.filter(v=>v==='?').length}}
+function yesVariants(cfg,state,ring,ranks,spec){
+ const base=new Set(ring.filter(x=>spec.nums.includes(ranks.get(x))));
+ if(!spec.wild)return [base];
+ const elig=[...ring].sort((a,b)=>ranks.get(a)-ranks.get(b)).filter(x=>
+   !base.has(x)&&cfg.kind[x]!=='station'&&cfg.kind[x]!=='start'&&
+   !(state&&state.noPermitCells&&state.noPermitCells.has(x)));
+ if(elig.length<spec.wild)return [];
+ const out=[],pick=[];
+ (function rec(i){
+   if(pick.length===spec.wild){const y=new Set(base);for(const x of pick)y.add(x);out.push(y);return}
+   if(i>=elig.length||elig.length-i<spec.wild-pick.length)return;
+   pick.push(elig[i]);rec(i+1);pick.pop();rec(i+1);
+ })(0);
+ return out;
+}
+function specBad(spec,m){return spec.nums.some(n=>n<1||n>m)||spec.nums.length+spec.wild>m}
 function grantsGeometryOk(cfg,yes){
  const C=cfg.C;
  const exits=x=>{const r=(x/C)|0,c=x%C,a=[];for(const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]){const rr=r+dr,cc=c+dc;if(rr>=0&&rr<cfg.R&&cc>=0&&cc<C&&cfg.kind[rr*C+cc]!=='clue')a.push(rr*C+cc)}return a};
@@ -267,10 +289,10 @@ function globalPermitCountStep(cfg,state,options={}){
  const grantableSet=computeGrantable(cfg,state);
  const infos=[];
  for(const qs of Object.keys(cfg.clues)){
-   const q=+qs,ring=ringCells(cfg,q),nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))],patterns=[];
-   if(!nums.some(n=>n<1||n>ring.length))for(const d of [1,-1])for(let off=0;off<ring.length;off++){
+   const q=+qs,ring=ringCells(cfg,q),spec=clueSpec(cfg,q),nums=spec.nums,patterns=[];
+   if(!specBad(spec,ring.length))for(const d of [1,-1])for(let off=0;off<ring.length;off++){
      const sig=d+':'+off,restriction=state.patternRestrictions.get(q);if(restriction&&!restriction.has(sig))continue;
-     const ranks=new Map();for(let n=1;n<=ring.length;n++)ranks.set(ring[(off+d*(n-1)+ring.length*3)%ring.length],n);const yes=new Set(ring.filter(x=>nums.includes(ranks.get(x))));let ok=grantsGeometryOk(cfg,yes)&&startRankOk(cfg,state,ranks,ring.length),start=cfg.kind.indexOf('start');if(ranks.has(start)&&ranks.get(start)!==1)ok=false;for(const x of ring)if(((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x)))ok=false;if(ok)patterns.push({yes,ranks,d})
+     const ranks=new Map();for(let n=1;n<=ring.length;n++)ranks.set(ring[(off+d*(n-1)+ring.length*3)%ring.length],n);const start=cfg.kind.indexOf('start');if(ranks.has(start)&&ranks.get(start)!==1)continue;if(!startRankOk(cfg,state,ranks,ring.length))continue;for(const yes of yesVariants(cfg,state,ring,ranks,spec)){let ok=grantsGeometryOk(cfg,yes);for(const x of ring)if(((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x)))ok=false;if(ok)patterns.push({yes,ranks,d})}
    }
    infos.push({q,ring,nums,patterns});
  }
@@ -295,16 +317,18 @@ function permitPatternStep(cfg,state,options={}){
  const grantableSet=computeGrantable(cfg,state);
  const infos=[];
  for(const qs of Object.keys(cfg.clues)){
-   const q=+qs,ring=ringCells(cfg,q),nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))],patterns=[];
-   if(nums.some(n=>n<1||n>ring.length)){infos.push({q,ring,nums,patterns});continue}
+   const q=+qs,ring=ringCells(cfg,q),spec=clueSpec(cfg,q),nums=spec.nums,patterns=[];
+   if(specBad(spec,ring.length)){infos.push({q,ring,nums,patterns});continue}
    for(const d of [1,-1])for(let off=0;off<ring.length;off++){
      const sig=d+':'+off,restriction=state.patternRestrictions.get(q);if(restriction&&!restriction.has(sig))continue;
      const ranks=new Map();for(let n=1;n<=ring.length;n++)ranks.set(ring[(off+d*(n-1)+ring.length*3)%ring.length],n);
-     const yes=new Set(ring.filter(x=>nums.includes(ranks.get(x))));let ok=grantsGeometryOk(cfg,yes);
-     const start=cfg.kind.indexOf('start');if(ranks.has(start)&&ranks.get(start)!==1)ok=false;
-     if(!startRankOk(cfg,state,ranks,ring.length))ok=false;
-     for(const x of ring)if((((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x))))ok=false;
-     if(ok)patterns.push({yes,ranks,d,sig});
+     const start=cfg.kind.indexOf('start');if(ranks.has(start)&&ranks.get(start)!==1)continue;
+     if(!startRankOk(cfg,state,ranks,ring.length))continue;
+     for(const yes of yesVariants(cfg,state,ring,ranks,spec)){
+       let ok=grantsGeometryOk(cfg,yes);
+       for(const x of ring)if((((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x))))ok=false;
+       if(ok)patterns.push({yes,ranks,d,sig});
+     }
    }
    infos.push({q,ring,nums,patterns});
  }
@@ -422,28 +446,31 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
  {const start=cfg.kind.indexOf('start');
   for(const qs of Object.keys(cfg.clues)){
     const q=+qs,ring=ringCells(cfg,q),m=ring.length;if(!m)continue;
-    const nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))];
-    if(nums.some(n=>n<1||n>m))continue;
+    const spec=clueSpec(cfg,q),nums=spec.nums;
+    if(specBad(spec,m))continue;
     const current=state.patternRestrictions.get(q)||new Set(Array.from({length:m},(_,i)=>['1:'+i,'-1:'+i]).flat());
     if(!current.size)continue;
     const survivors=[];let always=null,never=null;const maxDeg=new Map(ring.map(x=>[x,0]));let oa=null,ou=null;
     for(const sig of current){
       const [dStr,offStr]=sig.split(':');const d=+dStr,off=+offStr;
       const ranks=new Map();for(let n=1;n<=m;n++)ranks.set(ring[(off+d*(n-1)+m*3)%m],n);
-      const yes=new Set(ring.filter(x=>nums.includes(ranks.get(x))));
-      if(!grantsGeometryOk(cfg,yes))continue;
       if(ranks.has(start)&&ranks.get(start)!==1)continue;
-     if(!startRankOk(cfg,state,ranks,m))continue;
+      if(!startRankOk(cfg,state,ranks,m))continue;
+      let sigOk=false;
+      for(const yes of yesVariants(cfg,state,ring,ranks,spec)){
+      if(!grantsGeometryOk(cfg,yes))continue;
       let ok=true;
       for(const x of ring)if((((cfg.kind[x]==='station'||cfg.kind[x]==='start'||state.noPermitCells.has(x))&&yes.has(x))||(state.permitCells.has(x)&&!yes.has(x)))){ok=false;break}
       if(!ok)continue;
       const info=ringDegreeInfo(cfg,state,ring,ranks,yes);
       if(!info)continue;
-      survivors.push(sig);
+      sigOk=true;
       if(always==null)always=new Set(info.edgeAlways);else for(const k of [...always])if(!info.edgeAlways.has(k))always.delete(k);
       if(never==null)never=new Set(info.edgeNever);else for(const k of [...never])if(!info.edgeNever.has(k))never.delete(k);
       for(const x of ring)maxDeg.set(x,Math.max(maxDeg.get(x),info.maxDegIn.get(x)||0));
       oa=info.outwardAvail;ou=info.outwardUsed;
+      }
+      if(sigOk)survivors.push(sig);
     }
     if(!survivors.length)return {tech:17,contradiction:true,text:`No cyclic rotation around ${label(cfg,q)} can give every neighbouring cell its two route segments with legally spaced pass pickups.`};
     if(survivors.length<current.size){state.patternRestrictions.set(q,new Set(survivors));return {tech:17,text:`Rotations around ${label(cfg,q)} that cannot give every neighbouring cell two usable segments (with a gray between pass pickups on any shared run) are impossible; ${survivors.length} remain.`}}
@@ -473,7 +500,7 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
  // Carry the actual pass state forward from the directed start branch. At its
  // open endpoint, reject any candidate continuation whose already-directed
  // strand reaches the wrong next event. This is direct chronology, not trial.
- function advanceFromStart(x,held,counts,record){const hits=[];for(const qs of Object.keys(cfg.clues)){const q=+qs;if(!ringCells(cfg,q).includes(x))continue;const rank=(counts.get(q)||0)+1;counts.set(q,rank);const nums=Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]];hits.push({q,rank,grant:nums.includes(rank)})}if(hits.length&&hits.some(h=>h.grant)!==hits.every(h=>h.grant))return {bad:`the adjacent clues disagree on whether ${label(cfg,x)} grants a permit at its current visit positions`};const grant=hits.some(h=>h.grant);if((cfg.kind[x]==='station'||cfg.kind[x]==='start')&&grant)return {bad:`${label(cfg,x)} would have to grant a permit even though ${cfg.kind[x]==='station'?'gray':'the start'} cells cannot`};
+ function advanceFromStart(x,held,counts,record){const hits=[];let ambiguous=false;for(const qs of Object.keys(cfg.clues)){const q=+qs;if(!ringCells(cfg,q).includes(x))continue;const rank=(counts.get(q)||0)+1;counts.set(q,rank);const spec=clueSpec(cfg,q);let grant;if(spec.nums.includes(rank))grant=true;else if(!spec.wild)grant=false;else if(cfg.kind[x]==='station'||cfg.kind[x]==='start')grant=false;else if(state.permitCells.has(x))grant=true;else if(state.noPermitCells.has(x))grant=false;else{ambiguous=true;grant=false}hits.push({q,rank,grant})}if(ambiguous)return {ambiguous:true,held,hits:[]};if(hits.length&&hits.some(h=>h.grant)!==hits.every(h=>h.grant))return {bad:`the adjacent clues disagree on whether ${label(cfg,x)} grants a permit at its current visit positions`};const grant=hits.some(h=>h.grant);if((cfg.kind[x]==='station'||cfg.kind[x]==='start')&&grant)return {bad:`${label(cfg,x)} would have to grant a permit even though ${cfg.kind[x]==='station'?'gray':'the start'} cells cannot`};
    // visit ranks must agree with everything already proven: a cell counted at
    // a granting position cannot be a proven non-acquisition (and vice versa),
    // and a pass circle with a fixed ordinal must be reached at that ordinal
@@ -481,9 +508,9 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
    if(!grant&&hits.length&&state.permitCells.has(x))return {bad:`${label(cfg,x)} would be counted at ${hits.map(h=>`visit ${h.rank} of ${label(cfg,h.q)}`).join(', ')}, none of which grants \u2014 but the traveller is proven to obtain a pass there`};
    const byClue=state.permitOrdinals.get(x);if(byClue)for(const h of hits){const fixedN=byClue.get(h.q);if(fixedN!==undefined&&fixedN!==h.rank)return {bad:`${label(cfg,x)} is the fixed visit ${fixedN} around ${label(cfg,h.q)}, but this route reaches it as visit ${h.rank}`}}
    if(record&&cfg.kind[x]!=='station'&&cfg.kind[x]!=='start'&&hits.length){if(grant&&!state.permitCells.has(x)){state.permitCells.add(x);return {mark:true,grant,hits,held}}if(!grant&&!state.noPermitCells.has(x)&&!state.permitCells.has(x)){state.noPermitCells.add(x);return {mark:true,grant,hits,held}}}if(grant){if(held)return {bad:`a second permit is acquired at ${label(cfg,x)} before the first is spent`};held=true}if(cfg.kind[x]==='station'){if(!held)return {bad:`gray ${label(cfg,x)} is reached while empty-handed`};held=false}return {held,hits,grant}}
- const startOut=cfg.kind.indexOf('start');if(startOut>=0){let cur=startOut,held=false,seen=new Set([cur]),counts=new Map(),startEvent=advanceFromStart(startOut,held,counts,false);if(startEvent.bad)return {tech:8,contradiction:true,text:startEvent.bad};while(true){const outs=neighbours(cfg,cur).filter(y=>hasArrow(state,cur,y));if(outs.length!==1)break;cur=outs[0];if(cur===startOut){if(held)return {tech:8,contradiction:true,text:`The directed loop returns to the start while still carrying a permit.`};break}if(seen.has(cur))break;seen.add(cur);const ev=advanceFromStart(cur,held,counts,true);if(ev.bad)return {tech:8,contradiction:true,text:`Following the directed route from the start, ${ev.bad}.`};if(ev.mark){const positions=ev.hits.map(h=>`${label(cfg,h.q)} visit ${h.rank}`).join(', ');return {tech:7,text:`Following the confirmed directed route from the start reaches ${label(cfg,cur)} at ${positions}. It ${ev.grant?'does':'does not'} grant a permit, so mark it accordingly.`}}held=ev.held}
+ const startOut=cfg.kind.indexOf('start');if(startOut>=0){let cur=startOut,held=false,seen=new Set([cur]),counts=new Map(),startEvent=advanceFromStart(startOut,held,counts,false);if(startEvent.bad)return {tech:8,contradiction:true,text:startEvent.bad};while(true){const outs=neighbours(cfg,cur).filter(y=>hasArrow(state,cur,y));if(outs.length!==1)break;cur=outs[0];if(cur===startOut){if(held)return {tech:8,contradiction:true,text:`The directed loop returns to the start while still carrying a permit.`};break}if(seen.has(cur))break;seen.add(cur);const ev=advanceFromStart(cur,held,counts,true);if(ev.ambiguous)break;if(ev.bad)return {tech:8,contradiction:true,text:`Following the directed route from the start, ${ev.bad}.`};if(ev.mark){const positions=ev.hits.map(h=>`${label(cfg,h.q)} visit ${h.rank}`).join(', ');return {tech:7,text:`Following the confirmed directed route from the start reaches ${label(cfg,cur)} at ${positions}. It ${ev.grant?'does':'does not'} grant a permit, so mark it accordingly.`}}held=ev.held}
    if(cur!==startOut&&!neighbours(cfg,cur).some(y=>hasArrow(state,cur,y)))for(const y of neighbours(cfg,cur))if(!on(state,cur,y)&&!state.offEdges.has(key(cur,y))&&!state.offDirections.has(cur+'>'+y)){
-     let z=y,h=held,walk=new Set([cur]),bad=null,branchCounts=new Map(counts);while(!walk.has(z)){walk.add(z);if(z===startOut){if(h)bad='the loop would return to the start still carrying a permit';break}const ev=advanceFromStart(z,h,branchCounts,false);if(ev.bad){bad=ev.bad;break}h=ev.held;const outs=neighbours(cfg,z).filter(w=>hasArrow(state,z,w));if(outs.length!==1)break;z=outs[0]}
+     let z=y,h=held,walk=new Set([cur]),bad=null,branchCounts=new Map(counts);while(!walk.has(z)){walk.add(z);if(z===startOut){if(h)bad='the loop would return to the start still carrying a permit';break}const ev=advanceFromStart(z,h,branchCounts,false);if(ev.ambiguous)break;if(ev.bad){bad=ev.bad;break}h=ev.held;const outs=neighbours(cfg,z).filter(w=>hasArrow(state,z,w));if(outs.length!==1)break;z=outs[0]}
      if(bad){state.offDirections.add(cur+'>'+y);let whole='';if(state.offDirections.has(y+'>'+cur)){state.offEdges.add(key(cur,y));whole=' Both orientations are now impossible, so exclude the edge entirely.'}return {tech:8,text:`Following the clue visit counts and current permit state from the start, continuing ${label(cfg,cur)} → ${label(cfg,y)} would mean ${bad}. That direction is impossible.${whole}`}}
    }
  }
@@ -646,21 +673,25 @@ function ordinalCandidates(cfg,state){
  if(!state||!state.patternRestrictions)return out;
  for(const qs of Object.keys(cfg.clues||{})){
    const q=+qs,ring=ringCells(cfg,q),m=ring.length;if(!m)continue;
-   const nums=[...new Set((Array.isArray(cfg.clues[q])?cfg.clues[q]:[cfg.clues[q]]).map(Number))];
-   if(nums.some(n=>n<1||n>m))continue;
+   const spec=clueSpec(cfg,q),nums=spec.nums;
+   if(specBad(spec,m))continue;
    const current=state.patternRestrictions.get(q)||new Set(Array.from({length:m},(_,i)=>['1:'+i,'-1:'+i]).flat());
    const start=cfg.kind.indexOf('start');
    const perCell=new Map();
    for(const sig of current){
      const [dStr,offStr]=sig.split(':');const d=+dStr,off=+offStr;
      const ranks=new Map();for(let n=1;n<=m;n++)ranks.set(ring[(off+d*(n-1)+m*3)%m],n);
-     const yes=new Set(ring.filter(x=>nums.includes(ranks.get(x))));
-     if(!grantsGeometryOk(cfg,yes))continue;
      if(ranks.has(start)&&ranks.get(start)!==1)continue;
      if(!startRankOk(cfg,state,ranks,m))continue;
+     let anyVariant=false;
+     for(const yes of yesVariants(cfg,state,ring,ranks,spec)){
+     if(!grantsGeometryOk(cfg,yes))continue;
      let ok=true;
      for(const x of ring)if((((cfg.kind[x]==='station'||cfg.kind[x]==='start'||(state.noPermitCells&&state.noPermitCells.has(x)))&&yes.has(x))||(state.permitCells&&state.permitCells.has(x)&&!yes.has(x))))ok=false;
      if(!ok)continue;
+     anyVariant=true;break;
+     }
+     if(!anyVariant)continue;
      for(const [x,n] of ranks){let byClue=perCell.get(x);if(!byClue)perCell.set(x,byClue=new Set());byClue.add(n)}
    }
    for(const [x,set] of perCell){let cell=out.get(x);if(!cell)out.set(x,cell=new Map());cell.set(q,set)}

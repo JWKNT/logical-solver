@@ -650,6 +650,14 @@ html.dark #app-sums .legend code { background: #37373c; }
 .a38-ordinal-cands{position:absolute;left:3px;bottom:2px;z-index:4;color:#9aa1aa;font:600 8.5px/1.1 Menlo,monospace;letter-spacing:.4px;max-width:46px;overflow:hidden;white-space:nowrap}
 html.dark .a38-ordinal-cands{color:#77777d}.a38-permit-demo{display:inline-block;width:18px;height:18px;box-sizing:border-box;border:2px solid #111;border-radius:50%;background:var(--panel);vertical-align:-4px}.a38-chevron{stroke:#111;stroke-width:2.1;fill:none;stroke-linecap:round;stroke-linejoin:round}.a38-chevron-demo{display:inline-block;color:#111;font:700 24px/1 sans-serif;vertical-align:-3px}.a38-tools{align-items:stretch;vertical-align:middle}.a38-tools button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:34px;white-space:nowrap}.a38-tools i{flex:0 0 auto;vertical-align:0}.a38-route-edge,.a38-forced-edge,.a38-line-edge{stroke:#0f4da8}html.dark .a38-permit-mark,html.dark .a38-permit-demo{border-color:#eee}html.dark .a38-permit-mark{color:#eee}
 .a38-cell.station.forced{background:color-mix(in srgb,#0f4da8 20%,#aeb4bd)}
+.a38-clue-layout{position:absolute;inset:0;pointer-events:none;font:700 15px/1 Georgia,serif;color:var(--text);z-index:4}
+.a38-clue-layout span{position:absolute;transform:translate(-50%,-50%)}
+.a38-clue-resolved{color:#b3261e}
+html.dark .a38-clue-resolved{color:#ff8a80}
+.a38-cell.clue .a38-clue-entry.fancy{color:transparent;caret-color:var(--text)}
+.a38-cell.clue .a38-clue-entry.fancy:focus{color:var(--text)}
+.a38-cell.clue:focus-within .a38-clue-layout{display:none}
+.a38-clue-entry.fancy:empty:before{content:''}
 .a38-permit-disc{fill:var(--panel);stroke:#111;stroke-width:2.4}
 .a38-permit-num{fill:#111;font:700 12px Menlo,monospace;text-anchor:middle}
 html.dark .a38-permit-disc{stroke:#eee}html.dark .a38-permit-num{fill:#eee}
