@@ -1,6 +1,6 @@
 # Logical Solvers
 
-Three puzzle solvers with shared machinery: an engine (exact search + solution
+Four puzzle solvers with shared machinery: an engine (exact search + solution
 counting + true candidates) and a human-rule stepper (a ladder of named
 deductions, simplest first, each with a prose explanation).
 
@@ -61,6 +61,45 @@ placing permits by chronological neighbour order and stations consuming them.
 The tab includes exact solution search/counting, candidate display, one-step
 explanations, and an A38-specific human-technique ladder.
 
+## Cave
+
+Shade the outside of one connected cave. Every shaded component reaches the
+grid edge, and each clue counts the consecutive unshaded cells it sees in its
+row and column, including itself. The Cave tab has exact solution counting,
+true candidates, one-step and full-path solving, previous-step history, named
+technique counters, and numbered explanations. Its ladder covers clue-cell and
+sight-line deductions, cave connectivity, outside escape, checkerboard prevention, the
+required shaded cell, and a final contradiction test. Confirmed unshaded clues
+can compare a small number of explicit four-arm sight distributions, keeping
+only conclusions shared by every human-sized case. A `?` clue marks an
+unshaded cell without fixing its sight count.
+
+The optional **No 2×2 shaded** and **No 2×2 unshaded** restrictions are
+supported by both the exact engine and dedicated step rules. In **Twilight**,
+a number cell may instead be shaded; when it is, the number gives the size of
+its orthogonally connected shaded component. Twilight adds separate clue-colour
+and shaded-region-size deduction sections, including size-bounded routes to the
+grid edge that treat different-sized clues as barriers. Small adjacent clue
+clusters are reduced to local shading patterns with a narrated opposite-state
+proof that lists the remaining cases and their concrete contradictions.
+A sight-capacity rule rejects an undecided clue
+whose unshaded reading cannot reach its number. Sight capacity follows an arm
+into any numbered cell it reaches: that clue becomes unshaded too, and its own
+count restricts the shared row or column. A checkerboard-assisted edge
+rule follows an immediately forced colour into a numbered shaded wall and rejects it when the wall
+can no longer reach the edge within its size. A wall-separation rule also keeps
+two already shaded components with different size clues from being joined by a
+single undecided cell. Dedicated Twilight colour agreement records conclusions
+shared by the clue's unshaded and shaded readings. Diagonal wall contact also
+accounts for the shaded bridge required to avoid a checkerboard, rejecting a
+size clue when the joined wall would already be too large. The visible ladder uses only short narrated
+shading trials and two-case agreement; it deliberately stops instead of
+escalating to deep bifurcation. A `?` may take either colour.
+
+Unequal numeric clues that touch orthogonally or diagonally cannot both be
+shaded: orthogonal clues would share one component immediately; diagonal clues
+either join through a shared-corner cell or force a checkerboard crossing.
+
 `node tests/sums-soundness.test.js` runs scenario regressions plus randomized
 engine-vs-ladder batteries (`--scenarios` or `--battery` runs one half; the
 full default run takes roughly half an hour).
@@ -79,6 +118,9 @@ js/sums-app.js      Japanese Sums UI
 js/a38-engine.js    A38 directed-loop and permit search
 js/a38-stepper.js   A38 named human-rule ladder
 js/a38-app.js       A38 UI and board editor
+js/cave-engine.js   Cave exact SAT engine and solution intersection
+js/cave-stepper.js  Cave named human-rule ladder
+js/cave-app.js      Cave UI, history, candidates, and path controls
 js/vendor/logic-solver.bundle.js  Browser SAT runtime (MIT; license alongside)
 tests/            soundness, symmetry, and engine batteries
 build.js          assembles dist/ubahn-solver.html
@@ -93,4 +135,6 @@ node symmetry.test.js         # U-Bahn: all rules invariant under transpose/mirr
 node engine.test.js           # U-Bahn: engine vs brute-force on small boards
 node sums-engine.test.js      # Sums: engine vs brute-force solution counts
 node sums-soundness.test.js   # Sums: every step validated against enumerated solution sets
+node cave-engine.test.js      # Cave: exact engine vs independent brute force
+node cave-stepper.test.js     # Cave: individual deductions and end-to-end soundness
 ```

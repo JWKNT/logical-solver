@@ -20,12 +20,15 @@ const sumsEngine = read('js/sums-engine.js');
 let sumsStepper = read('js/sums-stepper.js');
 const sumsApp = read('js/sums-app.js');
 const a38Engine = read('js/a38-engine.js'), a38Stepper = read('js/a38-stepper.js'), a38App = read('js/a38-app.js');
+const caveEngine = read('js/cave-engine.js'), caveStepper = read('js/cave-stepper.js'), caveApp = read('js/cave-app.js');
 const logicSolver = read('js/vendor/logic-solver.bundle.js');
 const a38Worker = logicSolver + '\n' + a38Engine + '\nonmessage=function(e){postMessage(A38Engine.solve(e.data,e.data.time||10));};';
 const a38StepWorker = a38Stepper + '\nonmessage=function(e){var st=e.data.state;var x=A38Stepper.step(e.data.cfg,st);postMessage({x:x,state:st});};';
+const caveWorker = logicSolver + '\n' + caveEngine + '\n' + caveStepper + '\nonmessage=function(e){postMessage(CaveEngine.solve(e.data,e.data.time||10));};';
+const caveStepWorker = logicSolver + '\n' + caveEngine + '\n' + caveStepper + '\nonmessage=function(e){var s=e.data.state;var m=CaveStepper.step(e.data.cfg,s);postMessage({move:m,state:s});};';
 html = html.replace(
-  '<script src="js/engine.js"></script>\n<script src="js/stepper.js"></script>\n<script src="js/app.js"></script>\n<script src="js/sums-engine.js"></script>\n<script src="js/sums-stepper.js"></script>\n<script src="js/sums-app.js"></script>\n<script src="js/vendor/logic-solver.bundle.js"></script>\n<script src="js/a38-engine.js"></script>\n<script src="js/a38-stepper.js"></script>\n<script src="js/a38-app.js"></script>',
-  () => '<script>\n' + engine + '\n/* ================= stepper (human-rule deductions) ================= */\n' + stepper + '\n' + app + '\n/* ================= japanese sums ================= */\n' + sumsEngine + '\n' + sumsStepper + '\n' + sumsApp + '\n/* ================= A38 SAT ================= */\n' + logicSolver + '\n' + a38Engine + '\nwindow.A38_WORKER_SOURCE=' + JSON.stringify(a38Worker) + ';\nwindow.A38_STEP_WORKER_SOURCE=' + JSON.stringify(a38StepWorker) + ';\n' + a38Stepper + '\n' + a38App + '</script>'
+  '<script src="js/engine.js"></script>\n<script src="js/stepper.js"></script>\n<script src="js/app.js"></script>\n<script src="js/sums-engine.js"></script>\n<script src="js/sums-stepper.js"></script>\n<script src="js/sums-app.js"></script>\n<script src="js/vendor/logic-solver.bundle.js"></script>\n<script src="js/a38-engine.js"></script>\n<script src="js/a38-stepper.js"></script>\n<script src="js/a38-app.js"></script>\n<script src="js/cave-engine.js"></script>\n<script src="js/cave-stepper.js"></script>\n<script src="js/cave-app.js"></script>',
+  () => '<script>\n' + engine + '\n/* ================= stepper (human-rule deductions) ================= */\n' + stepper + '\n' + app + '\n/* ================= japanese sums ================= */\n' + sumsEngine + '\n' + sumsStepper + '\n' + sumsApp + '\n/* ================= A38 SAT ================= */\n' + logicSolver + '\n' + a38Engine + '\nwindow.A38_WORKER_SOURCE=' + JSON.stringify(a38Worker) + ';\nwindow.A38_STEP_WORKER_SOURCE=' + JSON.stringify(a38StepWorker) + ';\n' + a38Stepper + '\n' + a38App + '\n/* ================= Cave ================= */\n' + caveEngine + '\nwindow.CAVE_WORKER_SOURCE=' + JSON.stringify(caveWorker) + ';\nwindow.CAVE_STEP_WORKER_SOURCE=' + JSON.stringify(caveStepWorker) + ';\n' + caveStepper + '\n' + caveApp + '</script>'
 );
 fs.mkdirSync('dist', { recursive: true });
 fs.writeFileSync('dist/ubahn-solver.html', html);

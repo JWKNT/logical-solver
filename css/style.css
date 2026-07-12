@@ -666,3 +666,38 @@ html.dark .a38-permit-disc{stroke:#eee}html.dark .a38-permit-num{fill:#eee}
 #app-a38 .legend .a38-pass-demo,#app-a38 .legend .a38-permit-demo,#app-a38 .legend .a38-chevron-demo,#app-a38 .legend .a38-arrow-demo,#app-a38 .legend .a38-start-demo{vertical-align:0}
 #app-a38 .legend .a38-arrow-demo{font-size:20px;line-height:14px}
 #app-a38 .legend .a38-chevron-demo{font-size:19px;line-height:14px}
+
+/* ---- Cave ---- */
+.cave-grid{display:grid;width:max-content;border:2px solid var(--grid-line);background:var(--grid-line)}
+.cave-cell{width:52px;height:52px;border:1px solid var(--grid-line);background:var(--board);position:relative;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+.cave-cell.black{background:var(--shaded)}
+.cave-cell.white,.cave-cell.solved-white{background:#dce9dc}
+.cave-cell.clue{background:#f7f3e9}
+.cave-cell.clue.white,.cave-cell.clue.solved-white{background:#dce9dc}
+.cave-cell.clue.black{background:#b9bec4}
+.cave-clue-entry{width:100%;min-height:38px;display:flex;align-items:center;justify-content:center;position:relative;z-index:2;outline:none;color:var(--ink);caret-color:var(--ink);font:700 21px/1 Georgia,serif;text-align:center;cursor:text}
+.cave-clue-entry:empty::before{content:''}
+.cave-clue-entry:focus{box-shadow:inset 0 -2px var(--sign-blue)}
+.cave-cell.clue.black .cave-clue-entry{color:var(--ink)}
+.cave-demo{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;box-sizing:border-box;vertical-align:-4px;border:1px solid var(--grid-line);font:700 10px/1 Menlo,monospace}
+.cave-demo-black{background:var(--shaded)}
+.cave-demo-white{background:#dce9dc}
+.cave-demo-unknown{color:#999;background:var(--board)}
+#app-cave .legend span{display:inline-flex;align-items:center;gap:6px}
+html.dark .cave-cell.white,html.dark .cave-cell.solved-white{background:#34483a}
+html.dark .cave-cell.clue{background:#474237}
+html.dark .cave-cell.clue.white,html.dark .cave-cell.clue.solved-white{background:#34483a}
+html.dark .cave-cell.clue.black{background:#555b62}
+.cave-small-variants{padding:2px 10px}
+.cave-twilight-toggle{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 9px;border:1px solid var(--grid-line);background:color-mix(in srgb,var(--sign-blue) 7%,var(--board));font-variant:small-caps;font-weight:700;letter-spacing:.7px;cursor:pointer;user-select:none}
+.cave-twilight-toggle input{appearance:none;-webkit-appearance:none;width:22px;height:22px;margin:0;border:1px solid var(--sign-blue);background:var(--board);position:relative;cursor:pointer}
+.cave-twilight-toggle input:checked{background:var(--sign-blue)}
+.cave-twilight-toggle input:checked::after{content:'';position:absolute;left:6px;top:2px;width:6px;height:12px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(42deg)}
+.cave-twilight-toggle:has(input:checked){border-color:var(--sign-blue);background:color-mix(in srgb,var(--sign-blue) 14%,var(--board))}
+html.dark .cave-twilight-toggle{background:color-mix(in srgb,#6a86b8 10%,var(--board))}
+html.dark .cave-twilight-toggle input:checked{background:#6a86b8;border-color:#6a86b8}
+#caveStrats{counter-reset:strat;list-style:none;padding-left:30px}
+#caveStrats>li{position:relative}
+#caveStrats>li:not(.variant-bar){counter-increment:strat}
+#caveStrats>li:not(.variant-bar)::before{content:counter(strat) '.';position:absolute;left:-26px;color:#999;font-size:13px}
+html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}

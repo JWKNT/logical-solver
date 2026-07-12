@@ -13,6 +13,7 @@
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
+    <button class="tab" data-app="cave">Cave</button>
     <button id="themeToggle" title="Toggle light/dark">◐</button>
   </nav>
   <script>
@@ -156,6 +157,52 @@
  <div class="legend"><span><b class="a38-start-demo">1</b> start</span><span><i class="a38-pass-demo"></i> gray cell</span><span><b class="a38-clue-demo">3</b> number clue</span><span><b class="a38-permit-demo"></b> pass obtained</span><span><b class="a38-arrow-demo">—</b> forced segment</span><span><b class="a38-chevron-demo">‹</b> direction</span><span>× excluded edge</span></div>
  <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the black circle and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><details class="help strategies" open><summary>Step deduction types</summary><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></details></aside></div>
 </section>
+<section id="app-cave" hidden>
+  <div class="toolbar">
+    <div class="group"><label for="caveRows">Rows</label><input id="caveRows" type="number" value="6" min="2" max="16"></div>
+    <div class="group"><label for="caveCols">Columns</label><input id="caveCols" type="number" value="6" min="2" max="16"></div>
+    <div class="group"><label for="caveTime">Time limit (s)</label><input id="caveTime" type="number" min="1" max="600" value="10"></div>
+    <span class="variant-group cave-small-variants">
+      <label class="chk"><input type="checkbox" id="caveNo22Black"> No 2×2 shaded</label>
+      <label class="chk"><input type="checkbox" id="caveNo22White"> No 2×2 unshaded</label>
+    </span>
+    <label class="cave-twilight-toggle"><input type="checkbox" id="caveTwilight"><span>Twilight</span></label>
+    <div class="sep"></div>
+    <button id="caveSolve" class="primary">Solve</button>
+    <button id="caveCands" class="primary">True candidates</button>
+    <button id="caveStep">Take step</button><button id="cavePrev">Previous step</button><button id="caveAuto">Full solve path</button>
+    <div class="sep"></div>
+    <button id="caveBuild">Resize</button>
+    <button id="caveReset">Reset steps</button>
+    <button id="caveClear" class="danger">Clear all</button>
+  </div>
+  <div class="board-row">
+    <div class="board-col">
+      <div class="board-wrap"><div id="caveGrid" class="cave-grid" aria-label="Cave puzzle grid"></div></div>
+      <div class="status" id="caveStatus">Type a number in a cell to enter a Cave clue.</div>
+      <div class="legend">
+        <span><i class="cave-demo cave-demo-black"></i> shaded / outside</span>
+        <span><i class="cave-demo cave-demo-white"></i> proved unshaded / cave</span>
+        <span><i class="cave-demo cave-demo-unknown">?</i> varies between solutions</span>
+      </div>
+      <details class="help">
+        <summary>Rules &amp; how to use this tool</summary>
+        <p><b>Cave.</b> Shade cells so that all unshaded cells form one orthogonally connected cave. Every connected group of shaded cells must reach an edge of the grid: shaded cells are the outside of the cave, and no shaded pocket may be enclosed.</p>
+        <p>A number lies in an unshaded cell and gives the total number of consecutive unshaded cells visible horizontally and vertically, including its own cell. A shaded cell stops sight in that direction. A <b>?</b> is an unshaded clue cell whose number is not given. A valid Cave has at least one shaded cell.</p>
+        <p><b>Optional restrictions.</b> <i>No 2×2 shaded</i> and <i>No 2×2 unshaded</i> forbid monochrome 2×2 blocks of the selected colour.</p>
+        <p><b>Twilight.</b> Number cells may be shaded or unshaded. An unshaded number is the usual Cave sight clue. A shaded number instead gives the exact size of the orthogonally connected shaded region containing it. In Twilight, values from 1 through the number of grid cells are accepted; a value outside the ordinary sight range necessarily takes the shaded interpretation. A <b>?</b> may take either colour and supplies no count.</p>
+        <p>Click a cell and type a clue, or <b>?</b>. Backspace clears it. <b>Solve</b> shows one solution and checks uniqueness. <b>True candidates</b> marks cells that are shaded or unshaded in every solution. <b>Take step</b> makes one named deduction, while <b>Previous step</b> and <b>Full solve path</b> navigate the same persistent logical path used by the other tabs.</p>
+      </details>
+    </div>
+    <aside class="strategies-side">
+      <details class="help strategies" open>
+        <summary>Step deduction types</summary>
+        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <ol id="caveStrats"></ol>
+      </details>
+    </aside>
+  </div>
+</section>
 </main>
 
 <script src="js/engine.js"></script>
@@ -168,14 +215,18 @@
 <script src="js/a38-engine.js"></script>
 <script src="js/a38-stepper.js"></script>
 <script src="js/a38-app.js"></script>
+<script src="js/cave-engine.js"></script>
+<script src="js/cave-stepper.js"></script>
+<script src="js/cave-app.js"></script>
 <script>
 // tab switching (no URL change); the title follows the active app
-const APP_TITLES = { ubahn: 'U-Bahn Solver', sums: 'Japanese Sums Solver', a38: 'A38 Solver' };
+const APP_TITLES = { ubahn: 'U-Bahn Solver', sums: 'Japanese Sums Solver', a38: 'A38 Solver', cave: 'Cave Solver' };
 document.querySelectorAll('.tabs .tab').forEach(btn => btn.addEventListener('click', () => {
   document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b === btn));
   document.getElementById('app-ubahn').hidden = btn.dataset.app !== 'ubahn';
   document.getElementById('app-sums').hidden = btn.dataset.app !== 'sums';
   document.getElementById('app-a38').hidden = btn.dataset.app !== 'a38';
+  document.getElementById('app-cave').hidden = btn.dataset.app !== 'cave';
   document.getElementById('siteTitle').textContent = APP_TITLES[btn.dataset.app];
   document.title = APP_TITLES[btn.dataset.app];
 }));
