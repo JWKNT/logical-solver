@@ -160,3 +160,52 @@ if (process.argv.includes('--deep')) {
   assert(permitish >= 3, 'the permit machinery should fire through the variant plumbing (' + permitish + ')');
   console.log('A38 wildcard stepper smoke passed (' + k + ' steps, ' + permitish + ' permit-machinery)');
 }
+
+{
+  // converse start-order rule: a start neighbour whose possible visit
+  // ordinals around a clue contain neither 1 nor the ring size can never be
+  // joined to the start (it would have to be the traversal's first or last
+  // cell). Pin r3c3 to ranks 4/5 around r2c2 and expect the exclusion.
+  const R = 5, C = 5, at = (r, c) => (r - 1) * C + c - 1;
+  const kind = Array(R * C).fill('cell');
+  kind[at(2, 2)] = 'clue'; kind[at(4, 3)] = 'start';
+  const cfg = { R, C, kind, clues: { [at(2, 2)]: [3] } };
+  const ring = [at(1,2),at(1,3),at(2,3),at(3,3),at(3,2),at(3,1),at(2,1),at(1,1)];
+  const keep = new Set();
+  for (const d of [1, -1]) for (let off = 0; off < 8; off++) {
+    const ranks = new Map(); for (let n = 1; n <= 8; n++) ranks.set(ring[(off + d * (n - 1) + 24) % 8], n);
+    const r33 = ranks.get(at(3, 3));
+    if (r33 === 4 || r33 === 5) keep.add(d + ':' + off);
+  }
+  const st = { patternRestrictions: new Map([[at(2, 2), keep]]) };
+  let found = false;
+  for (let n = 0; n < 25; n++) { const mv = S.step(cfg, st, { noTrial: true, noBatch: true }); if (!mv || mv.done || mv.contradiction) break; if (/very first or very last/.test(mv.text || '')) { found = true; break; } }
+  const k = at(3, 3) < at(4, 3) ? at(3, 3) + '-' + at(4, 3) : at(4, 3) + '-' + at(3, 3);
+  assert(found && st.offEdges.has(k), 'the start edge to a mid-ordinal cell must be excluded');
+  console.log('A38 start-order exclusion test passed');
+}
+
+{
+  // full-ladder regression: the user's symmetric 14x13 (true-image
+  // transcription, machine-measured + crop-verified). Exercises the
+  // chain-aware start-rank rules: the loop traverses each confirmed start
+  // chain first or last, so the first ring cell of a clue met along it is
+  // that clue's visit 1 or m — validation in every rotation site plus the
+  // converse exclusion at chain endpoints.
+  global.Logic = global.Logic || require('../js/vendor/logic-solver.bundle.js');
+  delete require.cache[require.resolve('../js/a38-engine.js')];
+  const SAT6 = require('../js/a38-engine.js');
+  const P = require('./a38-sym14.js');
+  const state = {};
+  let x, k = 0, chainRule = false;
+  const t0 = Date.now();
+  for (let n = 0; n < 900 && Date.now() - t0 < 600000; n++) { x = S.step(P, state); if (x.done || x.contradiction) break; k++; if (/start chain|very first or very last/.test(x.text || '')) chainRule = true; }
+  assert(x && x.complete, 'a38-sym14 should complete by the ladder (reached step ' + k + ')');
+  assert(chainRule, 'the start-chain rank rule should fire on this puzzle');
+  const r = SAT6.solve({ ...P, maxSolutions: 2 }, 180);
+  assert.strictEqual(r.solutions.length, 1);
+  const p = r.solutions[0], want = new Set();
+  for (let i = 0; i < p.length; i++) want.add(p[i] + '>' + p[(i + 1) % p.length]);
+  assert([...want].every(e => state.forcedEdges.has(e)) && [...state.forcedEdges].every(e => want.has(e)), 'sym14 ladder route must match the unique solution');
+  console.log('A38 sym14 full-ladder regression passed (' + k + ' steps, ' + ((Date.now() - t0) / 1000).toFixed(0) + 's)');
+}

@@ -45,7 +45,7 @@ function cfg(){return {R,C,kind,clues,time:+$('a38Time').value,maxSolutions:runM
 function buildStrategyPanel(active=-1){$('a38Strats').innerHTML='';const order=A38Stepper.displayOrder||A38Stepper.techniques.map((_,i)=>i);for(const i of order){const x=A38Stepper.techniques[i];let li=document.createElement('li'),n=stepCounts.get(i)||0;li.classList.toggle('active',i===active);li.innerHTML=`<b>${x[0]}</b>${n?`<span class="cnt">×${n}</span>`:''}<div class="sdesc">${x[1]}</div>`;$('a38Strats').append(li)}}
 function reset(){a38Hist=[];if(typeof stopA38Auto==='function')stopA38Auto();if($('a38Prev'))$('a38Prev').disabled=true;shown=null;state={};stepCounts=new Map();stepNo=0;buildStrategyPanel();status('Steps reset after editing the puzzle.')}
 function resetSteps(){a38Hist=[];if(typeof stopA38Auto==='function')stopA38Auto();if($('a38Prev'))$('a38Prev').disabled=true;shown=null;state={};stepCounts=new Map();stepNo=0;buildStrategyPanel();status('Marks reset; clues kept.');render()}
-function search(done){status('Solving the directed route and proving uniqueness…');if(window.A38_WORKER_SOURCE&&window.Worker){let u=URL.createObjectURL(new Blob([window.A38_WORKER_SOURCE],{type:'text/javascript'})),w=new Worker(u);w.onmessage=e=>{w.terminate();URL.revokeObjectURL(u);done(e.data)};w.onerror=e=>{w.terminate();URL.revokeObjectURL(u);status('Solver worker failed: '+e.message)};w.postMessage(cfg())}else setTimeout(()=>done(A38Engine.solve(cfg(),+$('a38Time').value)),20)}
+function search(done){killStepThinking();killSolveThinking();status('Solving the directed route and proving uniqueness…');if(window.A38_WORKER_SOURCE&&window.Worker){let u=URL.createObjectURL(new Blob([window.A38_WORKER_SOURCE],{type:'text/javascript'})),w=new Worker(u);solveWorker=w;w.onmessage=e=>{if(solveWorker===w)solveWorker=null;w.terminate();URL.revokeObjectURL(u);done(e.data)};w.onerror=e=>{w.terminate();URL.revokeObjectURL(u);status('Solver worker failed: '+e.message)};w.postMessage(cfg())}else setTimeout(()=>done(A38Engine.solve(cfg(),+$('a38Time').value)),20)}
 function finishRun(r,cands){if(r.error)return statusHTML('<span class="bad">'+esc(r.error)+'</span>');if(!r.solutions.length)return statusHTML(r.timed?'<span class="warn">No solution found within the time limit.</span> Raise the limit and try again.':'<span class="bad">No solution exists.</span>');
  if(cands&&(r.timed||r.capped))return statusHTML('<span class="warn">The complete solution set was not enumerated</span> \u2014 exact directed candidates cannot safely be shown. Raise the time limit.');if(cands){state.forcedEdges=A38Engine.commonDirectedEdges(r.solutions);state.forcedCells=new Set([...state.forcedEdges].flatMap(k=>k.split('>').map(Number)));
   // permits acquired in EVERY solution get a disc; the number shows only when
@@ -68,14 +68,26 @@ function statusStep(x){const box=$('a38Status');box.textContent='';
  if(!x.chain&&!x.cases){box.append(document.createTextNode((x.error||x.text)+follow));decorate();return}const addText=s=>box.append(document.createTextNode(s)),addChain=chain=>{let ol=document.createElement('ol');ol.className='chain';for(const mv of (chain||[]).slice(0,24)){let li=document.createElement('li'),b=document.createElement('b');b.textContent=(A38Stepper.techniques[mv.tech]||['Deduction'])[0]+': ';li.append(b,document.createTextNode(mv.text));ol.append(li)}if((chain||[]).length>24){let li=document.createElement('li');li.textContent=`… ${(chain||[]).length-24} more consequences`;ol.append(li)}box.append(ol)};if(x.chain){addText(x.chainIntro||x.text);addChain(x.chain);addText(x.chainOutro?' '+x.chainOutro:'')}else{addText(x.text);for(const cs of x.cases){let p=document.createElement('p');p.textContent=cs.intro;box.append(p);addChain(cs.chain)}}if(follow)addText(follow);decorate()}
 if(!window.A38_WORKER_SOURCE&&window.fetch)Promise.all(['js/vendor/logic-solver.bundle.js','js/a38-engine.js'].map(u=>fetch(u).then(r=>r.ok?r.text():Promise.reject()))).then(([ls,eng])=>{window.A38_WORKER_SOURCE=ls+'\n'+eng+'\nonmessage=function(e){postMessage(A38Engine.solve(e.data,e.data.time||10));};'}).catch(()=>{});
 if(!window.A38_STEP_WORKER_SOURCE&&window.fetch)fetch('js/a38-stepper.js').then(r=>r.ok?r.text():Promise.reject()).then(src=>{window.A38_STEP_WORKER_SOURCE=src+'\nonmessage=function(e){var st=e.data.state;var x=A38Stepper.step(e.data.cfg,st);postMessage({x:x,state:st});};'}).catch(()=>{});
-let stepWorker=null,stepBusy=false,a38Hist=[],a38Auto=false;
+let stepWorker=null,stepBusy=false,a38Hist=[],a38Auto=false,solveWorker=null,stepSnapshotPending=false;
+function killStepThinking(){
+ if(stepWorker){try{stepWorker.terminate()}catch(e){}stepWorker=null}
+ if(stepBusy){stepBusy=false;$('a38Step').disabled=false;
+   if(stepSnapshotPending&&a38Hist.length)a38Hist.pop();   // the aborted step never applied
+ }
+ stepSnapshotPending=false;
+ stopA38Auto();updatePrev();
+}
+function killSolveThinking(){
+ if(solveWorker){try{solveWorker.terminate()}catch(e){}solveWorker=null}
+}
 function cloneA38State(o){return {lineEdges:new Set(o.lineEdges||[]),offEdges:new Set(o.offEdges||[]),forcedEdges:new Set(o.forcedEdges||[]),offDirections:new Set(o.offDirections||[]),permitCells:new Set(o.permitCells||[]),noPermitCells:new Set(o.noPermitCells||[]),permitOrdinals:new Map([...(o.permitOrdinals||new Map())].map(([x,m])=>[x,new Map(m)])),patternRestrictions:new Map([...(o.patternRestrictions||new Map())].map(([q,s2])=>[q,new Set(s2)]))}}
 function updatePrev(){$('a38Prev').disabled=!a38Hist.length}
 function stopA38Auto(){a38Auto=false;$('a38Auto').textContent='Full solve path'}
 function takeStep(){
  if(stepBusy)return;
+ killSolveThinking();
  shown=null;
- a38Hist.push({state:state.lineEdges?cloneA38State(state):{},stepNo,counts:new Map(stepCounts)});if(a38Hist.length>500)a38Hist.shift();
+ a38Hist.push({state:state.lineEdges?cloneA38State(state):{},stepNo,counts:new Map(stepCounts)});if(a38Hist.length>500)a38Hist.shift();stepSnapshotPending=true;
  const runLocal=()=>setTimeout(()=>{let x=A38Stepper.step(cfg(),state);afterStep(x)},0);
  const src=window.A38_STEP_WORKER_SOURCE;
  stepBusy=true;$('a38Step').disabled=true;status('Thinking\u2026 (deeper deductions can take a little while)');
@@ -84,7 +96,7 @@ function takeStep(){
    try{stepWorker.postMessage({cfg:cfg(),state})}catch(err){stepWorker=null;runLocal()}
  }else runLocal();
 }
-function afterStep(x){stepBusy=false;$('a38Step').disabled=false;
+function afterStep(x){stepBusy=false;stepSnapshotPending=false;$('a38Step').disabled=false;
  if(x.tech==null&&!x.absorbed&&a38Hist.length)a38Hist.pop();   // nothing changed: drop the snapshot
  updatePrev();
  statusStep(x);if(x.tech!=null)stepCounts.set(x.tech,(stepCounts.get(x.tech)||0)+1);buildStrategyPanel(x.tech==null?-1:x.tech);render();

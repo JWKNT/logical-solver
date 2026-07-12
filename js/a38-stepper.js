@@ -157,15 +157,42 @@ function strandOrderStep(cfg,state){
 // very last cell of the whole traversal (depending on the arrow), so inside
 // any clue ring its rank must be 1 or the ring size m — pinned to one of the
 // two once the segment is directed.
+// Walk each confirmed line chain leaving the start (unique continuation).
+// The loop traverses such a chain either first (leaving the start) or last
+// (returning to it), so the FIRST ring cell of any clue met along a chain is
+// that clue's first or last visit — pinned to one of the two by any arrow on
+// the chain. startChains returns [{cells:[...beyond start], dir}] where dir
+// is 1 (leaves the start), -1 (arrives), or 0 (undirected).
+function startChains(cfg,state){
+ const start=cfg.kind.indexOf('start');if(start<0)return [];
+ const out=[];
+ for(const first of neighbours(cfg,start)){
+   if(!on(state,start,first))continue;
+   let dir=hasArrow(state,start,first)?1:hasArrow(state,first,start)?-1:0;
+   const cells=[first];let prev=start,cur=first;
+   while(true){
+     const next=neighbours(cfg,cur).filter(y=>y!==prev&&on(state,cur,y));
+     if(next.length!==1)break;
+     if(!dir){if(hasArrow(state,cur,next[0]))dir=1;else if(hasArrow(state,next[0],cur))dir=-1}
+     prev=cur;cur=next[0];cells.push(cur);
+     if(cur===start){cells.pop();break}
+   }
+   out.push({cells,dir});
+ }
+ out.push({cells:[],dir:0});   // the trivial chain: extensions directly at the start
+ return out;
+}
 function startRankOk(cfg,state,ranks,m){
  const start=cfg.kind.indexOf('start');if(start<0)return true;
- for(const x of neighbours(cfg,start)){
-   if(!ranks.has(x)||!on(state,start,x))continue;
-   const r=ranks.get(x);
-   const outArrow=hasArrow(state,start,x),inArrow=hasArrow(state,x,start);
-   if(outArrow){if(r!==1)return false}
-   else if(inArrow){if(r!==m)return false}
-   else if(r!==1&&r!==m)return false;
+ for(const ch of startChains(cfg,state)){
+   for(const x of ch.cells){
+     if(!ranks.has(x))continue;
+     const r=ranks.get(x);
+     if(ch.dir===1){if(r!==1)return false}
+     else if(ch.dir===-1){if(r!==m)return false}
+     else if(r!==1&&r!==m)return false;
+     break;   // only the FIRST ring cell of this clue's ring on the chain is constrained
+   }
  }
  return true;
 }
@@ -385,7 +412,7 @@ function proveBadBySplit(cfg,state,deadline,depth=1){
 function addSharedConclusion(state,a,b){
  let first=null,count=0;for(const [name,target] of [['lineEdges','line'],['offEdges','excluded edge'],['forcedEdges','direction'],['offDirections','impossible direction'],['permitCells','pass acquisition'],['noPermitCells','non-acquisition']])for(const x of a[name])if(b[name].has(x)&&!state[name].has(x)){state[name].add(x);if(!first)first={name,target,x};count++}if(first)first.count=count;return first;
 }
-function addCommonConclusion(state,cases){if(cases.length<2)return null;let first=null,count=0;for(const [name,target] of [['lineEdges','line'],['offEdges','excluded edge'],['forcedEdges','direction'],['offDirections','impossible direction'],['permitCells','pass acquisition'],['noPermitCells','non-acquisition']])for(const x of cases[0][name])if(!state[name].has(x)&&cases.every(s=>s[name].has(x))){state[name].add(x);if(!first)first={name,target,x};count++}if(first)first.count=count;return first}
+function addCommonConclusion(state,cases){if(cases.length<2)return null;let first=null,count=0,vis=0;for(const [name,target] of [['lineEdges','line'],['offEdges','excluded edge'],['forcedEdges','direction'],['permitCells','pass acquisition'],['noPermitCells','non-acquisition'],['offDirections','impossible direction']])for(const x of cases[0][name])if(!state[name].has(x)&&cases.every(s=>s[name].has(x))){state[name].add(x);if(!first)first={name,target,x};count++;if(name!=='offDirections')vis++}if(first){first.count=count;first.vis=vis}return first}
 function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<cfg.R*cfg.C;i++)if(cfg.kind[i]!=='clue')open.push(i);
 // ===== 1. standard simple-loop logic =====
  // Degree contradictions and the simplest local fills/exclusions.
@@ -439,6 +466,40 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
  const startCell=cfg.kind.indexOf('start');for(const y of neighbours(cfg,startCell))if(cfg.kind[y]==='station'&&!state.offDirections.has(startCell+'>'+y)){state.offDirections.add(startCell+'>'+y);return {tech:8,text:`The traveller starts empty-handed, so the first move cannot enter gray ${label(cfg,y)}. Mark ${label(cfg,startCell)} → ${label(cfg,y)} impossible (the reverse direction may still close the loop).`}}
  // two proven pass acquisitions can never be consecutive on the route
  for(const x of state.permitCells)for(const y of neighbours(cfg,x))if(y>x&&state.permitCells.has(y)&&!state.offEdges.has(key(x,y))){state.offEdges.add(key(x,y));return {tech:9,text:`${label(cfg,x)} and ${label(cfg,y)} both acquire a pass. Travelling one directly into the other would pick up a second pass while still holding the first, so their shared edge is excluded.`}}
+ // The loop traverses each confirmed start chain first or last, so the first
+ // ring cell of a clue met along it must be that clue's visit 1 or m. This
+ // both excludes prospective extensions whose ordinal candidates allow
+ // neither, and directs the chain when only one of the two is possible.
+ {const start=cfg.kind.indexOf('start');
+  if(start>=0){
+    const cands=ordinalCandidates(cfg,state);
+    for(const ch of startChains(cfg,state)){
+      const seen=new Set();   // clues whose ring the chain already entered
+      for(const x of ch.cells)for(const qs of Object.keys(cfg.clues)){const q=+qs;if(!seen.has(q)&&ringCells(cfg,q).includes(x))seen.add(q)}
+      const e=ch.cells.length?ch.cells[ch.cells.length-1]:start;
+      const prev=ch.cells.length>1?ch.cells[ch.cells.length-2]:start;
+      for(const y of neighbours(cfg,e)){
+        if(y===prev||on(state,e,y)||state.offEdges.has(key(e,y)))continue;
+        const byClue=cands.get(y);if(!byClue)continue;
+        for(const [q,set] of byClue){
+          if(seen.has(q)||!set.size)continue;
+          const m=ringCells(cfg,q).length;
+          const canFirst=set.has(1),canLast=set.has(m);
+          if(!canFirst&&!canLast){
+            state.offEdges.add(key(e,y));
+            return {tech:7,text:`Extending the confirmed start chain through ${label(cfg,e)} to ${label(cfg,y)} would make ${label(cfg,y)} the chain's first cell around ${label(cfg,q)} \u2014 the traversal's very first or very last visit there (visit 1 or ${m}) \u2014 but it can only be visit ${[...set].sort((a,b)=>a-b).join('/')}. Exclude ${label(cfg,e)}\u2013${label(cfg,y)}.`};
+          }
+          if(ch.dir===1&&!canFirst&&!state.offDirections.has(e+'>'+y)){state.offDirections.add(e+'>'+y);return {tech:7,text:`The start chain leaves the start, so extending it to ${label(cfg,y)} would make ${label(cfg,y)} visit 1 around ${label(cfg,q)}, which its candidates forbid: ${label(cfg,e)} \u2192 ${label(cfg,y)} is impossible.`}}
+          if(ch.dir===-1&&!canLast&&!state.offDirections.has(y+'>'+e)){state.offDirections.add(y+'>'+e);return {tech:7,text:`The start chain returns to the start, so reaching it from ${label(cfg,y)} would make ${label(cfg,y)} visit ${m} around ${label(cfg,q)}, which its candidates forbid: ${label(cfg,y)} \u2192 ${label(cfg,e)} is impossible.`}}
+          if(!ch.dir){
+            if(!canFirst&&!state.offDirections.has(e+'>'+y)){state.offDirections.add(e+'>'+y);return {tech:7,text:`${label(cfg,y)} can never be visit 1 around ${label(cfg,q)}, so the start chain cannot leave the start through it: ${label(cfg,e)} \u2192 ${label(cfg,y)} is impossible.`}}
+            if(!canLast&&!state.offDirections.has(y+'>'+e)){state.offDirections.add(y+'>'+e);return {tech:7,text:`${label(cfg,y)} can never be visit ${m} around ${label(cfg,q)}, so the start chain cannot return to the start through it: ${label(cfg,y)} \u2192 ${label(cfg,e)} is impossible.`}}
+          }
+        }
+      }
+    }
+  }
+ }
  // Ring degree: rotations whose neighbouring cells cannot all reach degree
  // two die; ring edges demanded (or refused) by every surviving rotation are
  // decided, and a cell that can never take two ring edges must use all of
@@ -594,7 +655,7 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
    if(Date.now()>advancedDeadline)break;
    if(!survivors.length)return {tech:6,contradiction:true,text:`Every clockwise/counterclockwise rotation around ${label(cfg,q)} contradicts the current route and pass marks.`};
    if(survivors.length<current.size){const removed=[...current].find(x=>!survivors.includes(x));state.patternRestrictions.set(q,new Set(survivors));return {tech:6,text:`Fix the cyclic visit order around ${label(cfg,q)} to rotation ${removed} and follow the direct human rules. It reaches a contradiction, so that rotation is eliminated; ${survivors.length} remain.`}}
-   const shared=addCommonConclusion(state,states);if(shared){let where=shared.x;if(shared.name==='forcedEdges'||shared.name==='offDirections'){let [u,v]=where.split('>').map(Number);where=`${label(cfg,u)} → ${label(cfg,v)}`}else if(shared.name==='lineEdges'||shared.name==='offEdges'){let [u,v]=where.split('-').map(Number);where=`${label(cfg,u)}–${label(cfg,v)}`}else where=label(cfg,+where);return {tech:6,text:`Check every remaining cyclic rotation around ${label(cfg,q)}. All ${survivors.length} cases force the ${shared.target} at ${where}, so mark it without choosing a rotation.`}}
+   const shared=addCommonConclusion(state,states);if(shared){let where=shared.x;if(shared.name==='forcedEdges'||shared.name==='offDirections'){let [u,v]=where.split('>').map(Number);where=`${label(cfg,u)} → ${label(cfg,v)}`}else if(shared.name==='lineEdges'||shared.name==='offEdges'){let [u,v]=where.split('-').map(Number);where=`${label(cfg,u)}–${label(cfg,v)}`}else where=label(cfg,+where);const extra=shared.count>1?` and ${shared.count-1} further shared mark${shared.count===2?'':'s'} (${shared.vis} visible in total, the rest direction bookkeeping)`:'';return {tech:6,text:`Check every remaining cyclic rotation around ${label(cfg,q)}. All ${survivors.length} cases force the ${shared.target} at ${where}${extra} \u2014 every mark the cases agree on is placed without choosing a rotation.`}}
  }
  for(const [a,b] of candidates){let k=key(a,b),whyOn=localContradiction(cfg,state,k,true);if(whyOn){state.offEdges.add(k);return {tech:11,text:`Suppose ${label(cfg,a)}–${label(cfg,b)} were a line. Local degree/connectivity propagation shows ${whyOn}. Therefore that edge is excluded.`}}let whyOff=localContradiction(cfg,state,k,false);if(whyOff){addLine(state,a,b);return {tech:11,text:`Suppose ${label(cfg,a)}–${label(cfg,b)} were excluded. Local degree/connectivity propagation shows ${whyOff}. Therefore it is a line.`}}}
  if(options.quickTrial)return {done:true,text:'No direct or one-edge deduction in this branch.'};
@@ -616,7 +677,7 @@ function stepOne(cfg,state,options={}){setup(state);const open=[];for(let i=0;i<
  const patternFullDeadline=fullDeadline;
  for(const qs of Object.keys(cfg.clues)){
    if(Date.now()>patternFullDeadline)break;const q=+qs,m=ringCells(cfg,q).length,current=state.patternRestrictions.get(q)||new Set(Array.from({length:m},(_,i)=>['1:'+i,'-1:'+i]).flat());if(current.size<2||current.size>4)continue;const runs=[];
-   for(const sig of current){if(Date.now()>patternFullDeadline)break;const run=propagatedPatternCase(cfg,state,q,sig,true,options.deep);runs.push({sig,run})}if(runs.length!==current.size)break;const alive=runs.filter(x=>!x.run.bad);if(!alive.length)return {tech:6,contradiction:true,text:`Every remaining cyclic order around ${label(cfg,q)} fails under the full human ladder.`};if(alive.length<runs.length){const dead=runs.find(x=>x.run.bad);state.patternRestrictions.set(q,new Set(alive.map(x=>x.sig)));return {tech:15,chain:dead.run.reasons,chainIntro:`Suppose ${label(cfg,q)} used cyclic rotation ${dead.sig}. Then:`,chainOutro:`So that rotation is impossible; ${alive.length} remain.`,text:`The full human ladder eliminates cyclic rotation ${dead.sig} around ${label(cfg,q)}.`}}const shared=addCommonConclusion(state,alive.map(x=>x.run.out));if(shared){let where=shared.x;if(shared.name==='forcedEdges'||shared.name==='offDirections'){let [u,v]=where.split('>').map(Number);where=`${label(cfg,u)} → ${label(cfg,v)}`}else if(shared.name==='lineEdges'||shared.name==='offEdges'){let [u,v]=where.split('-').map(Number);where=`${label(cfg,u)}–${label(cfg,v)}`}else where=label(cfg,+where);return {tech:12,cases:alive.map(x=>({intro:`Case — ${label(cfg,q)} uses rotation ${x.sig}:`,chain:x.run.reasons})),text:`Follow every remaining cyclic rotation around ${label(cfg,q)} with the full human ladder. All cases force the ${shared.target} at ${where}.`}}
+   for(const sig of current){if(Date.now()>patternFullDeadline)break;const run=propagatedPatternCase(cfg,state,q,sig,true,options.deep);runs.push({sig,run})}if(runs.length!==current.size)break;const alive=runs.filter(x=>!x.run.bad);if(!alive.length)return {tech:6,contradiction:true,text:`Every remaining cyclic order around ${label(cfg,q)} fails under the full human ladder.`};if(alive.length<runs.length){const dead=runs.find(x=>x.run.bad);state.patternRestrictions.set(q,new Set(alive.map(x=>x.sig)));return {tech:15,chain:dead.run.reasons,chainIntro:`Suppose ${label(cfg,q)} used cyclic rotation ${dead.sig}. Then:`,chainOutro:`So that rotation is impossible; ${alive.length} remain.`,text:`The full human ladder eliminates cyclic rotation ${dead.sig} around ${label(cfg,q)}.`}}const shared=addCommonConclusion(state,alive.map(x=>x.run.out));if(shared){let where=shared.x;if(shared.name==='forcedEdges'||shared.name==='offDirections'){let [u,v]=where.split('>').map(Number);where=`${label(cfg,u)} → ${label(cfg,v)}`}else if(shared.name==='lineEdges'||shared.name==='offEdges'){let [u,v]=where.split('-').map(Number);where=`${label(cfg,u)}–${label(cfg,v)}`}else where=label(cfg,+where);return {tech:12,cases:alive.map(x=>({intro:`Case — ${label(cfg,q)} uses rotation ${x.sig}:`,chain:x.run.reasons})),text:`Follow every remaining cyclic rotation around ${label(cfg,q)} with the full human ladder. All cases force the ${shared.target} at ${where}${shared.count>1?` and ${shared.count-1} further shared mark${shared.count===2?'':'s'} (${shared.vis} visible in total, the rest direction bookkeeping)`:''} \u2014 every agreed mark is placed.`}}
  }
  const forcingDeadline=fullDeadline;
  for(const {e:[a,b]} of trialCandidates(cfg,state).slice(0,64)){if(Date.now()>forcingDeadline)break;const k=key(a,b),yes=propagatedCase(cfg,state,k,true,false,options.deep);if(!yes.bad){const proof=proveBadBySplit(cfg,yes.out,forcingDeadline,3);if(proof){state.offEdges.add(k);return {tech:15,text:`Suppose ${label(cfg,a)}–${label(cfg,b)} were a line. Following the human rules leaves a forcing net, but every branch fails: ${proof.summary} Therefore ${label(cfg,a)}–${label(cfg,b)} is excluded.`}}}const no=propagatedCase(cfg,state,k,false,false,options.deep);if(!no.bad){const proof=proveBadBySplit(cfg,no.out,forcingDeadline,3);if(proof){addLine(state,a,b);return {tech:15,text:`Suppose ${label(cfg,a)}–${label(cfg,b)} were excluded. Following the human rules leaves a forcing net, but every branch fails: ${proof.summary} Therefore ${label(cfg,a)}–${label(cfg,b)} is a line.`}}}}
@@ -649,7 +710,9 @@ function stepResolve(cfg,state,options={}){
 function stateSig(state){
  let pr=0;if(state.patternRestrictions)for(const v of state.patternRestrictions.values())pr+=v.size;
  let po=0;if(state.permitOrdinals)for(const v of state.permitOrdinals.values())po+=v.size;
- return [state.lineEdges?state.lineEdges.size:0,state.offEdges?state.offEdges.size:0,state.forcedEdges?state.forcedEdges.size:0,state.permitCells?state.permitCells.size:0,state.noPermitCells?state.noPermitCells.size:0,pr,po].join(',');
+ let pm=0;if(state.permitMapCases)for(const c of state.permitMapCases)pm+=(c&&(c.length!==undefined?c.length:(c.assignments?c.assignments.length:0)))||0;
+ let ac=0;if(state.allowedPermitCounts)for(const v of state.allowedPermitCounts.values())ac+=(v&&v.size)||1;
+ return [state.lineEdges?state.lineEdges.size:0,state.offEdges?state.offEdges.size:0,state.forcedEdges?state.forcedEdges.size:0,state.permitCells?state.permitCells.size:0,state.noPermitCells?state.noPermitCells.size:0,pr,po,pm,ac,state.permitMapCases?state.permitMapCases.length:0].join(',');
 }
 function step(cfg,state,options={}){
  if(options.noTrial||options.noBatch||options.noAbsorb)return stepResolve(cfg,state,options);
@@ -659,7 +722,7 @@ function step(cfg,state,options={}){
    const offBefore=state.offDirections?state.offDirections.size:0;
    const mv=stepResolve(cfg,state,options);
    if(mv.contradiction||mv.done||mv.tech==null){if(absorbed)mv.absorbed=absorbed;return mv}
-   const onlyDirs=stateSig(state)===before&&(state.offDirections?state.offDirections.size:0)>=offBefore;
+   const onlyDirs=stateSig(state)===before&&(state.offDirections?state.offDirections.size:0)>offBefore;
    if(mv.tech===2||onlyDirs){absorbed++;continue}
    if(absorbed)mv.absorbed=absorbed;
    return mv;
