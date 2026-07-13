@@ -126,6 +126,14 @@ tests/            soundness, symmetry, and engine batteries
 build.js          assembles dist/ubahn-solver.html
 ```
 
+## GitHub Pages
+
+Publish the contents of this directory with `index.html`, `css/`, and `js/` at
+the same site level. The split-source Cave scripts carry a release query string
+so a Pages/browser cache cannot combine incompatible app and deduction files.
+The Cave grid is rendered before the optional deduction-description panel, so
+that panel can never prevent the board from appearing.
+
 ## Tests
 
 ```

@@ -17,9 +17,10 @@
   function resetMarks(message, doRender) {
     stopAuto(); killStep(); killSolve();
     state = {}; shown = null; stepNo = 0; stepCounts = new Map(); history = [];
-    updatePrev(); buildStrategies();
-    if (message) status(message);
+    updatePrev();
     if (doRender !== false) render();
+    buildStrategies();
+    if (message) status(message);
   }
 
   function build(clear) {
@@ -71,8 +72,14 @@
 
   function buildStrategies(active) {
     const list = $('caveStrats'); list.innerHTML = '';
+    if (!window.CaveStepper || !Array.isArray(window.CaveStepper.techniques)) {
+      const li = document.createElement('li');
+      li.className = 'variant-bar'; li.textContent = 'Deduction descriptions are still loading.';
+      list.append(li); return;
+    }
     const make = i => {
       const t = CaveStepper.techniques[i];
+      if (!t) return null;
       const li = document.createElement('li'), n = stepCounts.get(i) || 0;
       li.classList.toggle('active', i === active);
       li.innerHTML = `<b>${esc(t[0])}</b>${n ? `<span class="cnt">×${n}</span>` : ''}<div class="sdesc">${esc(t[1])}</div>`;
@@ -89,6 +96,7 @@
       }
       for (const i of section.indices) {
         const li = make(i);
+        if (!li) continue;
         if (section.option && !enabled) li.classList.add('vdim');
         if (i === 7 && !$('caveNo22Black').checked) li.classList.add('vdim');
         if (i === 8 && !$('caveNo22White').checked) li.classList.add('vdim');
@@ -193,16 +201,17 @@
     stepBusy = false; stepSnapshotPending = false; $('caveStep').disabled = false;
     if (mv.tech == null && history.length) history.pop();
     if (mv.tech != null) stepCounts.set(mv.tech, (stepCounts.get(mv.tech) || 0) + 1);
-    updatePrev(); buildStrategies(mv.tech == null ? -1 : mv.tech); render(); statusStep(mv);
+    updatePrev(); render(); buildStrategies(mv.tech == null ? -1 : mv.tech); statusStep(mv);
     if (auto) {
       if (mv.tech != null && !mv.contradiction && !mv.complete) setTimeout(() => { if (auto) takeStep(); }, 180);
       else stopAuto();
     }
   }
 
-  if (!window.CAVE_WORKER_SOURCE && window.fetch) Promise.all(['js/vendor/logic-solver.bundle.js', 'js/cave-engine.js', 'js/cave-stepper.js'].map(u => fetch(u).then(r => r.ok ? r.text() : Promise.reject())))
+  const caveWorkerAssets = ['js/vendor/logic-solver.bundle.js', 'js/cave-engine.js?v=20260712-2', 'js/cave-stepper.js?v=20260712-2'];
+  if (!window.CAVE_WORKER_SOURCE && window.fetch) Promise.all(caveWorkerAssets.map(u => fetch(u).then(r => r.ok ? r.text() : Promise.reject())))
     .then(([logic, engine, stepper]) => { window.CAVE_WORKER_SOURCE = logic + '\n' + engine + '\n' + stepper + '\nonmessage=function(e){postMessage(CaveEngine.solve(e.data,e.data.time||10));};'; }).catch(() => {});
-  if (!window.CAVE_STEP_WORKER_SOURCE && window.fetch) Promise.all(['js/vendor/logic-solver.bundle.js', 'js/cave-engine.js', 'js/cave-stepper.js'].map(u => fetch(u).then(r => r.ok ? r.text() : Promise.reject())))
+  if (!window.CAVE_STEP_WORKER_SOURCE && window.fetch) Promise.all(caveWorkerAssets.map(u => fetch(u).then(r => r.ok ? r.text() : Promise.reject())))
     .then(([logic, engine, stepper]) => { window.CAVE_STEP_WORKER_SOURCE = logic + '\n' + engine + '\n' + stepper + '\nonmessage=function(e){var s=e.data.state;var m=CaveStepper.step(e.data.cfg,s);postMessage({move:m,state:s});};'; }).catch(() => {});
 
   $('caveBuild').onclick = () => build(true);
@@ -214,12 +223,12 @@
   $('cavePrev').onclick = () => {
     if (stepBusy || !history.length) return;
     stopAuto(); const h = history.pop(); state = h.state; stepNo = h.stepNo; stepCounts = h.counts; shown = null;
-    updatePrev(); buildStrategies(); render(); status(`Reverted to before step ${stepNo + 1}.`);
+    updatePrev(); render(); buildStrategies(); status(`Reverted to before step ${stepNo + 1}.`);
   };
   $('caveAuto').onclick = () => { if (auto) return stopAuto(); auto = true; $('caveAuto').textContent = 'Stop'; takeStep(); };
   for (const id of ['caveNo22Black', 'caveNo22White', 'caveTwilight']) $(id).onchange = () => {
     resetMarks(`${id === 'caveTwilight' ? 'Twilight' : 'The 2×2 restriction'} is now ${$(id).checked ? 'on' : 'off'}; steps reset.`, true);
   };
 
-  updatePrev(); buildStrategies(); render();
+  updatePrev(); render(); buildStrategies();
 })();

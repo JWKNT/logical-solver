@@ -6,6 +6,9 @@ const fs = require('fs');
 const read = f => fs.readFileSync(f, 'utf8');
 
 let html = read('index.html');
+// GitHub Pages uses query strings to prevent mixed cached split-source files;
+// the self-contained build strips them before replacing the script tags.
+html = html.replace(/\?v=20260712-2/g, '');
 const css = read('css/style.css');
 const engine = read('js/engine.js');
 let stepper = read('js/stepper.js');
