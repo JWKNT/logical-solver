@@ -54,6 +54,17 @@ The suite's reference puzzles — KNT's *Extraterrestrial Japanese Sums*
 (base 13, B=11, F=12) — are solved end to end by the ladder and
 engine-verified in `tests/sums-soundness.test.js`.
 
+For the topology variants, the human ladder handles both colours
+symmetrically. **Checkerboard transfer** carries forced shading between
+adjacent lines when the alternative would create a three-cell number run;
+**Adjacent line layouts** compares the remaining structural patterns of two
+neighbouring rows or columns; **Numbers spine/escape** keeps all numbered
+cells connected just as the corresponding shaded rules do; and direct
+line/group ceilings expose ordinary min–max deductions before any trial.
+**Cross-line singleton** also rejects a tentative shaded cell when it would
+leave a one-cell sum whose only possible value has already been excluded by
+the crossing row or column.
+
 ## A38
 
 Build a directed Hamiltonian loop through all non-clue cells, with number clues

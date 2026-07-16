@@ -41,7 +41,9 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
   sumsStepperMain.toString() + '\n(' + function () {
     const api = sumsStepperMain(self);
     let wst = null, loadMsg = null, hist = [];
-    const core = () => ({ cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated });
+    const core = () => ({ cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated,
+      shapeRelations: (wst.shapeRelations || []).map(x => Object.assign({}, x)),
+      lineShapeDomains: Object.fromEntries(Object.entries(wst.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()])) });
     self.onmessage = e => {
       const m = e.data;
       if (m.cmd === 'load') {
@@ -53,6 +55,8 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
         if (m.letterCand) wst.letterCand.set(m.letterCand);
         if (m.baseCand) wst.baseCand = new Set(m.baseCand);
         if (m.baseNarrated) wst.__baseNarrated = true;
+        if (m.shapeRelations) wst.shapeRelations = m.shapeRelations.map(x => Object.assign({}, x));
+        if (m.lineShapeDomains) wst.lineShapeDomains = Object.fromEntries(Object.entries(m.lineShapeDomains).map(([k, v]) => [k, v.slice()]));
         return;
       }
       if (m.cmd === 'undo') {
@@ -66,6 +70,8 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
         wst.letterCand.set(h.letterCand);
         if (h.baseCand) wst.baseCand = new Set(h.baseCand);
         if (h.baseNarrated) wst.__baseNarrated = true;
+        wst.shapeRelations = (h.shapeRelations || []).map(x => Object.assign({}, x));
+        wst.lineShapeDomains = Object.fromEntries(Object.entries(h.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()]));
         self.postMessage({ undo: true, state: core(), complete: api.sumsComplete(wst) });
         return;
       }
@@ -82,7 +88,7 @@ const stepWorkerUrl = URL.createObjectURL(new Blob([
         };
         if (lite) { hist.push(pre); if (hist.length > 60) hist.shift(); }
         self.postMessage({ mv: lite,
-          state: { cand: Array.from(wst.cand), letterCand: Array.from(wst.letterCand), baseCand: wst.baseCand ? [...wst.baseCand] : null, baseNarrated: !!wst.__baseNarrated },
+          state: core(),
           complete: api.sumsComplete(wst) });
       }
     };
@@ -94,7 +100,11 @@ function updateSumsPrev() { $('sumsPrev').disabled = !sumsRuleHist.length; }
 function stopSumsAuto() { sumsAuto = false; $('sumsAuto').textContent = 'Full solve path'; }
 let stepStale = true;   // main-thread st changed: the worker must reload it before stepping
 let stFromEngine = false;   // st holds Solve / True-candidates results worth continuing from
-function markStepStale() { stepStale = true; sumsRuleHist = []; stopSumsAuto(); if ($('sumsPrev')) $('sumsPrev').disabled = true; }
+// Most external edits must stop an active solve path.  The one exception is
+// the clean-state initialization performed inside the very first Take-step:
+// Full solve path has already been switched on at that point, so resetting
+// the worker snapshot must not turn auto mode straight back off after Step 1.
+function markStepStale(keepAuto) { stepStale = true; sumsRuleHist = []; if (!keepAuto) stopSumsAuto(); if ($('sumsPrev')) $('sumsPrev').disabled = true; }
 // Solve / True candidates run within the current marks: the ladder's progress
 // (and the user's own pencil work) massively narrows the engine's search.
 // A pristine state contributes nothing, so this is always safe to pass.
@@ -106,7 +116,9 @@ function seedFromMarks() {
 function stepWorkerLoadMsg() {
   return { cmd: 'load', R, C, D, values: VALUES || undefined, kd: st.kd, alien: st.alien,
     variants: st.variants, cand: Array.from(st.cand), letterCand: Array.from(st.letterCand),
-    baseCand: st.baseCand ? [...st.baseCand] : null, baseNarrated: !!st.__baseNarrated };
+    baseCand: st.baseCand ? [...st.baseCand] : null, baseNarrated: !!st.__baseNarrated,
+    shapeRelations: (st.shapeRelations || []).map(x => Object.assign({}, x)),
+    lineShapeDomains: Object.fromEntries(Object.entries(st.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()])) };
 }
 
 function readSlotClue(prefix) {
@@ -436,7 +448,7 @@ $('sumsStep').onclick = () => {
     st.kd = $('sumsKD').checked;
     st.alien = $('sumsAlien').checked;
     Object.assign(st.variants, readVariants());
-    markStepStale();
+    markStepStale(sumsAuto);
   }
   if (!stepWorker) {
     stepWorker = new Worker(stepWorkerUrl);
@@ -463,6 +475,8 @@ function onStepReply(e) {
     st.letterCand.set(e.data.state.letterCand);
     st.baseCand = e.data.state.baseCand ? new Set(e.data.state.baseCand) : null;
     st.__baseNarrated = !!e.data.state.baseNarrated;
+    st.shapeRelations = (e.data.state.shapeRelations || []).map(x => Object.assign({}, x));
+    st.lineShapeDomains = Object.fromEntries(Object.entries(e.data.state.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()]));
     buildStrategyPanel();
     renderLetters();
     renderCells();
@@ -475,6 +489,8 @@ function onStepReply(e) {
   st.letterCand.set(state.letterCand);
   st.baseCand = state.baseCand ? new Set(state.baseCand) : null;
   if (state.baseNarrated) st.__baseNarrated = true;
+  st.shapeRelations = (state.shapeRelations || []).map(x => Object.assign({}, x));
+  st.lineShapeDomains = Object.fromEntries(Object.entries(state.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()]));
   renderLetters();
   if (!mv) {
     if (complete) { stopSumsAuto(); status('<span class="good">Solved!</span> Every cell holds a digit or is shaded blank.'); renderCells(); return; }

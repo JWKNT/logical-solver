@@ -349,6 +349,64 @@ function search(cfg, opts) {
     if (!V.reach) return true;
     return reachOk();
   }
+
+  // Necessary partial-shape checks.  They do not demand that undecided cells
+  // choose a colour; they merely ask whether the already committed cells can
+  // still be joined through cells which remain available to that colour.
+  // Running this at row boundaries is cheap and prevents the exact verifier
+  // from exploring enormous branches whose connectivity has already failed.
+  function partialShapeOk(lastAssigned) {
+    function allCommittedReachable(member, passable) {
+      let start = -1;
+      for (let i = 0; i <= lastAssigned; i++) if (member(i)) { start = i; break; }
+      if (start < 0) return true;
+      const seen = new Uint8Array(N), stack = [start];
+      seen[start] = 1;
+      while (stack.length) {
+        const i = stack.pop(), r = (i / C) | 0, c = i % C;
+        for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const r2 = r + dr, c2 = c + dc;
+          if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+          const j = r2 * C + c2;
+          if (!seen[j] && passable(j)) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      for (let i = 0; i <= lastAssigned; i++) if (member(i) && !seen[i]) return false;
+      return true;
+    }
+    if (V.numConn && !allCommittedReachable(i => S.grid[i] > 0, i => S.grid[i] !== 0)) return false;
+    if (V.blankConn && !allCommittedReachable(i => S.grid[i] === 0, i => S.grid[i] <= 0)) return false;
+    if (V.blankReach) {
+      const seen = new Uint8Array(N), stack = [];
+      for (let i = 0; i < N; i++) {
+        const r = (i / C) | 0, c = i % C;
+        if ((r === 0 || c === 0 || r === R - 1 || c === C - 1) && S.grid[i] <= 0) { seen[i] = 1; stack.push(i); }
+      }
+      while (stack.length) {
+        const i = stack.pop(), r = (i / C) | 0, c = i % C;
+        for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const r2 = r + dr, c2 = c + dc;
+          if (r2 < 0 || r2 >= R || c2 < 0 || c2 >= C) continue;
+          const j = r2 * C + c2;
+          if (!seen[j] && S.grid[j] <= 0) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      for (let i = 0; i <= lastAssigned; i++) if (S.grid[i] === 0 && !seen[i]) return false;
+    }
+    return true;
+  }
+
+  // If numbers are connected while every shaded component reaches the edge
+  // (or vice versa), the two colours cannot alternate around a 2x2 corner:
+  // both diagonal pairs would have to connect across the same planar boundary.
+  function makesCheckerboard(i, v) {
+    if (!((V.numConn && V.blankReach) || (V.blankConn && V.reach))) return false;
+    const r = (i / C) | 0, c = i % C;
+    if (r === 0 || c === 0) return false;
+    const shape = x => x > 0 ? 1 : 0;
+    const a = shape(S.grid[i - C - 1]), b = shape(S.grid[i - C]), l = shape(S.grid[i - 1]), x = shape(v);
+    return a === x && b === l && a !== b;
+  }
   function reachOk() {
     // filled components reach the edge
     const seenF = new Uint8Array(N);
@@ -427,6 +485,7 @@ function search(cfg, opts) {
       if (v === 0) {
         // forbid a 2x2 of blanks when the variant demands it
         if (V.no22blank && r > 0 && c > 0 && S.grid[i - 1] === 0 && S.grid[i - C] === 0 && S.grid[i - C - 1] === 0) continue;
+        if (makesCheckerboard(i, v)) continue;
         const closes = [];
         if (S.rowLen[r] > 0) closes.push({ clue: rcl, usedRef: rowUsedRef[r], vals: S.rowVals[r], s: S.rowRun[r] });
         if (S.colLen[c] > 0) closes.push({ clue: ccl, usedRef: colUsedRef[c], vals: S.colVals[c], s: S.colRun[c] });
@@ -437,6 +496,7 @@ function search(cfg, opts) {
           if (atRowEnd && rcl && S.popcnt(S.rowUsed[r]) !== rcl.length) fine = false;
           if (fine && !S.lineFeasible(rcl, S.rowUsed[r], S.rowRun[r], S.rowLen[r], C - 1 - c, S.rowPack[r])) fine = false;
           if (fine && !S.lineFeasible(ccl, S.colUsed[c], S.colRun[c], S.colLen[c], R - 1 - r, S.colPack[c])) fine = false;
+          if (fine && atRowEnd && !partialShapeOk(i)) fine = false;
           if (fine) rec(i + 1);
           S.grid[i] = -1;
           S.rowRun[r] = svRRun; S.colRun[c] = svCRun; S.rowLen[r] = svRLen; S.colLen[c] = svCLen;
@@ -449,6 +509,7 @@ function search(cfg, opts) {
         if (ok && ccl && S.pal[v - 1] > 0 && S.colRun[c] + S.pal[v - 1] > S.groupMaxUnused(ccl, S.colUsed[c]) && S.negLeft(S.colPack[c]) === 0) ok = false;
         if (ok && ccl && S.popcnt(S.colUsed[c]) >= ccl.length && S.colLen[c] === 0) ok = false;
         if (ok && V.no22num && r > 0 && c > 0 && S.grid[i - 1] > 0 && S.grid[i - C] > 0 && S.grid[i - C - 1] > 0) ok = false;
+        if (ok && makesCheckerboard(i, v)) ok = false;
         if (ok) {
           S.rowPack[r] = S.bumpPack(S.rowPack[r], v - 1); S.colPack[c] = S.bumpPack(S.colPack[c], v - 1);
           S.rowRun[r] += S.pal[v - 1]; S.colRun[c] += S.pal[v - 1];
@@ -458,6 +519,7 @@ function search(cfg, opts) {
             let fine = true;
             if (fine && !S.lineFeasible(rcl, S.rowUsed[r], S.rowRun[r], S.rowLen[r], C - 1 - c, S.rowPack[r])) fine = false;
             if (fine && !S.lineFeasible(ccl, S.colUsed[c], S.colRun[c], S.colLen[c], R - 1 - r, S.colPack[c])) fine = false;
+            if (fine && atRowEnd && !partialShapeOk(i)) fine = false;
             if (fine) rec(i + 1);
           };
           if (atRowEnd) {

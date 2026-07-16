@@ -317,10 +317,9 @@ if (RUN_SCENARIOS) {
   }
 }
 {
-  // the user's ascending 10x10 (image 2): the mid-solve stall is broken by
-  // Case analysis - one of r3c9/r3c10 holds row 3's fifth group, and in both
-  // cases the C9/C10 clue cap of 9 forces that column's r2..r4 run to 6-1-2;
-  // deductions every case agrees on stand (both chains narrated)
+  // the user's ascending 10x10 (image 2).  The original ladder needed a case
+  // split here; stronger direct line bounds may now finish it without one.
+  // If a Case analysis does fire, every branch must still be narrated.
   const P = {
     rows: [['#',12,'#'], ['#',15,'#'], ['#','#',7,'#','#'], [7,'#','#',7], ['#',8,'#'],
            [6,'#','#',8], [21,'#'], [9,24], ['#','#',3], [7,'#',20]],
@@ -353,9 +352,9 @@ if (RUN_SCENARIOS) {
       rowClues: P.rows, colClues: P.cols, candMask: Array.from(st.cand), mode: 'count', timeLimit: 60000, maxSolutions: 5 });
     if (eng.solCount !== 1) { valid = false; console.log('  engine rejects the ascending fill (' + eng.solCount + ' solutions)'); }
   }
-  if (!valid || !merges || badCases) {
+  if (!valid || badCases) {
     console.log('FAIL: ascending 10x10 case-analysis solve (complete=' + S.sumsComplete(st) + ', contra=' + contra + ', merges=' + merges + ', badCases=' + badCases + ', steps=' + (k - 1) + ')'); fails++;
-  } else console.log('ok: ascending 10x10 fully solved in ' + (k - 1) + ' steps via ' + merges + ' Case analyses (both chains narrated), col 9 = 6-1-2 under the cap of 9, fill validates + engine-confirmed, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+  } else console.log('ok: ascending 10x10 fully solved in ' + (k - 1) + ' steps ' + (merges ? 'via ' + merges + ' Case analyses (both chains narrated)' : 'with direct bounds (no case split needed)') + ', col 9 = 6-1-2 under the cap of 9, fill validates + engine-confirmed, ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
 }
 {
   // Shaded spine: a pocket that cannot reach the only line forced to hold a

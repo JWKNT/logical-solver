@@ -27,6 +27,12 @@ function makeSumsState(R, C, D, values) {
     kd: false,   // Knapp daneben: every clue is one off its true value
     alien: false, baseCand: null,   // alien: the clues' number base is unknown (a set of candidate bases 2..31)
     variants: { numConn: false, blankConn: false, no22num: false, no22blank: false, asc: false, reach: false, blankReach: false },
+    // Human shape implications discovered by the ladder.  Each entry means
+    // "if cell a has shape av, cell b has shape bv", where 0 = shaded and
+    // 1 = a number.  They let a genuinely useful pencil-mark relation (rather
+    // than only a fixed cell) feed later row/column bounds.
+    shapeRelations: [],
+    lineShapeDomains: {},
     fastLadder: false, noTrial: false };
 }
 function cloneSumsState(st) {
@@ -34,6 +40,8 @@ function cloneSumsState(st) {
     cand: Int32Array.from(st.cand),
     letterCand: Int32Array.from(st.letterCand), kd: st.kd, variants: Object.assign({}, st.variants),
     alien: st.alien, baseCand: st.baseCand ? new Set(st.baseCand) : null,
+    shapeRelations: (st.shapeRelations || []).map(x => Object.assign({}, x)),
+    lineShapeDomains: Object.fromEntries(Object.entries(st.lineShapeDomains || {}).map(([k, v]) => [k, v.slice()])),
     fastLadder: st.fastLadder, noTrial: st.noTrial, __lineCache: st.__lineCache };
 }
 // candidate bases the clues could be written in (alien); [10] otherwise.
@@ -555,10 +563,59 @@ function makeShadedStretchFilter(st, clues, line) {
   } };
 }
 
+function numbersBeyondLine(st, clues, line) {
+  if (!st.variants.numConn) return false;
+  const inLine = new Set(line.cells);
+  for (let i = 0; i < st.R * st.C; i++) if ((st.cand[i] & 1) === 0 && !inLine.has(i)) return true;
+  for (const other of eachSumsLine(st, clues)) {
+    if (other.name === line.name || !other.clue || !other.clue.length) continue;
+    if (other.kind === line.kind) return true;
+    if (other.clue.length >= 2) return true;   // at most one group could live solely at the crossing
+  }
+  return false;
+}
+
+// Symmetric to Shaded escape: when numbers exist beyond this line, every
+// separate number run in a proposed filling needs a number-capable neighbour
+// outside the line through which it can join the one connected number area.
+function makeNumberStretchFilter(st, clues, line) {
+  if (!numbersBeyondLine(st, clues, line)) return null;
+  const lineSet = new Set(line.cells), n = line.cells.length;
+  const escAt = new Uint8Array(n);
+  for (let p = 0; p < n; p++) for (const j of orthNeighbors(st, line.cells[p])) {
+    if (!lineSet.has(j) && (st.cand[j] & ~1)) { escAt[p] = 1; break; }
+  }
+  return { escAt, fn: vals => {
+    let p = 0;
+    while (p < n) {
+      if (vals[p] === 0) { p++; continue; }
+      let q = p, esc = false;
+      while (q < n && vals[q] !== 0) { if (escAt[q]) esc = true; q++; }
+      if (!esc) return false;
+      p = q;
+    }
+    return true;
+  } };
+}
+
 // fingerprint-cached per-line assignment unions
 function cachedLineUnion(st, clues, line, peekOnly) {
   if (!st.__lineCache) st.__lineCache = new Map();
   const sf = makeShadedStretchFilter(st, clues, line);
+  const nf = makeNumberStretchFilter(st, clues, line);
+  const rels = lineRelationData(st, line);
+  const savedShapes = savedLineShapes(st, line);
+  const shapeFn = (sf || nf || rels.length || savedShapes) ? vals => {
+    if (sf && !sf.fn(vals)) return false;
+    if (nf && !nf.fn(vals)) return false;
+    if (rels.length || savedShapes) {
+      let mask = 0;
+      for (let p = 0; p < vals.length; p++) if (vals[p] !== 0) mask |= 1 << p;
+      if (!relationMaskOk(mask, rels)) return false;
+      if (savedShapes && !savedShapes.has(mask)) return false;
+    }
+    return true;
+  } : null;
   let h = 2166136261 >>> 0;
   for (const i of line.cells) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; }
   for (const tok of line.clue || []) {
@@ -568,7 +625,10 @@ function cachedLineUnion(st, clues, line, peekOnly) {
   }
   if (st.alien) for (const b of baseList(st)) { h ^= b * 131; h = Math.imul(h, 16777619) >>> 0; }
   if (sf) for (let p = 0; p < sf.escAt.length; p++) { h ^= sf.escAt[p] + 7; h = Math.imul(h, 16777619) >>> 0; }
-  const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + h;
+  if (nf) for (let p = 0; p < nf.escAt.length; p++) { h ^= nf.escAt[p] + 17; h = Math.imul(h, 16777619) >>> 0; }
+  if (savedShapes) for (const m of savedShapes) { h ^= m * 257 + 29; h = Math.imul(h, 16777619) >>> 0; }
+  for (const q of rels) { h ^= (q.pa + 1) * 31 + (q.pb + 1) * 131 + q.x.av * 7 + q.x.bv * 13; h = Math.imul(h, 16777619) >>> 0; }
+  const key = line.kind + ':' + line.idx + ':' + (sf ? 'S' : 'P') + (nf ? 'N' : '') + (rels.length ? 'R' : '') + (savedShapes ? 'D' : '') + h;
   if (st.__lineCache.has(key)) return st.__lineCache.get(key);
   if (peekOnly) return null;   // surface already-computed conclusions only
   let res = null;
@@ -605,7 +665,7 @@ function cachedLineUnion(st, clues, line, peekOnly) {
         if (saturated) return true;
         if ((sols & 63) === 0 && checkSat()) { saturated = true; return true; }
         return false;
-      }, 3000000, sf ? sf.fn : null);
+      }, 3000000, shapeFn);
       if (st.alien) st.__forceBase = undefined;
       if (!okB) { ok = false; break; }
       if (st.alien && line.clue && line.clue.length && sols === 0) deadBases.push(b);
@@ -1083,6 +1143,236 @@ function orthNeighbors(st, i) {
   return out;
 }
 
+function shapeCan(st, i, used) { return used ? !!(st.cand[i] & ~1) : !!(st.cand[i] & 1); }
+function shapeFixed(st, i, used) { return shapeCan(st, i, used) && !shapeCan(st, i, used ? 0 : 1); }
+function relationKey(x) { return x.a + ':' + x.av + '>' + x.b + ':' + x.bv; }
+function lineShapeKey(line) { return line.kind + ':' + line.idx; }
+function savedLineShapes(st, line) {
+  const a = st.lineShapeDomains && st.lineShapeDomains[lineShapeKey(line)];
+  return a && a.length ? new Set(a) : null;
+}
+function hasShapeRelation(st, x) {
+  const k = relationKey(x);
+  return (st.shapeRelations || []).some(y => relationKey(y) === k);
+}
+function lineRelationData(st, line) {
+  if (!st.shapeRelations || !st.shapeRelations.length) return [];
+  const pos = new Map();
+  for (let p = 0; p < line.cells.length; p++) pos.set(line.cells[p], p);
+  const out = [];
+  for (const x of st.shapeRelations) if (pos.has(x.a) && pos.has(x.b)) out.push({ x, pa: pos.get(x.a), pb: pos.get(x.b) });
+  return out;
+}
+function relationMaskOk(mask, rels) {
+  for (const q of rels) {
+    const av = (mask >> q.pa) & 1, bv = (mask >> q.pb) & 1;
+    if (av === q.x.av && bv !== q.x.bv) return false;
+  }
+  return true;
+}
+
+// Structural line patterns used by the human shape rules.  A set bit means a
+// number cell.  This deliberately over-approximates per-cell digit placement
+// (while checking exact group lengths, sums, digit availability, and existing
+// shape implications): proving a property over this larger set is therefore
+// safe, and keeps the explanation at the level of runs rather than brute force.
+function collectLineShapes(st, line, cap) {
+  const n = line.cells.length, G = line.clue ? line.clue.length : -1;
+  if (G < 0) return null;
+  const tokenSets = lineSumSets(st, line);
+  if (tokenSets.some(s2 => s2.size === 0)) return { patterns: [], overflow: false };
+  let spanSets = tokenSets;
+  if (st.variants.asc) {
+    const union = new Set();
+    for (const s2 of tokenSets) for (const v of s2) union.add(v);
+    spanSets = tokenSets.map(() => union);
+  }
+  const maxCells = st.cnt.reduce((a, b) => a + b, 0);
+  const lenOpts = spanSets.map(set => {
+    const out = [];
+    for (let len = 1; len <= n && len <= maxCells; len++) {
+      let any = false;
+      for (const sum of set) if (comboFeasible(st, sum, len, (1 << (st.D + 1)) - 2)) { any = true; break; }
+      if (any) out.push(len);
+    }
+    return out;
+  });
+  const rels = lineRelationData(st, line);
+  const starts = new Int16Array(Math.max(1, G)), lens = new Int16Array(Math.max(1, G));
+  const sizeFeas = new Map(), seen = new Set();
+  let overflow = false, nodes = 0;
+  function rec(g, from, mask) {
+    if (overflow) return;
+    if (++nodes > (cap || 60000)) { overflow = true; return; }
+    if (g === G) {
+      for (let p = from; p < n; p++) if (!(st.cand[line.cells[p]] & 1)) return;
+      if (!relationMaskOk(mask, rels)) return;
+      if (G) {
+        const key = Array.from(lens.slice(0, G)).join(',');
+        let ok = sizeFeas.get(key);
+        if (ok === undefined) { ok = lineJointFeasible(st, line.clue, tokenSets, n, null, Array.from(lens.slice(0, G))); sizeFeas.set(key, ok); }
+        if (!ok) return;
+      }
+      seen.add(mask);
+      return;
+    }
+    for (const len of lenOpts[g]) {
+      const minStart = from + (g ? 1 : 0);
+      for (let s0 = minStart; s0 + len <= n; s0++) {
+        let ok = true;
+        for (let p = from; p < s0 && ok; p++) if (!(st.cand[line.cells[p]] & 1)) ok = false;
+        for (let p = s0; p < s0 + len && ok; p++) if (!(st.cand[line.cells[p]] & ~1)) ok = false;
+        if (!ok) continue;
+        starts[g] = s0; lens[g] = len;
+        let m2 = mask;
+        for (let p = s0; p < s0 + len; p++) m2 |= 1 << p;
+        rec(g + 1, s0 + len, m2);
+      }
+    }
+  }
+  rec(0, 0, 0);
+  const saved = savedLineShapes(st, line);
+  return { patterns: saved ? [...seen].filter(m => saved.has(m)) : [...seen], overflow, lenOpts };
+}
+
+// A stored implication is itself a human pencil mark.  Apply it (or its
+// contrapositive) as soon as one endpoint is decided.
+function ruleShapeRelation(st) {
+  for (const x of st.shapeRelations || []) {
+    if (shapeFixed(st, x.a, x.av)) {
+      if (!shapeCan(st, x.b, x.bv)) return { rule: 'Shape relation', contradiction: true, cells: [x.a, x.b],
+        text: x.reason + ' But ' + rc(st, x.a) + ' is ' + (x.av ? 'a number' : 'shaded') + ' while ' + rc(st, x.b) + ' cannot be ' + (x.bv ? 'a number' : 'shaded') + ', so the position is contradictory.' };
+      if (!shapeFixed(st, x.b, x.bv)) return { rule: 'Shape relation', cells: [x.a, x.b],
+        text: x.reason + ' Since ' + rc(st, x.a) + ' is now ' + (x.av ? 'a number' : 'shaded') + ', ' + rc(st, x.b) + ' is ' + (x.bv ? 'a number' : 'shaded') + '.',
+        apply() { filterCand(st, x.b, x.bv ? ~1 : 1); } };
+    }
+    const opposite = x.bv ? 0 : 1;
+    if (shapeFixed(st, x.b, opposite) && shapeCan(st, x.a, x.av)) {
+      const keep = x.av ? 0 : 1;
+      if (!shapeCan(st, x.a, keep)) return { rule: 'Shape relation', contradiction: true, cells: [x.a, x.b], text: x.reason + ' Its contrapositive is impossible here.' };
+      if (!shapeFixed(st, x.a, keep)) return { rule: 'Shape relation', cells: [x.a, x.b],
+        text: x.reason + ' Contrapositively, because ' + rc(st, x.b) + ' is ' + (opposite ? 'a number' : 'shaded') + ', ' + rc(st, x.a) + ' is ' + (keep ? 'a number' : 'shaded') + '.',
+        apply() { filterCand(st, x.a, keep ? ~1 : 1); } };
+    }
+  }
+  return null;
+}
+
+// General checkerboard/run interaction.  If every legal source-line pattern
+// flanks a possible shaded cell with numbers, but the neighbouring line can
+// never have a three-number run centred there, shading the source forces the
+// facing cell shaded.  Otherwise a number there would force both neighbours
+// to numbers to avoid the two checkerboards.
+function ruleCheckerboardTransfer(st, clues) {
+  const enabled = (st.variants.blankConn && st.variants.reach) || (st.variants.numConn && st.variants.blankReach);
+  if (!enabled) return null;
+  const rows = eachSumsLine(st, clues).filter(x => x.kind === 'row');
+  const cols = eachSumsLine(st, clues).filter(x => x.kind === 'col');
+  for (const family of [rows, cols]) {
+    const cache = new Map();
+    const shapes = line => {
+      if (!cache.has(line.idx)) cache.set(line.idx, collectLineShapes(st, line));
+      return cache.get(line.idx);
+    };
+    for (let q = 0; q + 1 < family.length; q++) for (const [source, target] of [[family[q], family[q + 1]], [family[q + 1], family[q]]]) {
+      if (!source.clue || !target.clue) continue;
+      const A = shapes(source), B = shapes(target);
+      if (!A || !B || A.overflow || B.overflow || !A.patterns.length || !B.patterns.length) continue;
+      const add = [];
+      for (let p = 1; p + 1 < source.cells.length; p++) {
+        const blankCases = A.patterns.filter(m => !(m & (1 << p)));
+        if (!blankCases.length) continue;
+        if (blankCases.some(m => !(m & (1 << (p - 1))) || !(m & (1 << (p + 1))))) continue;
+        if (!B.patterns.some(m => m & (1 << p))) continue;
+        if (B.patterns.some(m => (m & (7 << (p - 1))) === (7 << (p - 1)))) continue;
+        const x = { a: source.cells[p], av: 0, b: target.cells[p], bv: 0 };
+        if (!hasShapeRelation(st, x)) add.push(x);
+      }
+      if (!add.length) continue;
+      const coords = add.map(x => rc(st, x.a));
+      const targetCoords = add.map(x => rc(st, x.b));
+      const why = source.name + '\u2019s legal group lengths make every possible shaded cell' + (add.length === 1 ? ' at ' + coords[0] : ' in ' + coords.join(', ')) + ' sit between two numbers. ' + target.name + '\u2019s ascending sums and distinct digits permit no three-number run centred opposite ' + (add.length === 1 ? 'that cell' : 'any of those cells') + '.';
+      const reason = why + ' A number directly opposite such a shaded cell would force both of its neighbours to be numbers to avoid checkerboards, creating exactly that forbidden three-cell run.';
+      for (const x of add) x.reason = reason;
+      return { rule: 'Checkerboard transfer', cells: add.flatMap(x => [x.a, x.b]),
+        text: reason + ' Therefore whenever ' + (add.length === 1 ? coords[0] + ' is shaded, ' + targetCoords[0] + ' is shaded too' : 'one of ' + coords.join(', ') + ' is shaded, the facing cell in ' + target.name.toLowerCase() + ' is shaded too') + '.',
+        apply() { if (!st.shapeRelations) st.shapeRelations = []; for (const x of add) st.shapeRelations.push(x); st.__lineCache = new Map(); } };
+    }
+  }
+  return null;
+}
+
+// Nonogram-style interaction between neighbouring line layouts.  A row
+// layout which forms a checkerboard against every remaining layout of the
+// next row is impossible (and likewise for columns).  Keeping the reduced
+// layout list lets the ordinary line bounds and connectivity rules reuse this
+// human pencil work on later steps instead of rediscovering it by trial.
+function ruleAdjacentLineLayouts(st, clues) {
+  const enabled = (st.variants.blankConn && st.variants.reach) || (st.variants.numConn && st.variants.blankReach);
+  if (!enabled) return null;
+  const lines = eachSumsLine(st, clues);
+  function domain(line) {
+    if (line.clue) {
+      const sh = collectLineShapes(st, line, 200000);
+      if (!sh || sh.overflow) return null;
+      return sh.patterns;
+    }
+    const saved = savedLineShapes(st, line), out = [];
+    for (let mask = 0; mask < (1 << line.cells.length); mask++) {
+      if (saved && !saved.has(mask)) continue;
+      let ok = true;
+      for (let p = 0; p < line.cells.length && ok; p++) {
+        const m = st.cand[line.cells[p]];
+        if ((mask & (1 << p)) ? !(m & ~1) : !(m & 1)) ok = false;
+      }
+      if (ok) out.push(mask);
+    }
+    return out;
+  }
+  function compatible(a, b, n) {
+    for (let p = 0; p + 1 < n; p++) {
+      const x = (a >> p) & 3, y = (b >> p) & 3;
+      if ((x === 1 && y === 2) || (x === 2 && y === 1)) return false;
+    }
+    return true;
+  }
+  for (const kind of ['row', 'col']) {
+    const family = lines.filter(x => x.kind === kind);
+    for (let q = 0; q + 1 < family.length; q++) {
+      for (const [aLine, bLine] of [[family[q], family[q + 1]], [family[q + 1], family[q]]]) {
+        const A = domain(aLine), B = domain(bLine);
+        if (!A || !B || !A.length || !B.length) continue;
+        const keep = A.filter(a => B.some(b => compatible(a, b, aLine.cells.length)));
+        if (!keep.length) return { rule: 'Adjacent line layouts', contradiction: true, cells: aLine.cells.concat(bLine.cells),
+          text: aLine.name + ' has no layout that avoids a checkerboard with any remaining layout of ' + bLine.name.toLowerCase() + '.' };
+        if (keep.length === A.length) continue;
+        let any = 0, all = (1 << aLine.cells.length) - 1;
+        for (const mask of keep) { any |= mask; all &= mask; }
+        const forced = [];
+        for (let p = 0; p < aLine.cells.length; p++) {
+          const i = aLine.cells[p], used = !!(all & (1 << p)), blank = !(any & (1 << p));
+          if (used && (st.cand[i] & 1)) forced.push({ i, used: true });
+          if (blank && (st.cand[i] & ~1)) forced.push({ i, used: false });
+        }
+        const removed = A.length - keep.length;
+        // Do not spend a visible human step recording microscopic bookkeeping
+        // such as one rejected layout out of 2048.  Small domains, a forced
+        // cell, or a material (at least 5%) reduction are worth pencilling in.
+        if (!forced.length && A.length > 32 && removed < Math.ceil(A.length * 0.05)) continue;
+        return { rule: 'Adjacent line layouts', cells: aLine.cells.concat(bLine.cells),
+          text: aLine.name + ' has ' + A.length + ' possible number/shaded layouts from its clue bounds. ' + removed + ' of them would make a checkerboard against every one of ' + bLine.name.toLowerCase() + '\u2019s ' + B.length + ' layouts, so only ' + keep.length + ' remain' + (forced.length ? '; their shared cells force ' + forced.map(x => rc(st, x.i) + ' ' + (x.used ? 'numbered' : 'shaded')).join(', ') : '') + '.',
+          apply() {
+            if (!st.lineShapeDomains) st.lineShapeDomains = {};
+            st.lineShapeDomains[lineShapeKey(aLine)] = keep.slice();
+            for (const x of forced) filterCand(st, x.i, x.used ? ~1 : 1);
+            st.__lineCache = new Map();
+          } };
+      }
+    }
+  }
+  return null;
+}
+
 // rule (shape): no 2x2 of shaded cells — three committed blanks force the fourth used
 function ruleNo22Blank(st, clues) {
   if (!st.variants.no22blank) return null;
@@ -1329,6 +1619,73 @@ function ruleShadedSpine(st, clues) {
   return null;
 }
 
+// Symmetric partner of Shaded spine: the one connected number area must meet
+// every non-empty clued line.  Number-capable pockets that cannot meet all of
+// those obligations are shaded; a lone articulation shared by every viable
+// route is a number.  This is stronger than looking only at numbers already
+// committed on the board.
+function ruleNumbersSpine(st, clues) {
+  if (!st.variants.numConn) return null;
+  const N = st.R * st.C;
+  const canUse = i => (st.cand[i] & ~1) !== 0;
+  const terminals = [];
+  for (let i = 0; i < N; i++) if ((st.cand[i] & 1) === 0) terminals.push({ cells: [i], why: rc(st, i) + '\u2019s committed number' });
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || !line.clue.length) continue;
+    const T = line.cells.filter(canUse);
+    if (!T.length) return { rule: 'Numbers spine', contradiction: true, cells: line.cells.slice(),
+      text: line.name + '\u2019s clue requires at least one number, but no cell in the line can hold one.' };
+    terminals.push({ cells: T, why: line.name.toLowerCase() + ' (its clue requires numbers)' });
+  }
+  if (!terminals.length) return null;
+  const comp = new Int32Array(N).fill(-1);
+  let nComp = 0;
+  for (let i = 0; i < N; i++) {
+    if (!canUse(i) || comp[i] >= 0) continue;
+    const stack = [i]; comp[i] = nComp;
+    while (stack.length) {
+      const x = stack.pop();
+      for (const j of orthNeighbors(st, x)) if (canUse(j) && comp[j] < 0) { comp[j] = nComp; stack.push(j); }
+    }
+    nComp++;
+  }
+  const hitsAll = c => terminals.every(t => t.cells.some(i => comp[i] === c));
+  const okComps = [];
+  for (let c = 0; c < nComp; c++) if (hitsAll(c)) okComps.push(c);
+  if (!okComps.length) return { rule: 'Numbers spine', contradiction: true, cells: [],
+    text: 'No connected region of number-capable cells can meet every clued line and every number already placed.' };
+  const outside = [];
+  for (let i = 0; i < N; i++) if (canUse(i) && (st.cand[i] & 1) && !okComps.includes(comp[i])) outside.push(i);
+  if (outside.length) {
+    const missed = terminals.find(t => !t.cells.some(i => comp[i] === comp[outside[0]]));
+    return { rule: 'Numbers spine', cells: outside.slice(0, 12),
+      text: 'All numbers belong to one connected area, which must reach ' + (missed ? missed.why : 'every clued line') + '; ' + outside.slice(0, 6).map(i => rc(st, i)).join(', ') + (outside.length > 6 ? ', \u2026' : '') + ' lie in a pocket that cannot, so ' + (outside.length === 1 ? 'it is' : 'they are') + ' shaded.',
+      apply() { for (const i of outside) filterCand(st, i, 1); } };
+  }
+  if (okComps.length === 1) {
+    for (let x = 0; x < N; x++) {
+      if (!canUse(x) || (st.cand[x] & 1) === 0 || comp[x] !== okComps[0]) continue;
+      const seen = new Int32Array(N).fill(-1);
+      let nc = 0;
+      for (let i = 0; i < N; i++) {
+        if (!canUse(i) || i === x || seen[i] >= 0) continue;
+        const stack = [i]; seen[i] = nc;
+        while (stack.length) {
+          const y = stack.pop();
+          for (const j of orthNeighbors(st, y)) if (canUse(j) && j !== x && seen[j] < 0) { seen[j] = nc; stack.push(j); }
+        }
+        nc++;
+      }
+      let any = false;
+      for (let c = 0; c < nc && !any; c++) if (terminals.every(t => t.cells.some(i => i !== x && seen[i] === c))) any = true;
+      if (!any) return { rule: 'Numbers spine', cells: [x],
+        text: 'Every route by which the connected number area can meet the clued lines passes through ' + rc(st, x) + ', so it holds a number.',
+        apply() { filterCand(st, x, ~1); } };
+    }
+  }
+  return null;
+}
+
 // rule (shape): every group of digit cells touches the grid edge — a digit
 // region whose only escape runs through one cell forces that cell used
 function ruleNumbersReach(st, clues) {
@@ -1412,6 +1769,30 @@ function ruleBlankReach(st, clues) {
         text: 'The shaded region at ' + rc(st, i) + ' can only reach the grid\u2019s edge through ' + rc(st, j) + ' \u2014 shaded groups may not be locked in, so ' + rc(st, j) + ' is blank.',
         apply() { filterCand(st, j, 1); } };
     }
+  }
+  return null;
+}
+
+// rule: every positive digit belongs to a group, so it cannot itself exceed
+// the largest sum any group in its line may take.
+function ruleSumCeiling(st, clues) {
+  if (st.pal[0] <= 0) return null;
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue || !line.clue.length) continue;
+    const capToks = st.variants.asc ? [line.clue[line.clue.length - 1]] : line.clue;
+    let cap = -Infinity;
+    for (const tok of capToks) for (const s of allowedSums(st, tok, st.maxTotal)) if (s > cap) cap = s;
+    if (cap === -Infinity || cap >= st.maxTotal) continue;
+    const hits = [];
+    for (const i of line.cells) {
+      let bad = 0;
+      for (let d = 1; d <= st.D; d++) if ((st.cand[i] & (1 << d)) && st.pal[d - 1] > cap) bad |= 1 << d;
+      if (bad) hits.push({ i, bad });
+    }
+    if (!hits.length) continue;
+    return { rule: 'Sum ceiling', cells: hits.map(x => x.i),
+      text: line.name + '\u2019s largest possible group sum is ' + cap + (line.clue.length > 1 && st.variants.asc ? ' (the clues are ascending, so the last clue caps every group)' : '') + '. A single digit already contributes its own value to its group, so ' + hits.slice(0, 6).map(x => rc(st, x.i) + ' loses ' + valuesOf(st, x.bad).join('/')).join('; ') + (hits.length > 6 ? '; and ' + (hits.length - 6) + ' more cells lose the same over-cap values' : '') + '.',
+      apply() { for (const x of hits) filterCand(st, x.i, ~x.bad); } };
   }
   return null;
 }
@@ -1538,6 +1919,16 @@ function ruleLinePlacements(st, clues) {
     const G = line.clue.length;
     const maxSum = 0 + st.maxTotal;
     const tokenSets = lineSumSets(st, line);   // budget-refined, per clue token
+    const minGroupSums = tokenSets.map(set => { let m = Infinity; for (const v of set) if (v < m) m = v; return m; });
+    const minLineTotal = minGroupSums.every(Number.isFinite) ? minGroupSums.reduce((a, b) => a + b, 0) : null;
+    let minNumberCells = null;
+    if (minLineTotal !== null && st.pal.every(v => v > 0)) {
+      const descending = [];
+      for (let k = 0; k < st.pal.length; k++) for (let q = 0; q < st.cnt[k]; q++) descending.push(st.pal[k]);
+      descending.sort((a, b) => b - a);
+      let total = 0;
+      for (let q = 0; q < descending.length && total < minLineTotal; q++) { total += descending[q]; minNumberCells = q + 1; }
+    }
     let sumSets = tokenSets;
     if (st.variants.asc) {
       // group order is unknown: every span may take any group's sums
@@ -1562,14 +1953,30 @@ function ruleLinePlacements(st, clues) {
     const spanStart = new Int32Array(G), spanLen = new Int32Array(G);
     const sizeFeas = new Map();
     const escapeGate = shadedBeyondLine(st, clues, line);
+    const numberEscapeGate = numbersBeyondLine(st, clues, line);
+    const relationGate = lineRelationData(st, line);
+    const savedShapeGate = savedLineShapes(st, line);
     const lineSet = new Set(line.cells);
-    let escapeRejects = 0;
+    const numberEscAt = new Uint8Array(n);
+    if (numberEscapeGate) for (let p = 0; p < n; p++) for (const j of orthNeighbors(st, line.cells[p])) {
+      if (!lineSet.has(j) && (st.cand[j] & ~1)) { numberEscAt[p] = 1; break; }
+    }
+    let escapeRejects = 0, numberEscapeRejects = 0, relationRejects = 0, savedShapeRejects = 0, singletonRejects = 0;
+    const supportLayouts = [];
     function place(g, from) {
       if (count > 4000) return;
       if (g === G) {
         // trailing cells must allow blank
         let last = G ? spanStart[G - 1] + spanLen[G - 1] : 0;
         for (let p = last; p < n; p++) if (!(st.cand[line.cells[p]] & 1)) return;
+        let shapeMask = 0;
+        for (let g3 = 0; g3 < G; g3++) for (let p = spanStart[g3]; p < spanStart[g3] + spanLen[g3]; p++) shapeMask |= 1 << p;
+        if (relationGate.length) {
+          if (!relationMaskOk(shapeMask, relationGate)) { relationRejects++; return; }
+        }
+        if (savedShapeGate) {
+          if (!savedShapeGate.has(shapeMask)) { savedShapeRejects++; return; }
+        }
         // shaded escape: every maximal shaded stretch of this layout needs a
         // blank-capable neighbour outside the line, or it is a sealed pocket
         if (escapeGate) {
@@ -1589,6 +1996,13 @@ function ruleLinePlacements(st, clues) {
             p = q;
           }
         }
+        if (numberEscapeGate) {
+          for (let g3 = 0; g3 < G; g3++) {
+            let esc = false;
+            for (let p = spanStart[g3]; p < spanStart[g3] + spanLen[g3]; p++) if (numberEscAt[p]) { esc = true; break; }
+            if (!esc) { numberEscapeRejects++; return; }
+          }
+        }
         // spans' lengths must be jointly realisable: pairwise-disjoint digit
         // sets of exactly these sizes, letters bound consistently
         if (G > 0) {
@@ -1597,6 +2011,21 @@ function ruleLinePlacements(st, clues) {
           if (feas === undefined) { feas = lineJointFeasible(st, line.clue, tokenSets, n, null, Array.from(spanLen)); sizeFeas.set(key, feas); }
           if (!feas) return;
         }
+        // Group-length arithmetic normally uses the whole palette.  For a
+        // proposed one-cell group we can also check the exact crossing cell:
+        // it must still allow a digit whose value is one of this group's
+        // possible sums.  This remains a deliberately local, necessary test;
+        // longer groups stay over-approximated here.
+        let rejection = null;
+        for (let g3 = 0; g3 < G && !rejection; g3++) {
+          if (spanLen[g3] !== 1) continue;
+          const p = spanStart[g3], i = line.cells[p];
+          let requiredMask = 0;
+          for (let d = 1; d <= st.D; d++) if (sumSets[g3].has(st.pal[d - 1])) requiredMask |= 1 << d;
+          if (requiredMask && !(st.cand[i] & requiredMask)) rejection = { p, i, requiredMask };
+        }
+        supportLayouts.push({ mask: shapeMask, rejection });
+        if (rejection) { singletonRejects++; return; }
         count++;
         const inG = new Int8Array(n);
         for (let g2 = 0; g2 < G; g2++) for (let p = spanStart[g2]; p < spanStart[g2] + spanLen[g2]; p++) inG[p] = 1;
@@ -1627,8 +2056,8 @@ function ruleLinePlacements(st, clues) {
         const ss = [...sumSets[g2]];
         return '\u201c' + tokenLabel(tok) + '\u201d = ' + (ss.length <= 4 ? ss.join('/') : ss[0] + '\u2026' + ss[ss.length - 1]) + (ls.length ? ' needing ' + (ls.length === 1 ? ls[0] : ls[0] + '\u2013' + ls[ls.length - 1]) + ' cell' + (ls.length === 1 && ls[0] === 1 ? '' : 's') : ' with no feasible length');
       }).join('; ');
-      return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', contradiction: true, cells: line.cells.slice(),
-        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the rest of the shading' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed') + '.' };
+      return { rule: singletonRejects ? 'Cross-line singleton' : (savedShapeRejects ? 'Line pattern cases' : (relationRejects ? 'Linked line bounds' : (numberEscapeRejects ? 'Numbers escape' : (escapeRejects ? 'Shaded escape' : 'Line placements')))), contradiction: true, cells: line.cells.slice(),
+        text: 'No arrangement of ' + line.name.toLowerCase() + '\u2019s groups fits: ' + why + (singletonRejects ? ' \u2014 every remaining layout leaves a one-cell group at a crossing cell that cannot take any value allowed for that sum' : (relationRejects ? ' \u2014 each remaining layout breaks a previously proved shading relation in this line' : (numberEscapeRejects ? ' \u2014 every remaining layout stranded a number run from the connected number area' : (escapeRejects ? ' \u2014 every remaining layout left a shaded stretch sealed off from the rest of the shading' : ' \u2014 with the required gaps and the digits still possible in its cells, they cannot all be placed')))) + '.' };
     }
     if (count > 4000) continue;
     const mkFilled = [], mkBlank = [];
@@ -1653,8 +2082,32 @@ function ruleLinePlacements(st, clues) {
     const bits = [];
     if (mkFilled.length) bits.push('wherever the group' + (G === 1 ? ' slides' : 's slide') + ', ' + mkFilled.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkFilled.length === 1 ? 'is' : 'are') + ' covered');
     if (mkBlank.length) bits.push(mkBlank.map(p => rc(st, line.cells[p])).join(', ') + ' ' + (mkBlank.length === 1 ? 'is' : 'are') + ' out of reach and blank');
-    return { rule: escapeRejects ? 'Shaded escape' : 'Line placements', cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
-      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + (escapeRejects ? ' \u2014 arrangements leaving a shaded stretch sealed off from the rest of the shading (no blank-capable neighbour outside the line) were discarded' : '') + ' \u2014 ' + bits.join('; ') + '.'),
+    let singletonTxt = '';
+    for (const forcedP of mkFilled) {
+      const opposed = supportLayouts.filter(x => !(x.mask & (1 << forcedP)));
+      if (!opposed.length || opposed.some(x => !x.rejection)) continue;
+      const first = opposed[0].rejection;
+      if (opposed.some(x => x.rejection.i !== first.i || x.rejection.requiredMask !== first.requiredMask)) continue;
+      const req = valuesOf(st, first.requiredMask);
+      let crossingTxt = '';
+      const rr = (first.i / st.C) | 0, cc = first.i % st.C;
+      const crossing = eachSumsLine(st, clues).find(x => x.kind === (line.kind === 'row' ? 'col' : 'row') && x.idx === (line.kind === 'row' ? cc : rr));
+      if (crossing && crossing.clue && crossing.clue.length) {
+        const toks = st.variants.asc ? [crossing.clue[crossing.clue.length - 1]] : crossing.clue;
+        let cap = -Infinity;
+        for (const tok of toks) for (const s of allowedSums(st, tok, st.maxTotal)) if (s > cap) cap = s;
+        if (req.length && req.every(v => v > cap)) crossingTxt = ' ' + crossing.name + '\u2019s largest possible group sum is ' + cap + ', so ' + rc(st, first.i) + ' cannot take ' + (req.length === 1 ? 'that ' + req[0] : req.join('/')) + '.';
+      }
+      if (!crossingTxt) crossingTxt = ' Those values have already been excluded from ' + rc(st, first.i) + ' by its crossing line.';
+      singletonTxt = ' If ' + rc(st, line.cells[forcedP]) + ' were shaded, every remaining layout would leave ' + rc(st, first.i) + ' as a one-cell group. Such a group can only be ' + (req.length === 1 ? req[0] : req.join('/')) + '.' + crossingTxt;
+      break;
+    }
+    const boundTxt = minLineTotal !== null && minNumberCells !== null
+      ? ' The group sums total at least ' + minLineTotal + ' (' + minGroupSums.join('+') + '); with distinct values, reaching that total needs at least ' + minNumberCells + ' number cell' + (minNumberCells === 1 ? '' : 's') + ', while ' + G + ' groups need at least ' + Math.max(0, G - 1) + ' shaded separator' + (G === 2 ? '' : 's') + '.'
+      : '';
+    const relTxt = relationRejects ? ' The previously proved implication' + (relationGate.length === 1 ? ' ' + rc(st, relationGate[0].x.a) + ' ' + (relationGate[0].x.av ? 'number' : 'shaded') + ' \u21d2 ' + rc(st, relationGate[0].x.b) + ' ' + (relationGate[0].x.bv ? 'number' : 'shaded') : 's among cells in this line') + ' rules out the remaining incompatible layouts.' : '';
+    return { rule: singletonTxt ? 'Cross-line singleton' : (savedShapeRejects ? 'Line pattern cases' : (relationRejects ? 'Linked line bounds' : (numberEscapeRejects ? 'Numbers escape' : (escapeRejects ? 'Shaded escape' : 'Line placements')))), cells: mkFilled.concat(mkBlank).map(p => line.cells[p]),
+      text: (G === 0 ? line.name + '\u2019s clue is 0 \u2014 the line holds no digits at all: ' + bits.join('; ') + '.' : line.name + '\u2019s ' + G + ' group' + (G === 1 ? '' : 's') + ' (' + line.clue.map(tokenLabel).join(', ') + '): ' + lenTxt + windowTxt + boundTxt + relTxt + singletonTxt + (numberEscapeRejects && !relationRejects ? ' Layouts stranding a number run with no number-capable neighbour outside the line were discarded.' : (escapeRejects && !relationRejects ? ' Arrangements leaving a shaded stretch sealed off from the rest of the shading (no blank-capable neighbour outside the line) were discarded.' : '')) + ' Therefore ' + bits.join('; ') + '.'),
       apply() {
         for (const p of mkFilled) filterCand(st, line.cells[p], ~1);
         for (const p of mkBlank) filterCand(st, line.cells[p], 1);
@@ -2032,8 +2485,8 @@ function cellTrialCore(st, clues, fastTier) {
   }
   cands.sort((a, b) => popc(st.cand[a]) - popc(st.cand[b]));
   const tier = fastTier
-    ? { fast: true, deadline: Date.now() + 3000, steps: 20, list: cands.slice(0, 80) }
-    : { fast: false, deadline: Date.now() + (big ? 90000 : 8000), steps: 50, list: cands.slice(0, 24) };
+    ? { fast: true, deadline: Date.now() + (big ? 15000 : 3000), steps: 20, list: cands.slice(0, 80) }
+    : { fast: false, deadline: Date.now() + (big ? 30000 : 8000), steps: 40, list: cands.slice(0, 24) };
   for (const i of tier.list) {
     if (Date.now() > tier.deadline) break;
     for (let v = 0; v <= st.D; v++) {
@@ -2207,10 +2660,12 @@ function ruleBaseTrialFull(st, clues) { return baseTrialCore(st, clues, false); 
 function ghostRun(st, clues, hyp, fast, maxSteps) {
   const g = cloneSumsState(st);
   g.fastLadder = fast; g.noTrial = true;
-  // the line cache is keyed by every input that affects a line's enumeration
-  // (candidates, clue letters, candidate bases, escape gates), so ghosts can
-  // share it with the parent state safely
-  g.__lineCache = st.__lineCache;
+  // Keep each hypothetical branch's exact-line cache private.  Sharing was
+  // logically safe, but on a large open grid dozens of abandoned branches
+  // accumulated thousands of heavyweight line unions in the parent cache.
+  // A private cache is released with the branch and makes repeated human
+  // trials predictable instead of memory-spiky.
+  g.__lineCache = new Map();
   try { hyp(g); } catch (e) { return { dead: true, chain: [], g: null }; }
   const chain = [];
   for (let k = 0; k < maxSteps; k++) {
@@ -2253,8 +2708,8 @@ function shadeTrialCore(st, clues, fastTier) {
   if (!cells.length) return null;
   const big = st.R * st.C >= 100;
   const tiers = fastTier
-    ? [{ fast: true, deadline: Date.now() + 4000, steps: 16, list: cells }]
-    : [{ fast: false, deadline: Date.now() + (big ? 60000 : 8000), steps: 24, list: cells.slice(0, 24) }];
+    ? [{ fast: true, deadline: Date.now() + (big ? 15000 : 4000), steps: big ? 24 : 16, list: cells }]
+    : [{ fast: false, deadline: Date.now() + (big ? 30000 : 8000), steps: 24, list: cells.slice(0, 24) }];
   for (const tier of tiers) {
     for (const i of tier.list) {
       if (Date.now() > tier.deadline) break;
@@ -2312,8 +2767,8 @@ function caseMergeCore(st, clues, fastTier) {
   if (!hyps.length) return null;
   const big = st.R * st.C >= 100;
   const tiers = fastTier
-    ? [{ fast: true, deadline: Date.now() + 4000, steps: 14, list: hyps }]
-    : [{ fast: false, deadline: Date.now() + (big ? 120000 : 12000), steps: 20, list: hyps }];
+    ? [{ fast: true, deadline: Date.now() + (big ? 30000 : 4000), steps: big ? 24 : 14, list: hyps }]
+    : [{ fast: false, deadline: Date.now() + (big ? 30000 : 12000), steps: 20, list: hyps.slice(0, big ? 24 : hyps.length) }];
   for (const tier of tiers) {
     for (const h of tier.list) {
       if (Date.now() > tier.deadline) break;
@@ -2367,6 +2822,7 @@ function caseMergeCore(st, clues, fastTier) {
       }
       // all surviving cases: merge — keep only what every case still allows
       const cellHits = [], letterHits = [];
+      const relationHits = [];
       let baseHit = null;
       for (let j = 0; j < N; j++) {
         let u = 0;
@@ -2386,7 +2842,15 @@ function caseMergeCore(st, clues, fastTier) {
         const keep = new Set([...st.baseCand].filter(b => u.has(b)));
         if (keep.size && keep.size < st.baseCand.size) baseHit = keep;
       }
-      if (!cellHits.length && !letterHits.length && !baseHit) continue;
+      if (alive.length) {
+        const common = new Map((alive[0].r.g.shapeRelations || []).map(x => [relationKey(x), x]));
+        for (let q = 1; q < alive.length; q++) {
+          const keys = new Set((alive[q].r.g.shapeRelations || []).map(relationKey));
+          for (const k of [...common.keys()]) if (!keys.has(k)) common.delete(k);
+        }
+        for (const x of common.values()) if (!hasShapeRelation(st, x)) relationHits.push(Object.assign({}, x));
+      }
+      if (!cellHits.length && !letterHits.length && !baseHit && !relationHits.length) continue;
       const bits = [];
       if (cellHits.length) bits.push(cellHits.slice(0, 6).map(t => {
         const parts = [];
@@ -2396,13 +2860,17 @@ function caseMergeCore(st, clues, fastTier) {
       }).join('; ') + (cellHits.length > 6 ? '; and ' + (cellHits.length - 6) + ' more cells' : ''));
       if (letterHits.length) bits.push(letterHits.map(t => String.fromCharCode(65 + t.L) + ' = ' + digitsOf2(t.nm).join('/')).join('; '));
       if (baseHit) bits.push('the base = ' + [...baseHit].sort((a, b) => a - b).join('/'));
-      return { rule: 'Case analysis', cells: cellHits.map(t => t.j),
+      if (relationHits.length) bits.push(relationHits.slice(0, 8).map(x => rc(st, x.a) + ' ' + (x.av ? 'number' : 'shaded') + ' \u21d2 ' + rc(st, x.b) + ' ' + (x.bv ? 'number' : 'shaded')).join('; ') + (relationHits.length > 8 ? '; and ' + (relationHits.length - 8) + ' more shape implications' : ''));
+      return { rule: 'Case analysis', cells: cellHits.map(t => t.j).concat(relationHits.flatMap(x => [x.a, x.b])),
         cases: h.parts.map((part, q) => ({ intro: 'Case ' + (q + 1) + ' \u2014 ' + (h.kind === 'cell' ? rc(st, h.i) : 'letter ' + String.fromCharCode(65 + h.L)) + ' is ' + part.label + ':', chain: runs[q].chain })),
         text: h.what + ' \u2014 following each case ' + Math.max(...runs.map(r => r.chain.length)) + ' steps at most, every case agrees: ' + bits.join('; ') + '.',
         apply() {
           for (const t of cellHits) filterCand(st, t.j, t.nm);
           for (const t of letterHits) filterLetter(st, t.L, t.nm);
           if (baseHit) filterBase(st, baseHit);
+          if (!st.shapeRelations) st.shapeRelations = [];
+          for (const x of relationHits) st.shapeRelations.push(x);
+          if (relationHits.length) st.__lineCache = new Map();
         } };
     }
   }
@@ -2412,10 +2880,94 @@ function caseMergeCore(st, clues, fastTier) {
 function ruleCaseMergeFast(st, clues) { return caseMergeCore(st, clues, true); }
 function ruleCaseMergeFull(st, clues) { return caseMergeCore(st, clues, false); }
 
+// When a line has only a genuinely small handful of legal number/shaded
+// layouts, a human can list those layouts rather than guessing one cell at a
+// time.  Follow each layout through the quick ladder, discard contradicted
+// layouts, and retain cells or shape implications shared by every survivor.
+function ruleLinePatternCases(st, clues) {
+  if (st.noTrial) return null;
+  const big = st.R * st.C >= 100;
+  const deadline = Date.now() + (big ? 90000 : 8000);
+  if (!st.__lineCaseMiss) st.__lineCaseMiss = new Set();
+  const choices = [];
+  for (const line of eachSumsLine(st, clues)) {
+    if (!line.clue) continue;
+    const sh = collectLineShapes(st, line);
+    if (!sh || sh.overflow || sh.patterns.length < 2 || sh.patterns.length > 8) continue;
+    choices.push({ line, patterns: sh.patterns });
+  }
+  choices.sort((a, b) => a.patterns.length - b.patterns.length);
+  for (const choice of choices) {
+    if (Date.now() > deadline) break;
+    const { line, patterns } = choice;
+    let fp = lineShapeKey(line) + '|' + patterns.join(',') + '|';
+    for (const i of line.cells) fp += st.cand[i] + ',';
+    if (st.__lineCaseMiss.has(fp)) continue;
+    const runs = patterns.map(mask => ghostRun(st, clues, g => {
+      for (let p = 0; p < line.cells.length; p++) filterCand(g, line.cells[p], (mask & (1 << p)) ? ~1 : 1);
+      if (!g.lineShapeDomains) g.lineShapeDomains = {};
+      g.lineShapeDomains[lineShapeKey(line)] = [mask];
+    }, big ? false : true, big ? 20 : 18));
+    const alive = runs.map((r, q) => ({ r, q })).filter(x => !x.r.dead);
+    if (!alive.length) return { rule: 'Line pattern cases', contradiction: true, cells: line.cells.slice(),
+      text: line.name + '\u2019s ' + patterns.length + ' remaining number/shaded layouts all lead to contradictions.' };
+    const cellHits = [], inLine = new Set(line.cells);
+    for (let i = 0; i < st.R * st.C; i++) {
+      let union = 0;
+      for (const x of alive) union |= x.r.g.cand[i];
+      let nm = st.cand[i] & union;
+      // A small set of layouts is a human argument about this line.  Away
+      // from the line, retain only shared shading conclusions; importing a
+      // far-away exact digit reached twenty ghost steps later is opaque and
+      // can accidentally turn this bounded shape argument into a deep solve.
+      if (!inLine.has(i) && nm && nm !== st.cand[i]) {
+        if (!(nm & 1)) nm = st.cand[i] & ~1;
+        else if (!(nm & ~1)) nm = st.cand[i] & 1;
+        else nm = st.cand[i];
+      }
+      if (nm && nm !== st.cand[i]) cellHits.push({ i, nm });
+    }
+    const common = new Map((alive[0].r.g.shapeRelations || []).map(x => [relationKey(x), x]));
+    for (let q = 1; q < alive.length; q++) {
+      const keys = new Set((alive[q].r.g.shapeRelations || []).map(relationKey));
+      for (const k of [...common.keys()]) if (!keys.has(k)) common.delete(k);
+    }
+    const relationHits = [...common.values()].filter(x => !hasShapeRelation(st, x)).map(x => Object.assign({}, x));
+    const survivors = alive.map(x => patterns[x.q]);
+    const deadCount = patterns.length - survivors.length;
+    const old = st.lineShapeDomains && st.lineShapeDomains[lineShapeKey(line)];
+    const domainNarrows = deadCount > 0 && (!old || survivors.length < old.length);
+    if (!domainNarrows && !cellHits.length && !relationHits.length) { st.__lineCaseMiss.add(fp); continue; }
+    const label = mask => Array.from({ length: line.cells.length }, (_, p) => mask & (1 << p) ? 'N' : '\u00b7').join('');
+    const bits = [];
+    if (deadCount) bits.push(deadCount + ' layout' + (deadCount === 1 ? '' : 's') + ' fail' + (deadCount === 1 ? 's' : '') + ', leaving ' + survivors.length);
+    if (cellHits.length) bits.push(cellHits.slice(0, 6).map(t => {
+      const opts = [];
+      if (t.nm & 1) opts.push('shaded');
+      const vals = valuesOf(st, t.nm & ~1);
+      if (vals.length) opts.push(vals.join('/'));
+      return rc(st, t.i) + ' keeps ' + opts.join(' or ');
+    }).join('; '));
+    if (relationHits.length) bits.push(relationHits.slice(0, 6).map(x => rc(st, x.a) + ' ' + (x.av ? 'number' : 'shaded') + ' \u21d2 ' + rc(st, x.b) + ' ' + (x.bv ? 'number' : 'shaded')).join('; '));
+    return { rule: 'Line pattern cases', cells: line.cells.concat(cellHits.map(t => t.i)),
+      cases: patterns.map((mask, q) => ({ intro: line.name + ' layout ' + label(mask) + ':', chain: runs[q].chain })),
+      text: line.name + ' has only ' + patterns.length + ' legal number/shaded layouts after its clue bounds. Following each through the ordinary line, checkerboard, and connectivity rules: ' + bits.join('; ') + '.',
+      apply() {
+        if (!st.lineShapeDomains) st.lineShapeDomains = {};
+        st.lineShapeDomains[lineShapeKey(line)] = survivors.slice();
+        for (const t of cellHits) filterCand(st, t.i, t.nm);
+        if (!st.shapeRelations) st.shapeRelations = [];
+        for (const x of relationHits) st.shapeRelations.push(x);
+        st.__lineCache = new Map();
+      } };
+  }
+  return null;
+}
+
 // trial rules run cheapest hypotheses first: every quick (fast-ladder) sweep
 // across all hypothesis kinds precedes any deep (full-ladder) sweep
-const SUMS_RULES = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleShadeTrialFast, ruleCellTrialFast, ruleBaseTrialFast, ruleCaseMergeFast, ruleShadeTrialFull, ruleCellTrialFull, ruleBaseTrialFull, ruleCaseMergeFull];
-const SUMS_FAST = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleGroupCombos, ruleSpanAlgebra];
+const SUMS_RULES = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShapeRelation, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersSpine, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLetterEcho, ruleLinePlacements, ruleCheckerboardTransfer, ruleSumCeiling, ruleAdjacentLineLayouts, ruleGroupCombos, ruleSpanAlgebra, ruleLineAnalysis, ruleLetterDeduction, ruleLinePatternCases, ruleShadeTrialFast, ruleCellTrialFast, ruleBaseTrialFast, ruleCaseMergeFast, ruleCaseMergeFull, ruleShadeTrialFull, ruleCellTrialFull, ruleBaseTrialFull];
+const SUMS_FAST = [ruleUniqueness, ruleBaseBounds, ruleLetterUniqueness, ruleLetterPairs, ruleNo22Blank, ruleNo22Numbers, ruleChecker, ruleShapeRelation, ruleShadedConnect, ruleShadedSpine, ruleNumConnect, ruleNumbersSpine, ruleNumbersReach, ruleBlankReach, ruleSumCap, ruleSumBounds, ruleEqualGroups, ruleDisjointSums, ruleKDOffByOne, ruleFullLine, ruleLinePlacements, ruleCheckerboardTransfer, ruleSumCeiling, ruleAdjacentLineLayouts, ruleGroupCombos, ruleSpanAlgebra];
 
 // per line and clue index, the group's sum where it is already exactly
 // determined by committed cells and blanks (for UI display of resolved ?/#).
@@ -2494,12 +3046,14 @@ function sumsComplete(st) {
 const SUMS_STRATEGIES = [
   { name: 'Digit uniqueness', desc: 'A placed digit cannot repeat in its row or column \u2014 eliminate it from every peer cell.' },
   { name: 'Sum cap', desc: 'No group can exceed the clue\u2019s largest possible sum (under ascending clues the last token caps every group) \u2014 a committed run near the cap sheds big values from the cells that would join it.' },
+  { name: 'Sum ceiling', desc: 'A positive digit contributes at least its own value to its group, so no cell in a line can use a digit larger than that line\u2019s greatest possible group sum. With ascending clues, the last clue caps every group.' },
   { name: 'Sum bounds', desc: 'A group\u2019s possible sums are capped by the line\u2019s digit budget (all its groups share the distinct digits 1\u2026D, so their sums total at most 1+2+\u2026+D) \u2014 the surviving sums pin the group\u2019s crypto letters. A two-digit group\u2019s tens letter, for instance, can never exceed the budget\u2019s tens digit.' },
   { name: 'Letter subsets', desc: 'Any k crypto letters confined to the same k digits use them all up \u2014 those digits leave every other letter (naked pairs, triples, \u2026 sextuples, sudoku-style).' },
   { name: 'Equal groups', desc: 'The same letter token appearing k times in one line means k separate digit sets with the same sum (each value within its per-line multiplicity) \u2014 sums for which that many disjoint sets don\u2019t exist, or don\u2019t fit in the line with the gaps, are impossible.' },
   { name: 'Disjoint sums', desc: 'All of a line\u2019s groups need pairwise-disjoint sets of the digits 1\u2026D, fitting in the line with gaps \u2014 a group sum no joint assignment can realise alongside the others is impossible.' },
   { name: 'Full line', desc: 'A line whose clue sums total 1+2+\u2026+D contains every digit \u2014 a digit with one home left is placed.' },
   { name: 'Line placements', desc: 'The clue\u2019s groups can only be arranged in so many ways around the blanks and digits already placed \u2014 cells filled in every arrangement carry a digit; cells blank in every arrangement are blank.' },
+  { name: 'Cross-line singleton', desc: 'A tentative shaded cell can leave a one-cell group in the remaining line layouts. If that singleton would need a value already excluded by its crossing line, the tentative cell must hold a number.' },
   { name: 'Group combinations', desc: 'A fully-delimited group\u2019s sum restricts which distinct digits its open cells can hold (killer-cage style) \u2014 impossible digits are eliminated.' },
   { name: 'Span algebra', desc: 'Decided row and column groups interlocking over shared cells: summing the rows must equal summing the columns over the same region (letters bound consistently) \u2014 joint completions pin cells and letters both.' },
   { name: 'Line analysis', desc: 'One line considered in isolation: every completion consistent with its clue and the current candidates is enumerated \u2014 values no completion uses are eliminated.' },
@@ -2509,8 +3063,14 @@ const SUMS_STRATEGIES = [
   { name: 'No 2\u00d72 shaded', variant: 'no22blank', desc: 'No 2\u00d72 block of shaded cells \u2014 three blanks in a square force the fourth cell to hold a digit.' },
   { name: 'No 2\u00d72 numbers', variant: 'no22num', desc: 'No 2\u00d72 block of digit cells \u2014 three digits in a square force the fourth cell blank.' },
   { name: 'Checkerboard', variant: 'checker', desc: 'With shaded connected and numbers touching the edge, a 2\u00d72 with blanks on one diagonal and digits on the other is impossible \u2014 two diagonal blanks beside a digit force the fourth cell blank.' },
+  { name: 'Checkerboard transfer', variant: 'checker', desc: 'Compare two neighbouring lines. If every possible shaded cell in one line is flanked by numbers, while the facing line cannot contain a three-number run there, that shaded cell forces the facing cell shaded: otherwise avoiding two checkerboards would create the forbidden run.' },
+  { name: 'Adjacent line layouts', variant: 'checker', desc: 'Cross-check the remaining number/shaded layouts of neighbouring rows or columns. A layout that makes a checkerboard against every layout next to it is removed; shared cells of the survivors are fixed.' },
+  { name: 'Shape relation', variant: 'checker', desc: 'A previously proved shaded/number implication is used directly (or contrapositively) as soon as one endpoint is decided.' },
+  { name: 'Linked line bounds', variant: 'checker', desc: 'Ordinary clue min/max and group-length bounds are combined with proved shading implications that lie within the row or column; layouts breaking either are discarded.' },
   { name: 'Shaded connected', variant: 'blankConn', desc: 'All shaded cells form one orthogonally connected group \u2014 a cell that every connection between two shaded parts must pass through is itself blank.' },
   { name: 'Numbers connected', variant: 'numConn', desc: 'All digit cells form one orthogonally connected group \u2014 a cell that every connection between two digit regions must pass through holds a digit.' },
+  { name: 'Numbers spine', variant: 'numConn', desc: 'The one connected number area must meet every non-empty clued row and column, not merely the numbers already placed. Number-capable pockets that cannot meet all of them are shaded; a lone bridge shared by every route is a number.' },
+  { name: 'Numbers escape', variant: 'numConn', desc: 'Each separate number run in a line must join the one connected number area through a number-capable neighbour outside that line; layouts that strand a run are impossible.' },
   { name: 'Shaded escape', variant: 'blankConn', desc: 'A line\u2019s shaded cells come in stretches, and each stretch must join the connected shaded area through a blank-capable neighbour outside the line \u2014 arrangements that seal a stretch into a pocket are impossible.' },
   { name: 'Shaded spine', variant: 'blankConn', desc: 'The one connected shaded group must place a shaded cell in every line whose clue forces one \u2014 blank-capable pockets that cannot reach such a line hold digits, and a lone bridge on every route between them is shaded.' },
   { name: 'Shaded reach edge', variant: 'blankReach', desc: 'Every connected shaded group touches the grid\u2019s edge \u2014 a shaded region\u2019s last escape route to the border stays shaded.' },
@@ -2522,6 +3082,7 @@ const SUMS_STRATEGIES = [
   { name: 'Cell trial', desc: 'Suppose one nearly-decided cell held a particular value and follow the quick consequences \u2014 a contradiction eliminates it, chain shown.' },
   { name: 'Shading trial', desc: 'Suppose an undecided cell held a digit (or was shaded), without fixing which digit, and follow the quick consequences \u2014 a contradiction decides the cell\u2019s shading, chain shown.' },
   { name: 'Case analysis', desc: 'A binary split \u2014 a two-candidate cell, an undecided cell\u2019s shaded-vs-digit dichotomy, or a two-digit letter \u2014 is followed a few steps in both cases; whatever every case agrees on is true outright, both chains shown.' },
+  { name: 'Line pattern cases', desc: 'When clue min/max leaves at most eight number/shaded layouts for a line, list those human-sized cases, follow each briefly, discard contradictions, and keep any cells or implications shared by every survivor.' },
 ];
 
 const api = { makeSumsState, cloneSumsState, filterCand, filterLetter, filterBase, ensureBaseCand, baseList, numeralOf, takeSumsStep, sumsComplete, eachSumsLine, committedDigit, popc, digitsOf, digitsOf2: (m) => { const a = []; for (let d = 0; d <= 30; d++) if (m & (1 << d)) a.push(d); return a; }, tokenLetters, allowedSums, SUMS_STRATEGIES };
