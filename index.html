@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>U-Bahn Solver — v-sidebar2</title>
+<link rel="stylesheet" href="https://jwknt.github.io/site-theme/v1/base.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -19,10 +20,15 @@
   <script>
   (function () {
     const saved = localStorage.getItem('solverTheme');
-    if (saved === 'dark') document.documentElement.classList.add('dark');
+    if (saved === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.dataset.theme = 'dark';
+    }
     document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('themeToggle').addEventListener('click', function () {
         const dark = document.documentElement.classList.toggle('dark');
+        if (dark) document.documentElement.dataset.theme = 'dark';
+        else delete document.documentElement.dataset.theme;
         localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
       });
     });

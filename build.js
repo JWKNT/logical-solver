@@ -9,6 +9,7 @@ let html = read('index.html');
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
 html = html.replace(/\?v=20260712-2/g, '');
+html = html.replace('<link rel="stylesheet" href="https://jwknt.github.io/site-theme/v1/base.css">\n', '');
 const css = read('css/style.css');
 const engine = read('js/engine.js');
 let stepper = read('js/stepper.js');

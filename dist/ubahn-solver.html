@@ -6,18 +6,18 @@
 <title>U-Bahn Solver — v-sidebar2</title>
 <style>
   :root {
-      --panel: #ffffff;
-      --sign-blue: #35507a;
-      --sign-blue-dark: #263c5e;
-      --ink: #1a1a1a;
-      --platform: #ffffff;
-      --board: #ffffff;
+      --panel: var(--paper, #ffffff);
+      --sign-blue: var(--blue, #35507a);
+      --sign-blue-dark: var(--blue-dark, #263c5e);
+      --solver-ink: var(--ink, #1a1a1a);
+      --platform: var(--paper, #ffffff);
+      --board: var(--paper, #ffffff);
       --grid-line: #c8c8c8;
       --shaded: #333333;
-      --line-def: #35507a;
+      --line-def: var(--blue, #35507a);
       /* definite / solved segments */
       --line-unk: #a8760a;
-      --line-maybe: #b8b8b8;
+      --line-maybe: var(--line-strong, #b8b8b8);
       /* possible segments */
       --tint-used: #e8edf4;
       /* used in every solution */
@@ -29,7 +29,7 @@
       --c-turn: #3a6a4a;
       --c-empty: #707070;
       --band: 30px;
-      --hair: 1px solid #dcdcdc;
+      --hair: 1px solid var(--line, #dcdcdc);
   }
 
   * {
@@ -43,8 +43,8 @@
 
   body {
       background: var(--platform);
-      color: var(--ink);
-      font-family: Georgia, "Times New Roman", "Source Serif Pro", serif;
+      color: var(--solver-ink);
+      font-family: var(--serif, Georgia, "Times New Roman", "Source Serif Pro", serif);
       font-size: 16px;
       line-height: 1.55;
       padding-bottom: 80px;
@@ -105,7 +105,7 @@
       padding: 3px 6px;
       font-family: inherit;
       background: #fff;
-      color: var(--ink);
+      color: var(--solver-ink);
   }
 
   button {
@@ -115,7 +115,7 @@
       cursor: pointer;
       border: 1px solid #999;
       background: #fff;
-      color: var(--ink);
+      color: var(--solver-ink);
       font-variant: small-caps;
       letter-spacing: 0.4px;
   }
@@ -125,7 +125,7 @@
   }
 
   button.primary {
-      border-color: var(--ink);
+      border-color: var(--solver-ink);
       font-weight: 600;
   }
 
@@ -249,7 +249,7 @@
       font-weight: 700;
       font-family: "Menlo", "Consolas", monospace;
       background: #fbfbfb;
-      color: var(--ink);
+      color: var(--solver-ink);
       min-width: 0;
   }
 
@@ -278,7 +278,7 @@
   }
 
   #boardSvg {
-      border: 1.5px solid var(--ink);
+      border: 1.5px solid var(--solver-ink);
       background: var(--board);
       display: block;
   }
@@ -304,7 +304,7 @@
 
   .status {
       background: #f7f7f7;
-      color: var(--ink);
+      color: var(--solver-ink);
       border: var(--hair);
       border-left: 3px solid #888;
       padding: 10px 14px;
@@ -450,7 +450,7 @@
 /* ---- tabs ---- */
 .tabs { margin-left: auto; display: flex; gap: 6px; }
 .tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
-.tabs .tab.active { border-bottom-color: var(--ink); font-weight: 700; }
+.tabs .tab.active { border-bottom-color: var(--solver-ink); font-weight: 700; }
 .tabs .tab:hover:not(.active) { background: #f2f2f2; }
 
 /* ---- japanese sums ---- */
@@ -474,7 +474,7 @@
 }
 .sums-clue-col input, .sums-clue-row input {
   border: 1px solid #e0e0e0; background: #fbfbfb; font-family: "Menlo", monospace;
-  font-size: 12px; font-weight: 700; color: var(--ink); text-align: center; padding: 3px 2px;
+  font-size: 12px; font-weight: 700; color: var(--solver-ink); text-align: center; padding: 3px 2px;
 }
 .sums-clue-col input { width: 50px; margin: 0 1px 4px; }
 .sums-clue-row input { width: 84px; margin-right: 4px; text-align: right; }
@@ -487,7 +487,7 @@
 .sums-slots input {
   width: 26px; height: 20px; border: 1px solid #e0e0e0; background: #fbfbfb;
   font-family: "Menlo", monospace; font-size: 11.5px; font-weight: 700;
-  color: var(--ink); text-align: center; padding: 1px;
+  color: var(--solver-ink); text-align: center; padding: 1px;
 }
 .sums-slots input:focus { border-color: #999; outline: none; }
 
@@ -555,10 +555,10 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
   background: none; border: 1px solid var(--grid-line); border-radius: 3px;
   cursor: pointer; color: inherit; vertical-align: middle;
 }
-#themeToggle:hover { border-color: var(--ink); }
+#themeToggle:hover { border-color: var(--solver-ink); }
 html.dark {
   --panel: #313136;
-  --ink: #cfccc4;
+  --solver-ink: #cfccc4;
   --platform: #2b2b2f;
   --board: #313136;
   --grid-line: #55555b;
@@ -682,10 +682,10 @@ html.dark .a38-permit-disc{stroke:#eee}html.dark .a38-permit-num{fill:#eee}
 .cave-cell.clue{background:#f7f3e9}
 .cave-cell.clue.white,.cave-cell.clue.solved-white{background:#dce9dc}
 .cave-cell.clue.black{background:#b9bec4}
-.cave-clue-entry{width:100%;min-height:38px;display:flex;align-items:center;justify-content:center;position:relative;z-index:2;outline:none;color:var(--ink);caret-color:var(--ink);font:700 21px/1 Georgia,serif;text-align:center;cursor:text}
+.cave-clue-entry{width:100%;min-height:38px;display:flex;align-items:center;justify-content:center;position:relative;z-index:2;outline:none;color:var(--solver-ink);caret-color:var(--solver-ink);font:700 21px/1 Georgia,serif;text-align:center;cursor:text}
 .cave-clue-entry:empty::before{content:''}
 .cave-clue-entry:focus{box-shadow:inset 0 -2px var(--sign-blue)}
-.cave-cell.clue.black .cave-clue-entry{color:var(--ink)}
+.cave-cell.clue.black .cave-clue-entry{color:var(--solver-ink)}
 .cave-demo{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;box-sizing:border-box;vertical-align:-4px;border:1px solid var(--grid-line);font:700 10px/1 Menlo,monospace}
 .cave-demo-black{background:var(--shaded)}
 .cave-demo-white{background:#dce9dc}
@@ -723,10 +723,15 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
   <script>
   (function () {
     const saved = localStorage.getItem('solverTheme');
-    if (saved === 'dark') document.documentElement.classList.add('dark');
+    if (saved === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.dataset.theme = 'dark';
+    }
     document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('themeToggle').addEventListener('click', function () {
         const dark = document.documentElement.classList.toggle('dark');
+        if (dark) document.documentElement.dataset.theme = 'dark';
+        else delete document.documentElement.dataset.theme;
         localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
       });
     });
