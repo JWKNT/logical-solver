@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#ffffff">
 <title>U-Bahn Solver — v-sidebar2</title>
+<script src="https://jwknt.github.io/site-theme/v1/theme.js"></script>
 <link rel="stylesheet" href="https://jwknt.github.io/site-theme/v1/base.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -15,25 +17,8 @@
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
     <button class="tab" data-app="cave">Cave</button>
-    <button id="themeToggle" title="Toggle light/dark">◐</button>
+    <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
   </nav>
-  <script>
-  (function () {
-    const saved = localStorage.getItem('solverTheme');
-    if (saved === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.dataset.theme = 'dark';
-    }
-    document.addEventListener('DOMContentLoaded', function () {
-      document.getElementById('themeToggle').addEventListener('click', function () {
-        const dark = document.documentElement.classList.toggle('dark');
-        if (dark) document.documentElement.dataset.theme = 'dark';
-        else delete document.documentElement.dataset.theme;
-        localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
-      });
-    });
-  })();
-  </script>
 </header>
 
 <main>

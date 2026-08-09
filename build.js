@@ -3,13 +3,20 @@
 // split sources. The single file is fully self-contained: open it directly
 // in a browser, no server needed.
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const read = f => fs.readFileSync(f, 'utf8');
+const sharedThemePath = process.env.JWKNT_THEME_PATH || '../site-theme/v1/theme.js';
+const sharedThemeUrl = 'https://jwknt.github.io/site-theme/v1/theme.js';
+const sharedTheme = fs.existsSync(sharedThemePath)
+  ? read(sharedThemePath)
+  : execFileSync('curl', ['-fsSL', sharedThemeUrl], { encoding: 'utf8' });
 
 let html = read('index.html');
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
 html = html.replace(/\?v=20260712-2/g, '');
 html = html.replace('<link rel="stylesheet" href="https://jwknt.github.io/site-theme/v1/base.css">\n', '');
+html = html.replace(`<script src="${sharedThemeUrl}"></script>`, `<script>\n${sharedTheme}</script>`);
 const css = read('css/style.css');
 const engine = read('js/engine.js');
 let stepper = read('js/stepper.js');

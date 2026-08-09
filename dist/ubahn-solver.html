@@ -3,7 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#ffffff">
 <title>U-Bahn Solver — v-sidebar2</title>
+<script>
+(() => {
+  "use strict";
+
+  const storageKey = "jwknt-theme";
+  const legacyStorageKeys = ["bst-reader-theme", "solverTheme"];
+  const darkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  const root = document.documentElement;
+  let followsSystem = true;
+
+  function storedTheme() {
+    try {
+      const current = localStorage.getItem(storageKey);
+      if (current === "dark" || current === "light") return current;
+
+      for (const legacyKey of legacyStorageKeys) {
+        const legacy = localStorage.getItem(legacyKey);
+        if (legacy === "dark" || legacy === "light") {
+          localStorage.setItem(storageKey, legacy);
+          return legacy;
+        }
+      }
+    } catch {
+      // A private or restricted browsing context may deny storage.
+    }
+    return "";
+  }
+
+  function updateControls(theme) {
+    const isDark = theme === "dark";
+    const label = isDark ? "Use light theme" : "Use dark theme";
+    for (const button of document.querySelectorAll("[data-theme-toggle]")) {
+      button.setAttribute("aria-pressed", String(isDark));
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    }
+  }
+
+  function applyTheme(theme) {
+    const isDark = theme === "dark";
+    root.dataset.theme = theme;
+    root.classList.toggle("dark", isDark);
+    root.style.colorScheme = theme;
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.content = isDark ? "#121416" : "#ffffff";
+
+    updateControls(theme);
+    window.dispatchEvent(new CustomEvent("jwknt:themechange", { detail: { theme } }));
+  }
+
+  function createControl() {
+    if (document.querySelector("[data-theme-toggle]")) return;
+
+    const button = document.createElement("button");
+    button.className = "theme-toggle";
+    button.type = "button";
+    button.dataset.themeToggle = "";
+    button.textContent = "◐";
+
+    const slot = document.querySelector(
+      "[data-theme-toggle-slot], .site-header nav, header nav, .toolbar, .detail-nav",
+    );
+    if (slot) {
+      slot.append(button);
+    } else {
+      button.classList.add("theme-toggle--floating");
+      document.body.prepend(button);
+    }
+  }
+
+  const savedTheme = storedTheme();
+  followsSystem = !savedTheme;
+  applyTheme(savedTheme || (darkMedia.matches ? "dark" : "light"));
+
+  function setupControls() {
+    createControl();
+    updateControls(root.dataset.theme);
+
+    for (const button of document.querySelectorAll("[data-theme-toggle]")) {
+      if (button.dataset.themeBound === "true") continue;
+      button.dataset.themeBound = "true";
+      button.addEventListener("click", () => {
+        const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+        followsSystem = false;
+        try {
+          localStorage.setItem(storageKey, nextTheme);
+        } catch {
+          // A private or restricted browsing context may deny storage.
+        }
+        applyTheme(nextTheme);
+      });
+    }
+  }
+
+  const followSystemChange = (event) => {
+    if (followsSystem) applyTheme(event.matches ? "dark" : "light");
+  };
+  if (typeof darkMedia.addEventListener === "function") {
+    darkMedia.addEventListener("change", followSystemChange);
+  } else if (typeof darkMedia.addListener === "function") {
+    darkMedia.addListener(followSystemChange);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupControls, { once: true });
+  } else {
+    setupControls();
+  }
+})();
+
+</script>
 <style>
   :root {
       --panel: var(--paper, #ffffff);
@@ -550,12 +663,6 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group .chk { font-size: 13px; }
 
 /* ---------------- dim (dark) mode ---------------- */
-#themeToggle {
-  margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
-  background: none; border: 1px solid var(--grid-line); border-radius: 3px;
-  cursor: pointer; color: inherit; vertical-align: middle;
-}
-#themeToggle:hover { border-color: var(--solver-ink); }
 html.dark {
   --panel: #313136;
   --solver-ink: #cfccc4;
@@ -593,7 +700,6 @@ html.dark .crypto-digit.solo { background: #37453a; }
 html.dark .crypto-table th { color: #8a8a90; }
 html.dark .status .bad { color: #e08a8a; }
 html.dark .status .warn { color: #d0aa60; }
-html.dark #themeToggle { border-color: #55555b; }
 
 /* dim theme: U-Bahn tab */
 html.dark input[type="number"], html.dark input[type="text"] { background: #313136; border-color: #55555b; }
@@ -718,25 +824,8 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
     <button class="tab" data-app="cave">Cave</button>
-    <button id="themeToggle" title="Toggle light/dark">◐</button>
+    <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
   </nav>
-  <script>
-  (function () {
-    const saved = localStorage.getItem('solverTheme');
-    if (saved === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.dataset.theme = 'dark';
-    }
-    document.addEventListener('DOMContentLoaded', function () {
-      document.getElementById('themeToggle').addEventListener('click', function () {
-        const dark = document.documentElement.classList.toggle('dark');
-        if (dark) document.documentElement.dataset.theme = 'dark';
-        else delete document.documentElement.dataset.theme;
-        localStorage.setItem('solverTheme', dark ? 'dark' : 'light');
-      });
-    });
-  })();
-  </script>
 </header>
 
 <main>

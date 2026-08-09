@@ -543,12 +543,6 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 .variant-group .chk { font-size: 13px; }
 
 /* ---------------- dim (dark) mode ---------------- */
-#themeToggle {
-  margin-left: 18px; font-size: 17px; line-height: 1; padding: 3px 9px;
-  background: none; border: 1px solid var(--grid-line); border-radius: 3px;
-  cursor: pointer; color: inherit; vertical-align: middle;
-}
-#themeToggle:hover { border-color: var(--solver-ink); }
 html.dark {
   --panel: #313136;
   --solver-ink: #cfccc4;
@@ -586,7 +580,6 @@ html.dark .crypto-digit.solo { background: #37453a; }
 html.dark .crypto-table th { color: #8a8a90; }
 html.dark .status .bad { color: #e08a8a; }
 html.dark .status .warn { color: #d0aa60; }
-html.dark #themeToggle { border-color: #55555b; }
 
 /* dim theme: U-Bahn tab */
 html.dark input[type="number"], html.dark input[type="text"] { background: #313136; border-color: #55555b; }
