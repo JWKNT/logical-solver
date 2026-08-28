@@ -185,15 +185,24 @@ mark { padding-inline: .08em; background: var(--mark); color: inherit; }
 
 .eyebrow, .section-kicker, .data-label, .control-label { margin: 0 0 .22rem; color: var(--muted); font: 600 .64rem/1.25 var(--sans); font-variant: small-caps; letter-spacing: .065em; text-transform: lowercase; }
 .lede { max-width: var(--measure); color: var(--muted-strong); font-size: 1.05rem; line-height: 1.6; }
-.site-divider { display: grid; grid-template-columns: minmax(1rem, 1fr) auto minmax(1rem, 1fr); gap: .9rem; align-items: center; width: min(34rem, 88%); margin: var(--section-space) auto; color: var(--line-strong); }
+.site-divider { display: grid; grid-template-columns: minmax(2rem, 1fr) auto minmax(2rem, 1fr); gap: clamp(.85rem, 2vw, 1.35rem); align-items: center; width: min(54rem, calc(100% - 2rem)); margin: clamp(2.4rem, 5vw, 4rem) auto; color: var(--line-strong); }
 .site-divider::before, .site-divider::after { height: 1px; background: var(--line); content: ""; }
-.site-divider > span::before { color: var(--muted); content: "✦"; font: 1rem/1 var(--display); }
+.site-divider > span { display: grid; min-width: 1.1rem; place-items: center; }
+.site-divider > span::before { color: var(--muted); content: "✦"; font: 1.05rem/1 var(--display); }
+.site-divider[data-ornament="asterism"] > span::before { content: "⁂"; font-size: .95rem; letter-spacing: .08em; }
+.site-divider[data-ornament="diamond"] > span::before { content: "◆"; font-size: .62rem; }
+.site-divider[data-ornament="helix"] > span::before { content: "⋈"; font-size: 1.12rem; }
+.site-divider[data-ornament="folio"] > span::before { content: "§"; font-size: 1rem; }
+.site-divider[data-ornament="constellation"] > span::before { content: "✣"; font-size: 1rem; }
+.site-divider--wide { width: 100%; }
 
 .section-index { position: sticky; top: 0; z-index: 40; display: flex; gap: .45rem 1.1rem; overflow-x: auto; padding: .65rem 0; border-bottom: 1px solid var(--line); background: var(--paper); font: 600 .66rem/1.3 var(--sans); font-variant: small-caps; letter-spacing: .035em; scrollbar-width: none; }
 .section-index::-webkit-scrollbar { display: none; }
 .section-index a { flex: none; color: var(--muted); text-decoration-color: transparent; }
 .section-index a:hover, .section-index a[aria-current] { color: var(--blue-dark); text-decoration-color: currentColor; }
-.section-block { scroll-margin-top: 3rem; padding: var(--section-space) 0; border-bottom: 1px solid var(--line-strong); }
+.section-block { scroll-margin-top: 3rem; padding: var(--section-space) 0; }
+.section-block + .section-block { border-top: 1px solid var(--line-strong); }
+.section-block:target { border-top-color: transparent; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1.25rem; margin-bottom: 1.2rem; }
 .section-heading h1, .section-heading h2, .section-heading h3 { margin: 0; font-weight: 500; }
 .section-note, .result-status, .quiet { color: var(--muted); font-size: .78rem; }
@@ -214,7 +223,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .theme-toggle { flex: none; min-width: 1.95rem; min-height: 1.8rem; margin-left: .2rem; padding: .15rem .45rem; font: 1rem/1 var(--display); }
 .theme-toggle--floating { position: fixed; top: .75rem; right: 1rem; z-index: 100; box-shadow: 0 .15rem .8rem var(--shadow-soft); }
 
-details { border-block: 1px solid var(--line); }
+details { border-top: 1px solid var(--line); }
 summary { padding: .55rem 0; color: var(--blue); cursor: pointer; font-size: .8rem; }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { padding: .48rem .58rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -225,8 +234,9 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
 
 @media (max-width: 42rem) {
   :root { --gutter: .85rem; --section-space: 2.1rem; }
-  .site-header { align-items: flex-start; }
-  .site-header nav { flex-wrap: wrap; justify-content: flex-end; gap: .5rem .7rem; }
+  .site-header { align-items: flex-start; flex-direction: column; gap: .65rem; }
+  .site-header nav { width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: .5rem .7rem; }
+  .site-header nav .theme-toggle { margin-left: auto; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
   .data-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .data-strip > div:nth-child(odd) { border-left: 0; }
@@ -269,6 +279,7 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
       --control-bg: var(--paper, #fff);
       --control-hover: var(--surface, #f2f2f2);
       --label-ink: var(--muted-strong, #444);
+      --a38-mark: #111;
   }
 
   :root[data-theme="dark"] {
@@ -276,6 +287,7 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
       --shaded: #111214;
       --tint-used: #273345;
       --line-unk: #d6a53c;
+      --a38-mark: #eee;
   }
 
   * {
@@ -341,6 +353,44 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
       width: 1px;
       align-self: stretch;
       background: var(--line);
+  }
+
+  .toolbar-more {
+      position: relative;
+      margin-left: auto;
+      border: 0;
+  }
+
+  .toolbar-more > summary {
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--control-border);
+      color: var(--label-ink);
+      cursor: pointer;
+      font: 600 12px/1.5 var(--sans);
+      font-variant: small-caps;
+      letter-spacing: .4px;
+      list-style: none;
+  }
+
+  .toolbar-more > summary::-webkit-details-marker { display: none; }
+  .toolbar-more > summary::after { margin-left: 9px; color: var(--muted); content: "+"; }
+  .toolbar-more[open] > summary::after { content: "−"; }
+
+  .toolbar-more-panel {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 80;
+      display: flex;
+      width: min(760px, calc(100vw - 44px));
+      flex-wrap: wrap;
+      gap: 10px 12px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid var(--line-strong);
+      background: var(--panel);
+      box-shadow: 0 10px 28px var(--shadow);
   }
 
   input[type=number] {
@@ -550,7 +600,7 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
   }
 
   .status {
-      background: #f7f7f7;
+      background: var(--surface);
       color: var(--solver-ink);
       border: var(--hair);
       border-left: 3px solid #888;
@@ -562,7 +612,7 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
   }
 
   .status b {
-      color: #000;
+      color: var(--solver-ink);
   }
 
   .status .bad {
@@ -699,7 +749,8 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
 .tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
 .tabs .tab.active { border-bottom-color: var(--solver-ink); font-weight: 700; }
 .tabs .tab:hover:not(.active) { background: var(--control-hover); }
-.project-link { margin-left: 10px; color: var(--muted); font-size: 12px; }
+.site-actions { display: flex; align-items: center; gap: 10px; }
+.project-link { color: var(--muted); font-size: 12px; }
 .status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
@@ -760,11 +811,11 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
   font-family: "Menlo", monospace; font-weight: 700; font-size: 14px;
   border-bottom: 1px solid var(--grid-line); background: #f5f5f5; padding: 1px 0;
 }
-.crypto-box-solved { font-family: "Menlo", monospace; font-size: 26px; font-weight: 700; color: #8c2f2f; padding: 6px 0; }
+.crypto-box-solved { font-family: "Menlo", monospace; font-size: 26px; font-weight: 700; color: var(--bad); padding: 6px 0; }
 .crypto-box-marks {
   display: grid; grid-template-columns: repeat(5, 1fr); padding: 4px 3px;
   column-gap: 3px; justify-items: center;
-  font-family: "Menlo", monospace; font-size: 11px; color: #555; line-height: 1.6;
+  font-family: "Menlo", monospace; font-size: 11px; color: var(--muted-strong); line-height: 1.6;
 }
 /* two-digit values (alien digits, bases) get wider cells so they never touch */
 .crypto-box-marks.wide { grid-template-columns: repeat(4, 1fr); column-gap: 4px; font-size: 10.5px; }
@@ -836,6 +887,7 @@ html.dark .crypto-digit.solo { background: #37453a; }
 html.dark .crypto-table th { color: #8a8a90; }
 html.dark .status .bad { color: #e08a8a; }
 html.dark .status .warn { color: #d0aa60; }
+html.dark .crypto-box-solved { color: var(--bad); }
 
 /* dim theme: U-Bahn tab */
 html.dark input[type="number"], html.dark input[type="text"] { background: #313136; border-color: #55555b; }
@@ -916,6 +968,13 @@ html.dark .a38-permit-disc{stroke:#eee}html.dark .a38-permit-num{fill:#eee}
 #app-a38 .legend .a38-arrow-demo{font-size:20px;line-height:14px}
 #app-a38 .legend .a38-chevron-demo{font-size:19px;line-height:14px}
 
+.a38-cell.start::before, .a38-start-demo { background: var(--a38-mark); }
+.a38-permit-mark, .a38-permit-demo { border-color: var(--a38-mark); color: var(--a38-mark); }
+.a38-chevron { stroke: var(--a38-mark); }
+.a38-chevron-demo { color: var(--a38-mark); }
+.a38-permit-disc { stroke: var(--a38-mark); }
+.a38-permit-num { fill: var(--a38-mark); }
+
 /* ---- Cave ---- */
 .cave-grid{display:grid;width:max-content;border:2px solid var(--grid-line);background:var(--grid-line)}
 .cave-cell{width:52px;height:52px;border:1px solid var(--grid-line);background:var(--board);position:relative;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
@@ -950,6 +1009,19 @@ html.dark .cave-twilight-toggle input:checked{background:#6a86b8;border-color:#6
 #caveStrats>li:not(.variant-bar){counter-increment:strat}
 #caveStrats>li:not(.variant-bar)::before{content:counter(strat) '.';position:absolute;left:-26px;color:#999;font-size:13px}
 html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
+
+@media (max-width: 650px) {
+  header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
+  .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs .tab { flex: none; }
+  .site-actions { grid-column: 2; grid-row: 1; }
+  main { padding-inline: 14px; }
+  .toolbar { gap: 9px 10px; }
+  .toolbar-more { flex: 1 0 100%; margin-left: 0; }
+  .toolbar-more > summary { width: fit-content; }
+  .toolbar-more-panel { position: static; width: 100%; margin-top: 7px; box-shadow: none; }
+}
 </style>
 </head>
 <body>
@@ -960,9 +1032,11 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
     <button class="tab" data-app="cave">Cave</button>
+  </nav>
+  <div class="site-actions">
     <a class="project-link" href="https://jehlp.net/">Projects</a>
     <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
-  </nav>
+  </div>
 </header>
 
 <main>
@@ -970,17 +1044,15 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
   <div class="toolbar">
     <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="16" value="6"></div>
     <div class="group"><label for="colsIn">Columns</label><input id="colsIn" type="number" min="2" max="16" value="6"></div>
-    <div class="group"><label for="timeIn">Time limit (s)</label><input id="timeIn" type="number" min="1" max="600" value="10"></div>
-    <div class="sep"></div>
     <button id="solveBtn" class="primary">Solve</button>
-    <button id="candBtn">True candidates</button>
-    <button id="stepBtn">Take step</button><button id="prevBtn">Previous step</button><button id="autoBtn">Full solve path</button>
+    <button id="stepBtn">Take step</button>
     <button id="cancelBtn">Cancel</button>
-    <div class="sep"></div>
-    <button id="randomBtn">Random puzzle</button>
-    <button id="stepResetBtn">Reset steps</button>
-    <button id="clearCluesBtn" class="danger">Clear clues</button>
-    <button id="resetBtn" class="danger">Reset board</button>
+    <details class="toolbar-more"><summary>Options</summary><div class="toolbar-more-panel">
+      <div class="group"><label for="timeIn">Time limit (s)</label><input id="timeIn" type="number" min="1" max="600" value="10"></div>
+      <button id="candBtn">True candidates</button><button id="prevBtn">Previous step</button><button id="autoBtn">Full solve path</button>
+      <button id="randomBtn">Random puzzle</button><button id="stepResetBtn">Reset steps</button>
+      <button id="clearCluesBtn" class="danger">Clear clues</button><button id="resetBtn" class="danger">Reset board</button>
+    </div></details>
   </div>
 
   <div class="board-row">
@@ -1028,27 +1100,16 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <label>Cols <input type="number" id="sumsCols" value="8" min="2" max="16"></label>
     <label>Digits 1..<input type="number" id="sumsDigits" value="6" min="2" max="9"></label>
     <label>Clue slots <input type="number" id="sumsSlots" value="3" min="1" max="8"></label>
-    <label class="chk"><input type="checkbox" id="sumsCustomVals"> Custom values</label>
-    <label id="sumsValuesWrap" hidden>Values <input type="text" id="sumsValues" placeholder="e.g. -2,1,3,3,4" size="15" title="Comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed."></label>
-    <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
-    <span class="variant-group">
-      <label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label>
-      <label class="chk"><input type="checkbox" id="sumsVBlankConn"> Shaded connected</label>
-      <label class="chk"><input type="checkbox" id="sumsVNo22Num"> No 2×2 numbers</label>
-      <label class="chk"><input type="checkbox" id="sumsVNo22Blank"> No 2×2 shaded</label>
-      <label class="chk"><input type="checkbox" id="sumsVAsc"> Ascending clues</label>
-      <label class="chk"><input type="checkbox" id="sumsVReach"> Numbers reach edge</label>
-      <label class="chk"><input type="checkbox" id="sumsVBlankReach"> Shaded reach edge</label>
-      <label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label>
-      <label class="chk"><input type="checkbox" id="sumsAlien"> Alien</label>
-    </span>
-    <span class="sep"></span>
     <button id="sumsBuild">Resize</button>
     <button id="sumsSolve" class="primary">Solve</button>
-    <button id="sumsCands">True candidates</button>
-    <button id="sumsStep">Take step</button><button id="sumsPrev">Previous step</button><button id="sumsAuto">Full solve path</button>
-    <button id="sumsReset">Reset steps</button>
-    <button id="sumsClear" class="danger">Clear all</button>
+    <button id="sumsStep">Take step</button>
+    <details class="toolbar-more"><summary>Variants &amp; options</summary><div class="toolbar-more-panel">
+      <label class="chk"><input type="checkbox" id="sumsCustomVals"> Custom values</label>
+      <label id="sumsValuesWrap" hidden>Values <input type="text" id="sumsValues" placeholder="e.g. -2,1,3,3,4" size="15" title="Comma-separated integers; repeats set a per-line multiplicity; negatives and multi-digit values allowed."></label>
+      <label>Time limit (s) <input type="number" id="sumsTime" value="10" min="1" max="120"></label>
+      <span class="variant-group"><label class="chk"><input type="checkbox" id="sumsVNumConn"> Numbers connected</label><label class="chk"><input type="checkbox" id="sumsVBlankConn"> Shaded connected</label><label class="chk"><input type="checkbox" id="sumsVNo22Num"> No 2×2 numbers</label><label class="chk"><input type="checkbox" id="sumsVNo22Blank"> No 2×2 shaded</label><label class="chk"><input type="checkbox" id="sumsVAsc"> Ascending clues</label><label class="chk"><input type="checkbox" id="sumsVReach"> Numbers reach edge</label><label class="chk"><input type="checkbox" id="sumsVBlankReach"> Shaded reach edge</label><label class="chk"><input type="checkbox" id="sumsKD"> Knapp daneben</label><label class="chk"><input type="checkbox" id="sumsAlien"> Alien</label></span>
+      <button id="sumsCands">True candidates</button><button id="sumsPrev">Previous step</button><button id="sumsAuto">Full solve path</button><button id="sumsReset">Reset steps</button><button id="sumsClear" class="danger">Clear all</button>
+    </div></details>
   </div>
   <div class="board-row">
     <div class="board-col">
@@ -1076,40 +1137,32 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
  <div class="toolbar">
     <div class="group"><label for="a38Rows">Rows</label><input id="a38Rows" type="number" value="6" min="3" max="12"></div>
     <div class="group"><label for="a38Cols">Columns</label><input id="a38Cols" type="number" value="6" min="3" max="12"></div>
-    <div class="group"><label for="a38Time">Time limit (s)</label><input id="a38Time" type="number" min="1" max="600" value="10"></div>
-    <div class="sep"></div>
     <button id="a38Solve" class="primary">Solve</button>
-    <button id="a38Cands">True candidates</button>
-    <button id="a38Step">Take step</button><button id="a38Prev">Previous step</button><button id="a38Auto">Full solve path</button>
-    <div class="sep"></div>
+    <button id="a38Step">Take step</button>
     <button id="a38Build">Resize</button>
-    <button id="a38Reset">Reset steps</button>
-    <button id="a38Clear" class="danger">Clear all</button>
-    <div class="sep"></div>
     <span class="a38-tools" role="group" aria-label="Cell input tool"><button data-tool="cell" class="active">Route</button><button data-tool="start"><b>1</b> Start</button><button data-tool="station"><i></i> Pass</button><button data-tool="clue"># Number</button></span>
+    <details class="toolbar-more"><summary>Options</summary><div class="toolbar-more-panel">
+      <div class="group"><label for="a38Time">Time limit (s)</label><input id="a38Time" type="number" min="1" max="600" value="10"></div>
+      <button id="a38Cands">True candidates</button><button id="a38Prev">Previous step</button><button id="a38Auto">Full solve path</button><button id="a38Reset">Reset steps</button><button id="a38Clear" class="danger">Clear all</button>
+    </div></details>
  </div>
- <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a black circle; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
+ <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a filled disc; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
  <div class="legend"><span><b class="a38-start-demo">1</b> start</span><span><i class="a38-pass-demo"></i> gray cell</span><span><b class="a38-clue-demo">3</b> number clue</span><span><b class="a38-permit-demo"></b> pass obtained</span><span><b class="a38-arrow-demo">—</b> forced segment</span><span><b class="a38-chevron-demo">‹</b> direction</span><span>× excluded edge</span></div>
- <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the black circle and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><details class="help strategies"><summary>Step deduction types</summary><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></details></aside></div>
+ <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the filled start disc and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><details class="help strategies"><summary>Step deduction types</summary><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></details></aside></div>
 </section>
 <section id="app-cave" hidden>
   <div class="toolbar">
     <div class="group"><label for="caveRows">Rows</label><input id="caveRows" type="number" value="6" min="2" max="16"></div>
     <div class="group"><label for="caveCols">Columns</label><input id="caveCols" type="number" value="6" min="2" max="16"></div>
-    <div class="group"><label for="caveTime">Time limit (s)</label><input id="caveTime" type="number" min="1" max="600" value="10"></div>
-    <span class="variant-group cave-small-variants">
-      <label class="chk"><input type="checkbox" id="caveNo22Black"> No 2×2 shaded</label>
-      <label class="chk"><input type="checkbox" id="caveNo22White"> No 2×2 unshaded</label>
-    </span>
-    <label class="cave-twilight-toggle"><input type="checkbox" id="caveTwilight"><span>Twilight</span></label>
-    <div class="sep"></div>
     <button id="caveSolve" class="primary">Solve</button>
-    <button id="caveCands">True candidates</button>
-    <button id="caveStep">Take step</button><button id="cavePrev">Previous step</button><button id="caveAuto">Full solve path</button>
-    <div class="sep"></div>
+    <button id="caveStep">Take step</button>
     <button id="caveBuild">Resize</button>
-    <button id="caveReset">Reset steps</button>
-    <button id="caveClear" class="danger">Clear all</button>
+    <details class="toolbar-more"><summary>Variants &amp; options</summary><div class="toolbar-more-panel">
+      <div class="group"><label for="caveTime">Time limit (s)</label><input id="caveTime" type="number" min="1" max="600" value="10"></div>
+      <span class="variant-group cave-small-variants"><label class="chk"><input type="checkbox" id="caveNo22Black"> No 2×2 shaded</label><label class="chk"><input type="checkbox" id="caveNo22White"> No 2×2 unshaded</label></span>
+      <label class="cave-twilight-toggle"><input type="checkbox" id="caveTwilight"><span>Twilight</span></label>
+      <button id="caveCands">True candidates</button><button id="cavePrev">Previous step</button><button id="caveAuto">Full solve path</button><button id="caveReset">Reset steps</button><button id="caveClear" class="danger">Clear all</button>
+    </div></details>
   </div>
   <div class="board-row">
     <div class="board-col">
