@@ -21,6 +21,7 @@ let html = read('index.html');
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
 html = html.replace(/\?v=20260712-2/g, '');
+html = html.replace(/\?v=20260828-[34]/g, '');
 html = html.replace('<link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">', `<style>\n${sharedBase}</style>`);
 html = html.replace(`<script src="${sharedThemeUrl}"></script>`, `<script>\n${sharedTheme}</script>`);
 const css = read('css/style.css');

@@ -184,7 +184,11 @@ function buildGrid(keepClues) {
     for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false" autocomplete="off">';
     return h + '</div>';
   };
-  let html = '<table class="sums-grid"><tr><td class="sums-corner"></td>';
+  const rowClueWidth = 28 * G + 2;
+  const tableWidth = rowClueWidth + C * 52;
+  let html = '<table class="sums-grid" style="width:' + tableWidth + 'px"><colgroup><col style="width:' + rowClueWidth + 'px">';
+  for (let c = 0; c < C; c++) html += '<col style="width:52px">';
+  html += '</colgroup><tr><td class="sums-corner"></td>';
   for (let c = 0; c < C; c++) html += '<td class="sums-clue-col">' + slotBox('sumsCol' + c, true) + '</td>';
   html += '</tr>';
   for (let r = 0; r < R; r++) {

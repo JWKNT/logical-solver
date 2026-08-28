@@ -427,14 +427,25 @@
 
   .strategies-side {
       min-width: 0;
+      container-type: inline-size;
   }
 
-  .strategies-side details.strategies {
+  .strategies-side .strategies {
       margin-top: 0;
+      padding: 14px 16px 16px;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line);
       max-height: calc(100vh - 90px);
       overflow-y: auto;
       position: sticky;
       top: 10px;
+  }
+
+  .strategies-heading {
+      margin: 0;
+      color: var(--solver-ink);
+      font: 600 15px/1.35 var(--serif);
+      letter-spacing: .01em;
   }
 
   .strategies ol {
@@ -444,7 +455,7 @@
       column-gap: 28px;
   }
 
-  @media (max-width: 1250px) {
+  @container (max-width: 560px) {
       .strategies ol {
           columns: 1;
       }
@@ -502,7 +513,8 @@
 .status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
-.sums-grid { border-collapse: collapse;   table-layout: fixed;
+#sumsGridWrap { width: max-content; margin-inline: auto; }
+.sums-grid { width: max-content; max-width: none; border-collapse: collapse; table-layout: fixed;
 }
 .sums-grid td { padding: 0; }
 .sums-cell {

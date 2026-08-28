@@ -679,14 +679,25 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
 
   .strategies-side {
       min-width: 0;
+      container-type: inline-size;
   }
 
-  .strategies-side details.strategies {
+  .strategies-side .strategies {
       margin-top: 0;
+      padding: 14px 16px 16px;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line);
       max-height: calc(100vh - 90px);
       overflow-y: auto;
       position: sticky;
       top: 10px;
+  }
+
+  .strategies-heading {
+      margin: 0;
+      color: var(--solver-ink);
+      font: 600 15px/1.35 var(--serif);
+      letter-spacing: .01em;
   }
 
   .strategies ol {
@@ -696,7 +707,7 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
       column-gap: 28px;
   }
 
-  @media (max-width: 1250px) {
+  @container (max-width: 560px) {
       .strategies ol {
           columns: 1;
       }
@@ -754,7 +765,8 @@ th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small
 .status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
-.sums-grid { border-collapse: collapse;   table-layout: fixed;
+#sumsGridWrap { width: max-content; margin-inline: auto; }
+.sums-grid { width: max-content; max-width: none; border-collapse: collapse; table-layout: fixed;
 }
 .sums-grid td { padding: 0; }
 .sums-cell {
@@ -1084,11 +1096,11 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
       </details>
     </div>
     <aside class="strategies-side" id="strategiesSide">
-      <details class="help strategies">
-    <summary>Step deduction types</summary>
-    <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The idea used by the last step is highlighted, with counters showing how often each has fired since the last reset.</p>
-    <ol id="stratList"></ol>
-  </details>
+      <section class="help strategies" aria-labelledby="ubahn-strategies-title">
+        <h2 class="strategies-heading" id="ubahn-strategies-title">Step deduction types</h2>
+        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The idea used by the last step is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <ol id="stratList"></ol>
+      </section>
     </aside>
   </div>
 
@@ -1125,11 +1137,11 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
       </details>
     </div>
     <aside class="strategies-side">
-      <details class="strategies">
-        <summary>Step deduction types</summary>
+      <section class="strategies" aria-labelledby="sums-strategies-title">
+        <h2 class="strategies-heading" id="sums-strategies-title">Step deduction types</h2>
         <div class="stratNote">The ideas <b>Take step</b> tries, simplest first.</div>
         <ol id="sumsStrats"></ol>
-      </details>
+      </section>
     </aside>
   </div>
 </section>
@@ -1148,7 +1160,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
  </div>
  <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a filled disc; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
  <div class="legend"><span><b class="a38-start-demo">1</b> start</span><span><i class="a38-pass-demo"></i> gray cell</span><span><b class="a38-clue-demo">3</b> number clue</span><span><b class="a38-permit-demo"></b> pass obtained</span><span><b class="a38-arrow-demo">—</b> forced segment</span><span><b class="a38-chevron-demo">‹</b> direction</span><span>× excluded edge</span></div>
- <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the filled start disc and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><details class="help strategies"><summary>Step deduction types</summary><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></details></aside></div>
+ <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the filled start disc and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><section class="help strategies" aria-labelledby="a38-strategies-title"><h2 class="strategies-heading" id="a38-strategies-title">Step deduction types</h2><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></section></aside></div>
 </section>
 <section id="app-cave" hidden>
   <div class="toolbar">
@@ -1183,11 +1195,11 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
       </details>
     </div>
     <aside class="strategies-side">
-      <details class="help strategies">
-        <summary>Step deduction types</summary>
+      <section class="help strategies" aria-labelledby="cave-strategies-title">
+        <h2 class="strategies-heading" id="cave-strategies-title">Step deduction types</h2>
         <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p>
         <ol id="caveStrats"></ol>
-      </details>
+      </section>
     </aside>
   </div>
 </section>
@@ -9445,7 +9457,11 @@ function buildGrid(keepClues) {
     for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false" autocomplete="off">';
     return h + '</div>';
   };
-  let html = '<table class="sums-grid"><tr><td class="sums-corner"></td>';
+  const rowClueWidth = 28 * G + 2;
+  const tableWidth = rowClueWidth + C * 52;
+  let html = '<table class="sums-grid" style="width:' + tableWidth + 'px"><colgroup><col style="width:' + rowClueWidth + 'px">';
+  for (let c = 0; c < C; c++) html += '<col style="width:52px">';
+  html += '</colgroup><tr><td class="sums-corner"></td>';
   for (let c = 0; c < C; c++) html += '<td class="sums-clue-col">' + slotBox('sumsCol' + c, true) + '</td>';
   html += '</tr>';
   for (let r = 0; r < R; r++) {
