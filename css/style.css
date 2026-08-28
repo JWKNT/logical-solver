@@ -196,7 +196,7 @@
   /* ---- board layout ---- */
   .board-row {
       display: grid;
-      grid-template-columns: minmax(360px, 860px) minmax(320px, 1fr);
+      grid-template-columns: minmax(360px, 760px) minmax(440px, 1fr);
       gap: 28px;
       align-items: start;
   }
@@ -209,7 +209,7 @@
       overflow-x: auto;
   }
 
-  @media (max-width: 1000px) {
+  @media (max-width: 1080px) {
       .board-row {
           grid-template-columns: 1fr;
       }
@@ -427,7 +427,6 @@
 
   .strategies-side {
       min-width: 0;
-      container-type: inline-size;
   }
 
   .strategies-side .strategies {
@@ -453,12 +452,6 @@
       padding-left: 20px;
       columns: 2;
       column-gap: 28px;
-  }
-
-  @container (max-width: 560px) {
-      .strategies ol {
-          columns: 1;
-      }
   }
 
   .strategies li {
