@@ -3,120 +3,242 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Interactive solvers for U-Bahn, Japanese Sums, A38, and Cave logic puzzles.">
 <meta name="theme-color" content="#ffffff">
-<title>U-Bahn Solver — v-sidebar2</title>
+<link rel="canonical" href="https://jehlp.net/logical-solver/">
+<title>Logical Solvers · jehlp.net</title>
+<link rel="icon" href="https://jehlp.net/site-theme/v2/favicons/logical-solver.png" type="image/png">
 <script>
 (() => {
   "use strict";
 
-  const storageKey = "jwknt-theme";
-  const legacyStorageKeys = ["bst-reader-theme", "solverTheme"];
-  const darkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  const storageKey = "jehlp-theme";
+  const legacyKeys = ["jwknt-theme", "bst-reader-theme", "solverTheme"];
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
   const root = document.documentElement;
   let followsSystem = true;
 
-  function storedTheme() {
+  function savedTheme() {
     try {
-      const current = localStorage.getItem(storageKey);
-      if (current === "dark" || current === "light") return current;
-
-      for (const legacyKey of legacyStorageKeys) {
-        const legacy = localStorage.getItem(legacyKey);
+      const saved = localStorage.getItem(storageKey);
+      if (saved === "dark" || saved === "light") return saved;
+      for (const key of legacyKeys) {
+        const legacy = localStorage.getItem(key);
         if (legacy === "dark" || legacy === "light") {
           localStorage.setItem(storageKey, legacy);
           return legacy;
         }
       }
-    } catch {
-      // A private or restricted browsing context may deny storage.
-    }
+    } catch {}
     return "";
   }
 
   function updateControls(theme) {
-    const isDark = theme === "dark";
-    const label = isDark ? "Use light theme" : "Use dark theme";
-    for (const button of document.querySelectorAll("[data-theme-toggle]")) {
-      button.setAttribute("aria-pressed", String(isDark));
+    const dark = theme === "dark";
+    const label = dark ? "Use light theme" : "Use dark theme";
+    document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(dark));
       button.setAttribute("aria-label", label);
       button.title = label;
-    }
+    });
   }
 
   function applyTheme(theme) {
-    const isDark = theme === "dark";
+    const dark = theme === "dark";
     root.dataset.theme = theme;
-    root.classList.toggle("dark", isDark);
+    root.classList.toggle("dark", dark);
     root.style.colorScheme = theme;
-
-    const themeColor = document.querySelector('meta[name="theme-color"]');
-    if (themeColor) themeColor.content = isDark ? "#121416" : "#ffffff";
-
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = dark ? "#131412" : "#fbfaf7";
     updateControls(theme);
-    window.dispatchEvent(new CustomEvent("jwknt:themechange", { detail: { theme } }));
+    const detail = { detail: { theme } };
+    window.dispatchEvent(new CustomEvent("jehlp:themechange", detail));
+    window.dispatchEvent(new CustomEvent("jwknt:themechange", detail));
   }
 
   function createControl() {
     if (document.querySelector("[data-theme-toggle]")) return;
-
     const button = document.createElement("button");
     button.className = "theme-toggle";
     button.type = "button";
     button.dataset.themeToggle = "";
     button.textContent = "◐";
-
-    const slot = document.querySelector(
-      "[data-theme-toggle-slot], .site-header nav, header nav, .toolbar, .detail-nav",
-    );
-    if (slot) {
-      slot.append(button);
-    } else {
+    const slot = document.querySelector("[data-theme-toggle-slot], .site-header nav, header nav, .toolbar, .detail-nav");
+    if (slot) slot.append(button);
+    else {
       button.classList.add("theme-toggle--floating");
       document.body.prepend(button);
     }
   }
 
-  const savedTheme = storedTheme();
-  followsSystem = !savedTheme;
-  applyTheme(savedTheme || (darkMedia.matches ? "dark" : "light"));
+  const stored = savedTheme();
+  followsSystem = !stored;
+  applyTheme(stored || (media.matches ? "dark" : "light"));
 
-  function setupControls() {
+  function setup() {
     createControl();
     updateControls(root.dataset.theme);
-
-    for (const button of document.querySelectorAll("[data-theme-toggle]")) {
-      if (button.dataset.themeBound === "true") continue;
+    document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+      if (button.dataset.themeBound) return;
       button.dataset.themeBound = "true";
       button.addEventListener("click", () => {
-        const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+        const next = root.dataset.theme === "dark" ? "light" : "dark";
         followsSystem = false;
-        try {
-          localStorage.setItem(storageKey, nextTheme);
-        } catch {
-          // A private or restricted browsing context may deny storage.
-        }
-        applyTheme(nextTheme);
+        try { localStorage.setItem(storageKey, next); } catch {}
+        applyTheme(next);
       });
-    }
+    });
   }
 
-  const followSystemChange = (event) => {
+  const followSystem = (event) => {
     if (followsSystem) applyTheme(event.matches ? "dark" : "light");
   };
-  if (typeof darkMedia.addEventListener === "function") {
-    darkMedia.addEventListener("change", followSystemChange);
-  } else if (typeof darkMedia.addListener === "function") {
-    darkMedia.addListener(followSystemChange);
-  }
+  if (typeof media.addEventListener === "function") media.addEventListener("change", followSystem);
+  else media.addListener(followSystem);
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", setupControls, { once: true });
-  } else {
-    setupControls();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", setup, { once: true });
+  else setup();
 })();
-
 </script>
+<style>
+:root {
+  --paper: #fbfaf7;
+  --surface: #f4f2ed;
+  --surface-blue: #edf1f4;
+  --ink: #181817;
+  --muted-strong: #4a4945;
+  --muted: #6f6c66;
+  --faint: #969189;
+  --line: #d9d5cd;
+  --line-strong: #aaa49a;
+  --blue: #35567a;
+  --blue-dark: #203e61;
+  --mark: #f2e4a8;
+  --good: #416b50;
+  --warn: #8b651f;
+  --bad: #8a3f3f;
+  --shadow: rgb(28 25 20 / 14%);
+  --shadow-soft: rgb(28 25 20 / 8%);
+  --serif: Charter, "Bitstream Charter", "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  --display: Baskerville, "Libre Baskerville", "Iowan Old Style", Georgia, serif;
+  --sans: "Avenir Next", Avenir, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --page: 72rem;
+  --measure: 43rem;
+  --gutter: clamp(1rem, 4vw, 2.75rem);
+  --section-space: clamp(2rem, 5vw, 4rem);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --paper: #131412;
+  --surface: #1b1c19;
+  --surface-blue: #1c2730;
+  --ink: #eeeae1;
+  --muted-strong: #c7c1b7;
+  --muted: #aaa49a;
+  --faint: #817d76;
+  --line: #32332f;
+  --line-strong: #55564f;
+  --blue: #98b9dc;
+  --blue-dark: #c0d5ec;
+  --mark: #594b20;
+  --good: #88b797;
+  --warn: #d4b46a;
+  --bad: #d89393;
+  --shadow: rgb(0 0 0 / 48%);
+  --shadow-soft: rgb(0 0 0 / 30%);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { min-width: 320px; margin: 0; background: var(--paper); color: var(--ink); font: 1rem/1.58 var(--serif); font-kerning: normal; text-rendering: optimizeLegibility; }
+button, input, select, textarea { color: inherit; font: inherit; }
+button, select { cursor: pointer; }
+a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+a:hover { color: var(--blue-dark); }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
+h1, h2, h3, h4 { font-family: var(--display); text-wrap: balance; }
+h1 { font-size: clamp(1.65rem, 3vw, 2rem); line-height: 1.1; }
+h2 { font-size: clamp(1.3rem, 2.2vw, 1.62rem); line-height: 1.16; }
+h3 { font-size: 1.05rem; line-height: 1.25; }
+code, kbd, pre, samp { font-family: var(--mono); }
+code { font-size: .86em; }
+kbd { padding: .08em .32em; border: 1px solid var(--line-strong); background: var(--surface); font-size: .78em; }
+mark { padding-inline: .08em; background: var(--mark); color: inherit; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.skip-link { position: fixed; top: -4rem; left: 1rem; z-index: 1000; padding: .35rem .55rem; border: 1px solid var(--ink); background: var(--paper); font: .78rem/1.3 var(--sans); }
+.skip-link:focus { top: .75rem; }
+
+.site-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1.25rem; width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; padding: 1.1rem 0 .58rem; border-bottom: 1px solid var(--line); }
+.site-title { color: var(--ink); font: 600 1.12rem/1.2 var(--display); font-variant: small-caps; letter-spacing: .025em; text-decoration: none; }
+.site-header nav, .site-nav { display: flex; align-items: baseline; gap: .85rem; font: .72rem/1.3 var(--sans); }
+.site-header nav a, .site-nav a { color: var(--muted); }
+.site-header nav a:hover, .site-nav a:hover, .site-header nav a[aria-current], .site-nav a[aria-current] { color: var(--blue-dark); }
+.page-shell { width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; }
+.prose { max-width: var(--measure); }
+.prose p, .prose li { text-wrap: pretty; }
+.prose p { margin: .7rem 0 1.1rem; }
+
+.eyebrow, .section-kicker, .data-label, .control-label { margin: 0 0 .22rem; color: var(--muted); font: 600 .64rem/1.25 var(--sans); font-variant: small-caps; letter-spacing: .065em; text-transform: lowercase; }
+.lede { max-width: var(--measure); color: var(--muted-strong); font-size: 1.05rem; line-height: 1.6; }
+.site-divider { display: grid; grid-template-columns: minmax(1rem, 1fr) auto minmax(1rem, 1fr); gap: .9rem; align-items: center; width: min(34rem, 88%); margin: var(--section-space) auto; color: var(--line-strong); }
+.site-divider::before, .site-divider::after { height: 1px; background: var(--line); content: ""; }
+.site-divider > span::before { color: var(--muted); content: "✦"; font: 1rem/1 var(--display); }
+
+.section-index { position: sticky; top: 0; z-index: 40; display: flex; gap: .45rem 1.1rem; overflow-x: auto; padding: .65rem 0; border-bottom: 1px solid var(--line); background: var(--paper); font: 600 .66rem/1.3 var(--sans); font-variant: small-caps; letter-spacing: .035em; scrollbar-width: none; }
+.section-index::-webkit-scrollbar { display: none; }
+.section-index a { flex: none; color: var(--muted); text-decoration-color: transparent; }
+.section-index a:hover, .section-index a[aria-current] { color: var(--blue-dark); text-decoration-color: currentColor; }
+.section-block { scroll-margin-top: 3rem; padding: var(--section-space) 0; border-bottom: 1px solid var(--line-strong); }
+.section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1.25rem; margin-bottom: 1.2rem; }
+.section-heading h1, .section-heading h2, .section-heading h3 { margin: 0; font-weight: 500; }
+.section-note, .result-status, .quiet { color: var(--muted); font-size: .78rem; }
+
+.data-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); margin: 0; border-block: 1px solid var(--line-strong); }
+.data-strip > div { padding: .72rem .85rem; border-left: 1px solid var(--line); }
+.data-strip > div:first-child { border-left: 0; }
+.data-strip dt { color: var(--muted); font: 600 .6rem/1.2 var(--sans); font-variant: small-caps; letter-spacing: .055em; }
+.data-strip dd { margin: .15rem 0 0; font: 600 1.05rem/1.25 var(--mono); }
+
+button, input, select, textarea { border: 1px solid var(--line-strong); border-radius: 0; background: var(--paper); }
+button, select { min-height: 2rem; padding: .3rem .55rem; }
+input, textarea { padding: .4rem .55rem; }
+button { font-family: var(--sans); font-size: .72rem; }
+button:hover:not(:disabled) { border-color: var(--ink); background: var(--surface); }
+button[aria-pressed="true"] { border-color: var(--blue); background: var(--surface-blue); color: var(--blue-dark); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.theme-toggle { flex: none; min-width: 1.95rem; min-height: 1.8rem; margin-left: .2rem; padding: .15rem .45rem; font: 1rem/1 var(--display); }
+.theme-toggle--floating { position: fixed; top: .75rem; right: 1rem; z-index: 100; box-shadow: 0 .15rem .8rem var(--shadow-soft); }
+
+details { border-block: 1px solid var(--line); }
+summary { padding: .55rem 0; color: var(--blue); cursor: pointer; font-size: .8rem; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: .48rem .58rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { color: var(--muted); font: 600 .62rem/1.25 var(--sans); font-variant: small-caps; letter-spacing: .045em; }
+.table-scroll { overflow: auto; border-bottom: 1px solid var(--line-strong); }
+.table-scroll th { position: sticky; top: 0; z-index: 2; background: var(--paper); }
+.site-footer { width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; padding: 1.2rem 0 2rem; color: var(--muted); font: .67rem/1.5 var(--sans); }
+
+@media (max-width: 42rem) {
+  :root { --gutter: .85rem; --section-space: 2.1rem; }
+  .site-header { align-items: flex-start; }
+  .site-header nav { flex-wrap: wrap; justify-content: flex-end; gap: .5rem .7rem; }
+  .section-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
+  .data-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .data-strip > div:nth-child(odd) { border-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print {
+  :root { --paper: #fff; --ink: #000; --muted: #444; --line: #bbb; }
+  .theme-toggle, .section-index, .site-divider { display: none; }
+  a { color: inherit; }
+}
+</style>
 <style>
   :root {
       --panel: var(--paper, #ffffff);
@@ -143,6 +265,17 @@
       --c-empty: #707070;
       --band: 30px;
       --hair: 1px solid var(--line, #dcdcdc);
+      --control-border: var(--line-strong, #b8b8b8);
+      --control-bg: var(--paper, #fff);
+      --control-hover: var(--surface, #f2f2f2);
+      --label-ink: var(--muted-strong, #444);
+  }
+
+  :root[data-theme="dark"] {
+      --grid-line: #62666d;
+      --shaded: #111214;
+      --tint-used: #273345;
+      --line-unk: #d6a53c;
   }
 
   * {
@@ -157,7 +290,7 @@
   body {
       background: var(--platform);
       color: var(--solver-ink);
-      font-family: var(--serif, Georgia, "Times New Roman", "Source Serif Pro", serif);
+      font-family: var(--sans, system-ui, sans-serif);
       font-size: 16px;
       line-height: 1.55;
       padding-bottom: 80px;
@@ -165,7 +298,7 @@
 
   /* ---- header: a quiet titled rule ---- */
   header {
-      max-width: 1560px;
+      max-width: 1200px;
       margin: 0 auto;
       padding: 26px 22px 10px;
       display: flex;
@@ -176,14 +309,14 @@
 
   header h1 {
       margin: 0;
-      font-size: 26px;
+      font-size: 18px;
       font-weight: 600;
       letter-spacing: 0.4px;
       font-variant: small-caps;
   }
 
   main {
-      max-width: 1560px;
+      max-width: 1200px;
       margin: 0 auto;
       padding: 14px 22px;
   }
@@ -201,23 +334,23 @@
   }
 
   .toolbar label {
-      color: #444;
+      color: var(--label-ink);
   }
 
   .toolbar .sep {
       width: 1px;
       align-self: stretch;
-      background: #ddd;
+      background: var(--line);
   }
 
   input[type=number] {
       width: 54px;
       padding: 3px 5px;
       font-size: 14px;
-      border: 1px solid #bbb;
+      border: 1px solid var(--control-border);
       padding: 3px 6px;
       font-family: inherit;
-      background: #fff;
+      background: var(--control-bg);
       color: var(--solver-ink);
   }
 
@@ -226,15 +359,15 @@
       font-size: 13.5px;
       padding: 5px 12px;
       cursor: pointer;
-      border: 1px solid #999;
-      background: #fff;
+      border: 1px solid var(--control-border);
+      background: var(--control-bg);
       color: var(--solver-ink);
       font-variant: small-caps;
       letter-spacing: 0.4px;
   }
 
   button:hover:not(:disabled) {
-      background: #f2f2f2;
+      background: var(--control-hover);
   }
 
   button.primary {
@@ -243,7 +376,7 @@
   }
 
   button.primary:hover:not(:disabled) {
-      background: #eee;
+      background: var(--surface-strong, var(--control-hover));
   }
 
   button.danger {
@@ -561,10 +694,12 @@
       font-weight: 600;
   }
 /* ---- tabs ---- */
-.tabs { margin-left: auto; display: flex; gap: 6px; }
+.tabs { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
 .tabs .tab.active { border-bottom-color: var(--solver-ink); font-weight: 700; }
-.tabs .tab:hover:not(.active) { background: #f2f2f2; }
+.tabs .tab:hover:not(.active) { background: var(--control-hover); }
+.project-link { margin-left: 10px; color: var(--muted); font-size: 12px; }
+.status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
 .sums-grid { border-collapse: collapse;   table-layout: fixed;
@@ -824,6 +959,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
     <button class="tab" data-app="cave">Cave</button>
+    <a class="project-link" href="https://jehlp.net/">Projects</a>
     <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
   </nav>
 </header>
