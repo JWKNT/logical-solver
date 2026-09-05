@@ -141,7 +141,9 @@
                     let m=document.createElement('span');
                     m.className='a38-ordinal-cands';
                     m.textContent=txts.join('\u00b7');
-                    m.title='Possible visit positions around the adjacent number cell'+(per.size>1?'s':'');
+                    const description='Possible visit positions around the adjacent number cell'+(per.size>1?'s':'')+': '+txts.join(' or ');
+                    m.title=description;
+                    m.setAttribute('aria-label',description);
                     d.append(m)
                 }
                 

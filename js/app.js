@@ -250,7 +250,7 @@ function setRunning(on, label) {
     ['solveBtn', 'candBtn', 'stepBtn', 'prevBtn', 'randomBtn', 'clearCluesBtn', 'resetBtn', 'rowsIn', 'colsIn'].forEach(id => $(id).disabled = on);
     $('stepResetBtn').disabled = on;
     if (!on) updateUbPrev();
-    $('cancelBtn').style.display = on ? '' : 'none';
+    $('cancelBtn').style.display = on ? 'inline-flex' : 'none';
     if (on) setStatus(label || 'Searching…');
 }
 

@@ -10,12 +10,13 @@
 <link rel="icon" href="https://jehlp.net/site-theme/v2/favicons/logical-solver.png" type="image/png">
 <script src="https://jehlp.net/site-theme/v2/theme.js"></script>
 <link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">
-<link rel="stylesheet" href="css/style.css?v=20260828-6">
+<link rel="stylesheet" href="css/style.css?v=20260905-1">
 </head>
 <body>
+<a class="skip-link" href="#solver-workspace">Skip to solver</a>
 <header>
   <h1 id="siteTitle">Logical Solvers</h1>
-  <nav class="tabs">
+  <nav class="tabs" aria-label="Puzzle type">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
     <button class="tab" data-app="a38">A38</button>
@@ -27,7 +28,7 @@
   </div>
 </header>
 
-<main>
+<main id="solver-workspace" tabindex="-1">
 <section id="app-ubahn">
   <div class="toolbar">
     <div class="group"><label for="rowsIn">Rows</label><input id="rowsIn" type="number" min="2" max="16" value="6"></div>

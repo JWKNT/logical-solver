@@ -3,6 +3,7 @@
 // split sources. The single file is fully self-contained: open it directly
 // in a browser, no server needed.
 const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const read = f => fs.readFileSync(f, 'utf8');
 const sharedThemePath = process.env.JEHLP_THEME_PATH || process.env.JWKNT_THEME_PATH || '../site-theme/v2/theme.js';
@@ -13,17 +14,29 @@ const sharedBaseUrl = 'https://jehlp.net/site-theme/v2/base.css';
 const sharedTheme = fs.existsSync(sharedThemePath)
   ? read(sharedThemePath)
   : execFileSync('curl', ['-fsSL', sharedThemeFetchUrl], { encoding: 'utf8' });
-const sharedBase = fs.existsSync(sharedBasePath)
+let sharedBase = fs.existsSync(sharedBasePath)
   ? read(sharedBasePath)
   : execFileSync('curl', ['-fsSL', sharedBaseUrl], { encoding: 'utf8' });
+
+// CSS URLs are relative to the stylesheet, but an inlined stylesheet has no
+// source directory. Embed the two seals so the single-file build stays offline.
+for (const name of ['theme-moon.svg', 'theme-sun.svg']) {
+  const iconPath = path.join(path.dirname(sharedBasePath), 'icons', name);
+  const svg = fs.existsSync(iconPath) ? read(iconPath)
+    : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/icons/${name}`], { encoding: 'utf8' });
+  sharedBase = sharedBase.replaceAll(`icons/${name}`, `data:image/svg+xml,${encodeURIComponent(svg)}`);
+}
+const faviconPath = path.join(path.dirname(sharedBasePath), 'favicons', 'logical-solver.png');
+const favicon = fs.existsSync(faviconPath) ? fs.readFileSync(faviconPath)
+  : execFileSync('curl', ['-fsSL', 'https://jehlp.net/site-theme/v2/favicons/logical-solver.png']);
 
 let html = read('index.html');
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
-html = html.replace(/\?v=20260712-2/g, '');
-html = html.replace(/\?v=20260828-[3-6]/g, '');
-html = html.replace('<link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">', `<style>\n${sharedBase}</style>`);
-html = html.replace(`<script src="${sharedThemeUrl}"></script>`, `<script>\n${sharedTheme}</script>`);
+html = html.replace(/((?:src|href)="[^"?]+)\?v=[^"&]+(?=")/g, '$1');
+html = html.replace('https://jehlp.net/site-theme/v2/favicons/logical-solver.png', `data:image/png;base64,${favicon.toString('base64')}`);
+html = html.replace('<link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">', () => `<style>\n${sharedBase}</style>`);
+html = html.replace(`<script src="${sharedThemeUrl}"></script>`, () => `<script>\n${sharedTheme}</script>`);
 const css = read('css/style.css');
 const engine = read('js/engine.js');
 let stepper = read('js/stepper.js');
@@ -33,7 +46,7 @@ const app = read('js/app.js');
 const guard = stepper.indexOf("if (typeof module !== 'undefined')");
 if (guard >= 0) stepper = stepper.slice(0, guard).trimEnd() + '\n';
 
-html = html.replace('<link rel="stylesheet" href="css/style.css">', '<style>\n' + css + '</style>');
+html = html.replace('<link rel="stylesheet" href="css/style.css">', () => '<style>\n' + css + '</style>');
 const sumsEngine = read('js/sums-engine.js');
 let sumsStepper = read('js/sums-stepper.js');
 const sumsApp = read('js/sums-app.js');
@@ -48,6 +61,9 @@ html = html.replace(
   '<script src="js/engine.js"></script>\n<script src="js/stepper.js"></script>\n<script src="js/app.js"></script>\n<script src="js/sums-engine.js"></script>\n<script src="js/sums-stepper.js"></script>\n<script src="js/sums-app.js"></script>\n<script src="js/vendor/logic-solver.bundle.js"></script>\n<script src="js/a38-engine.js"></script>\n<script src="js/a38-stepper.js"></script>\n<script src="js/a38-app.js"></script>\n<script src="js/cave-engine.js"></script>\n<script src="js/cave-stepper.js"></script>\n<script src="js/cave-app.js"></script>',
   () => '<script>\n' + engine + '\n/* ================= stepper (human-rule deductions) ================= */\n' + stepper + '\n' + app + '\n/* ================= japanese sums ================= */\n' + sumsEngine + '\n' + sumsStepper + '\n' + sumsApp + '\n/* ================= A38 SAT ================= */\n' + logicSolver + '\n' + a38Engine + '\nwindow.A38_WORKER_SOURCE=' + JSON.stringify(a38Worker) + ';\nwindow.A38_STEP_WORKER_SOURCE=' + JSON.stringify(a38StepWorker) + ';\n' + a38Stepper + '\n' + a38App + '\n/* ================= Cave ================= */\n' + caveEngine + '\nwindow.CAVE_WORKER_SOURCE=' + JSON.stringify(caveWorker) + ';\nwindow.CAVE_STEP_WORKER_SOURCE=' + JSON.stringify(caveStepWorker) + ';\n' + caveStepper + '\n' + caveApp + '</script>'
 );
+if (/<script\b[^>]*\bsrc=|<link\b[^>]*\brel="stylesheet"|url\(["']?(?:https?:|icons\/)/i.test(html)) {
+  throw new Error('Single-file build still contains a runtime script, stylesheet, or remote CSS asset.');
+}
 fs.mkdirSync('dist', { recursive: true });
 fs.writeFileSync('dist/ubahn-solver.html', html);
 console.log('built dist/ubahn-solver.html (' + html.length + ' bytes)');

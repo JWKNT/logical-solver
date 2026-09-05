@@ -218,14 +218,19 @@ function renderCells(hl) {
   for (let i = 0; i < R * C; i++) {
     const td = $('sumsCell' + i);
     const m = st.cand[i];
+    const position = 'Row ' + (((i / C) | 0) + 1) + ', column ' + ((i % C) + 1);
     td.className = 'sums-cell' + (hlSet.has(i) ? ' hl' : '');
-    if (m === 1) { td.className += ' shaded'; td.innerHTML = ''; continue; }
+    td.removeAttribute('title');
+    if (m === 1) { td.className += ' shaded'; td.innerHTML = ''; td.setAttribute('aria-label', position + ': shaded'); continue; }
     const ds = sums.digitsOf(m).map(k => st.pal[k - 1]);
-    if (ds.length === 1 && !(m & 1)) { td.innerHTML = '<span class="sums-digit">' + ds[0] + '</span>'; continue; }
+    if (ds.length === 1 && !(m & 1)) { td.innerHTML = '<span class="sums-digit">' + ds[0] + '</span>'; td.setAttribute('aria-label', position + ': ' + ds[0]); continue; }
     if (!(m & 1)) td.className += ' used';   // certainly holds a digit
     const full = ((1 << (st.D + 1)) - 2) | 1;
-    if (m === full) { td.innerHTML = ''; continue; }
+    if (m === full) { td.innerHTML = ''; td.setAttribute('aria-label', position + ': any value or shaded'); continue; }
     const plain = st.pal.every((v, q) => v === q + 1) && st.pal.length <= 9;
+    const label = position + ': ' + (m & 1 ? 'shaded or ' : '') + 'candidate ' + (ds.length === 1 ? 'value ' : 'values ') + ds.join(', ');
+    td.setAttribute('aria-label', label);
+    td.title = label;
     td.innerHTML = '<span class="sums-cands">' + (m & 1 ? '\u00b7' : '') + ds.join(plain ? '' : ' ') + '</span>';
   }
 }
@@ -311,7 +316,8 @@ function renderLetters(engineCand, engineBases) {
     // '?' until the first step derives the range from the clues as typed
     // (initialising here from possibly-empty clue boxes poisoned the range)
     const bs = engineBases ? engineBases : (st.baseCand ? [...st.baseCand].sort((x, y) => x - y) : []);
-    html += '<div class="crypto-box"><div class="crypto-box-letter">base</div>';
+    const baseLabel = bs.length ? 'Base ' + (bs.length === 1 ? 'value: ' : 'candidate values: ') + bs.join(', ') : 'Base value unresolved';
+    html += '<div class="crypto-box" role="img" aria-label="' + baseLabel + '" title="' + baseLabel + '"><div class="crypto-box-letter">base</div>';
     if (bs.length === 1) html += '<div class="crypto-box-solved">' + bs[0] + '</div>';
     else if (!bs.length) html += '<div class="crypto-box-solved">?</div>';
     else if (bs.length > 10) html += '<div class="crypto-box-many">' + bs.length + ' possible</div>';
@@ -321,7 +327,9 @@ function renderLetters(engineCand, engineBases) {
   for (const L of letters) {
     const mask = engineCand ? engineCand[L] : st.letterCand[L];
     const ds = sums.digitsOf2(mask);
-    html += '<div class="crypto-box"><div class="crypto-box-letter">' + String.fromCharCode(65 + L) + '</div>';
+    const letter = String.fromCharCode(65 + L);
+    const letterLabel = letter + ' ' + (ds.length === 1 ? 'value: ' : 'candidate values: ') + ds.join(', ');
+    html += '<div class="crypto-box" role="img" aria-label="' + letterLabel + '" title="' + letterLabel + '"><div class="crypto-box-letter">' + letter + '</div>';
     if (ds.length === 1) html += '<div class="crypto-box-solved">' + ds[0] + '</div>';
     else if (!alien) {
       // classic decimal cipher: the familiar fixed 0-9 grid, gaps hidden
