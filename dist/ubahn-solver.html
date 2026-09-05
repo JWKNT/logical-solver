@@ -727,8 +727,8 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   }
 
   .legend {
-      font-size: 13px;
-      color: #555;
+      font-size: var(--text-ui, .875rem);
+      color: var(--muted-strong);
       display: flex;
       gap: 18px;
       flex-wrap: wrap;
@@ -744,7 +744,7 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   /* ---- help / strategies ---- */
   details.help {
       margin-top: 16px;
-      background: #fff;
+      background: var(--paper);
       border: var(--hair);
       padding: 10px 16px;
       font-size: 14px;
@@ -814,7 +814,7 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   }
 
   .strategies li .sdesc {
-      color: #444;
+      color: var(--muted-strong);
   }
 
   .strategies li.active {
@@ -823,8 +823,8 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   }
 
   .stratNote {
-      font-size: 13px;
-      color: #555;
+      font-size: var(--text-ui, .875rem);
+      color: var(--muted);
       margin: 4px 0 0;
   }
 
@@ -944,29 +944,29 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ---------------- dim (dark) mode ---------------- */
 html.dark {
-  --panel: #313136;
-  --solver-ink: #cfccc4;
-  --platform: #2b2b2f;
+  --panel: var(--surface);
+  --solver-ink: var(--ink);
+  --platform: var(--paper);
   --board: #313136;
   --grid-line: #55555b;
   --shaded: #17171a;
   --tint-used: #3a4150;
   --line-maybe: #66666c;
 }
-html.dark body { background: #26262a; color: #cfccc4; }
-html.dark header, html.dark main { background: #26262a; }
-html.dark h1, html.dark h2, html.dark h3 { color: #ddd9d0; }
+html.dark body { background: var(--paper); color: var(--ink); }
+html.dark header, html.dark main { background: var(--paper); }
+html.dark h1, html.dark h2, html.dark h3 { color: var(--ink); }
 html.dark input, html.dark button, html.dark select {
-  background: #313136; color: #cfccc4; border-color: #55555b;
+  background: var(--surface); color: var(--ink); border-color: var(--line-strong);
 }
-html.dark .tab { color: #a8a4a0; }
-html.dark .tab.active { color: #ddd9d0; border-color: #ddd9d0; }
+html.dark .tab { color: var(--muted); }
+html.dark .tab.active { color: var(--ink); border-color: var(--ink); }
 html.dark .sums-cands { color: #96939c; }
 html.dark .sums-blank { color: #7a7a80; }
 html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
-html.dark #sumsStatus, html.dark #status { background: #2d2d32; border-color: #55555b; }
-html.dark .legend, html.dark .sdesc { color: #9c9894; }
-html.dark a { color: #93aacd; }
+html.dark #sumsStatus, html.dark #status { background: var(--surface); border-color: var(--line-strong); }
+html.dark .legend, html.dark .sdesc { color: var(--muted-strong); }
+html.dark a { color: var(--blue); }
 /* the formerly-glaring light elements, dimmed to sit in the theme */
 html.dark .sums-slots input { background: #37373c; border-color: #4c4c52; color: #cfccc4; }
 html.dark .sums-slots input:focus { border-color: #8a8a90; }
@@ -984,9 +984,9 @@ html.dark .status .warn { color: #d0aa60; }
 html.dark .crypto-box-solved { color: var(--bad); }
 
 /* dim theme: U-Bahn tab */
-html.dark input[type="number"], html.dark input[type="text"] { background: #313136; border-color: #55555b; }
-html.dark button { background: #313136; border-color: #55555b; }
-html.dark button:hover:not(:disabled) { background: #3a3a40; }
+html.dark input[type="number"], html.dark input[type="text"] { background: var(--surface); border-color: var(--line-strong); }
+html.dark button { background: var(--surface); border-color: var(--line-strong); }
+html.dark button:hover:not(:disabled) { background: var(--surface-blue); }
 html.dark button.primary { border-color: #b8b4ac; }
 html.dark button.primary:hover:not(:disabled) { background: #3a3a40; }
 html.dark button.danger { color: #d89090; border-color: #7a4848; }
@@ -996,16 +996,16 @@ html.dark input.clue.s1 { background: #3b362d; }
 html.dark input.clue.s2 { background: #2f353e; }
 html.dark input.clue.s3 { background: #303a32; }
 html.dark input.clue.s4 { background: #36363a; }
-html.dark .status { background: #2d2d32; border-left-color: #6a6a70; color: #cfccc4; }
-html.dark details.help { background: #2b2b2f; border-color: #45454b; }
+html.dark .status { background: var(--surface); border-left-color: var(--line-strong); color: var(--ink); }
+html.dark details.help { background: var(--paper); border-color: var(--line); }
 html.dark details.help code { background: #37373c; }
-html.dark .strategies li .sdesc { color: #9c9894; }
+html.dark .strategies li .sdesc { color: var(--muted-strong); }
 html.dark .strategies li.active { background: #4a4433; outline-color: #8a7c4a; }
 html.dark #cancelBtn { background: #313136; }
 html.dark .tabs .tab:hover:not(.active) { background: #2f2f34; }
-html.dark .legend, html.dark .legend * { color: #a8a4a0; }
-html.dark label { color: #b8b4ac; }
-html.dark .toolbar label { color: #b8b4ac; }
+html.dark .legend, html.dark .legend * { color: var(--muted-strong); }
+html.dark label { color: var(--muted-strong); }
+html.dark .toolbar label { color: var(--muted-strong); }
 html.dark .toolbar .sep { border-color: #45454b; }
 html.dark svg text { fill: #cfccc4; }
 
