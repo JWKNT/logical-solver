@@ -57,22 +57,15 @@
   }
 
   /* ---- header: a quiet titled rule ---- */
-  header {
-      max-width: 1200px;
+  header.site-header {
+      width: min(1156px, calc(100% - 44px));
+      max-width: none;
       margin: 0 auto;
-      padding: 26px 22px 10px;
+      padding-inline: 0;
       display: flex;
       align-items: baseline;
       gap: 14px;
       border-bottom: var(--hair);
-  }
-
-  header h1 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: 0.4px;
-      font-variant: small-caps;
   }
 
   main {
@@ -498,11 +491,10 @@
   }
 /* ---- tabs ---- */
 .tabs { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-.tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
-.tabs .tab.active { border-bottom-color: var(--solver-ink); font-weight: 700; }
+.tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: .875rem; padding: .4rem .6rem; }
+.tabs .tab.active { border-bottom-color: var(--blue); color: var(--blue-dark); font-weight: 600; }
 .tabs .tab:hover:not(.active) { background: var(--control-hover); }
 .site-actions { display: flex; align-items: center; gap: 10px; }
-.project-link { color: var(--muted); font-size: .875rem; }
 .status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
@@ -621,7 +613,7 @@ html.dark input, html.dark button, html.dark select {
   background: var(--surface); color: var(--ink); border-color: var(--line-strong);
 }
 html.dark .tab { color: var(--muted); }
-html.dark .tab.active { color: var(--ink); border-color: var(--ink); }
+html.dark .tab.active { color: var(--blue-dark); border-color: var(--blue); }
 html.dark .sums-cands { color: #96939c; }
 html.dark .sums-blank { color: #7a7a80; }
 html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
@@ -766,8 +758,8 @@ html.dark .cave-twilight-toggle input:checked{background:#6a86b8;border-color:#6
 html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 
 @media (max-width: 650px) {
-  header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
-  .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; }
+  header.site-header.site-header--identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
+  .site-header.site-header--identity .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; flex-wrap: nowrap; }
   .tabs .tab { flex: none; }
   .site-actions { grid-column: 2; grid-row: 1; }
   main { padding-inline: 14px; }

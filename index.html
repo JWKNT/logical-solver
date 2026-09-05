@@ -10,12 +10,12 @@
 <link rel="icon" href="https://jehlp.net/site-theme/v2/favicons/logical-solver.png" type="image/png">
 <script src="https://jehlp.net/site-theme/v2/theme.js"></script>
 <link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">
-<link rel="stylesheet" href="css/style.css?v=20260905-1">
+<link rel="stylesheet" href="css/style.css?v=20260905-2">
 </head>
-<body>
+<body data-site-tone="blue">
 <a class="skip-link" href="#solver-workspace">Skip to solver</a>
-<header>
-  <h1 id="siteTitle">Logical Solvers</h1>
+<header class="site-header site-header--identity">
+  <div class="site-brand"><span class="site-mark" aria-hidden="true">┼</span><h1 class="site-title" id="siteTitle">Logical Solvers</h1></div>
   <nav class="tabs" aria-label="Puzzle type">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
@@ -23,7 +23,6 @@
     <button class="tab" data-app="cave">Cave</button>
   </nav>
   <div class="site-actions">
-    <a class="project-link" href="https://jehlp.net/">Projects</a>
     <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
   </div>
 </header>
@@ -54,7 +53,7 @@
           <svg id="boardSvg" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
       </div>
-    <div class="status" id="status">Set up your puzzle, then choose <b>Solve</b> or <b>True candidates</b>. Tip: <b>Random puzzle</b> fills in a complete, guaranteed-solvable clue set — delete clues from it to experiment.</div>
+    <div class="status" id="status">Enter clues, then <b>Solve</b>. For an example, choose <b>Options → Random puzzle</b>.</div>
     <div class="legend">
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#0F4DA8" stroke-width="7" stroke-linecap="round"/></svg></span>segment in <b>every</b> solution</span>
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#AEB6BF" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 7"/></svg></span>segment in <b>some</b> solutions</span>
@@ -75,7 +74,7 @@
     <aside class="strategies-side" id="strategiesSide">
       <section class="help strategies" aria-labelledby="ubahn-strategies-title">
         <h2 class="strategies-heading" id="ubahn-strategies-title">Step deduction types</h2>
-        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The idea used by the last step is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <p class="stratNote">Simplest first. The last deduction is highlighted; counts reset with the board.</p>
         <ol id="stratList"></ol>
       </section>
     </aside>
@@ -116,7 +115,7 @@
     <aside class="strategies-side">
       <section class="strategies" aria-labelledby="sums-strategies-title">
         <h2 class="strategies-heading" id="sums-strategies-title">Step deduction types</h2>
-        <div class="stratNote">The ideas <b>Take step</b> tries, simplest first.</div>
+        <div class="stratNote">Simplest first.</div>
         <ol id="sumsStrats"></ol>
       </section>
     </aside>
@@ -174,7 +173,7 @@
     <aside class="strategies-side">
       <section class="help strategies" aria-labelledby="cave-strategies-title">
         <h2 class="strategies-heading" id="cave-strategies-title">Step deduction types</h2>
-        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <p class="stratNote">Simplest first. The last deduction is highlighted; counts reset with the board.</p>
         <ol id="caveStrats"></ol>
       </section>
     </aside>

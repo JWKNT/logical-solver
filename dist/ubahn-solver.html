@@ -144,6 +144,10 @@
   --measure: 43rem;
   --gutter: clamp(1rem, 4vw, 2.75rem);
   --section-space: clamp(2rem, 5vw, 4rem);
+  --tone-blue: #35567a;
+  --tone-plum: #775466;
+  --tone-teal: #3d6e6b;
+  --tone-ochre: #836228;
   color-scheme: light;
 }
 
@@ -165,6 +169,10 @@
   --bad: #d89393;
   --shadow: rgb(0 0 0 / 48%);
   --shadow-soft: rgb(0 0 0 / 30%);
+  --tone-blue: #98b9dc;
+  --tone-plum: #c2a6b8;
+  --tone-teal: #9cc3bb;
+  --tone-ochre: #d2b77c;
   color-scheme: dark;
 }
 
@@ -195,6 +203,18 @@ mark { padding-inline: .08em; background: var(--mark); color: inherit; }
 .site-header nav, .site-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .85rem; font: var(--text-ui)/1.4 var(--sans); }
 .site-header nav a, .site-nav a { color: var(--muted); }
 .site-header nav a:hover, .site-nav a:hover, .site-header nav a[aria-current], .site-nav a[aria-current] { color: var(--blue-dark); }
+/* Optional page identity: one mark, no site-wide breadcrumb or home link. */
+[data-site-tone] { --site-accent: var(--tone-blue); --site-accent-soft: color-mix(in srgb, var(--site-accent) 12%, var(--paper)); }
+[data-site-tone="plum"] { --site-accent: var(--tone-plum); }
+[data-site-tone="teal"] { --site-accent: var(--tone-teal); }
+[data-site-tone="ochre"] { --site-accent: var(--tone-ochre); }
+.site-header.site-header--identity { align-items: center; flex-flow: row wrap; padding-block: clamp(1.25rem, 2.5vw, 2rem) 1rem; gap: .8rem 1.5rem; }
+.site-brand { display: flex; align-items: center; gap: .7rem; min-width: 0; max-width: 100%; }
+.site-mark { flex: none; width: 1em; color: var(--site-accent, var(--blue)); font: 400 1.75rem/1 var(--display); text-align: center; }
+.site-header--identity .site-title { min-width: 0; margin: 0; font: 500 clamp(1.3rem, 2vw, 1.55rem)/1.18 var(--display); letter-spacing: -.015em; font-variant: normal; overflow-wrap: anywhere; }
+.site-header.site-header--identity nav { width: auto; margin-left: auto; gap: .6rem 1rem; }
+.site-header--identity nav a { text-decoration-color: transparent; }
+.site-header--identity nav a:hover, .site-header--identity nav a[aria-current] { text-decoration-color: currentColor; }
 .page-shell { width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; }
 .prose { max-width: var(--measure); }
 .prose p, .prose li { text-wrap: pretty; }
@@ -329,6 +349,7 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
     --paper: #fff; --surface: #fff; --surface-blue: #f1f1f1;
     --ink: #000; --muted-strong: #333; --muted: #444; --faint: #555;
     --line: #bbb; --line-strong: #777; --blue: #000; --blue-dark: #000;
+    --tone-blue: #333; --tone-plum: #333; --tone-teal: #333; --tone-ochre: #333;
     color-scheme: light !important;
   }
   body { background: #fff !important; color: #000 !important; }
@@ -396,22 +417,15 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   }
 
   /* ---- header: a quiet titled rule ---- */
-  header {
-      max-width: 1200px;
+  header.site-header {
+      width: min(1156px, calc(100% - 44px));
+      max-width: none;
       margin: 0 auto;
-      padding: 26px 22px 10px;
+      padding-inline: 0;
       display: flex;
       align-items: baseline;
       gap: 14px;
       border-bottom: var(--hair);
-  }
-
-  header h1 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: 0.4px;
-      font-variant: small-caps;
   }
 
   main {
@@ -837,11 +851,10 @@ th { color: var(--muted); font: 600 var(--text-ui)/1.4 var(--sans); font-variant
   }
 /* ---- tabs ---- */
 .tabs { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-.tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; font-size: 15px; padding: 4px 10px; }
-.tabs .tab.active { border-bottom-color: var(--solver-ink); font-weight: 700; }
+.tabs .tab { border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: .875rem; padding: .4rem .6rem; }
+.tabs .tab.active { border-bottom-color: var(--blue); color: var(--blue-dark); font-weight: 600; }
 .tabs .tab:hover:not(.active) { background: var(--control-hover); }
 .site-actions { display: flex; align-items: center; gap: 10px; }
-.project-link { color: var(--muted); font-size: .875rem; }
 .status, .help p, .stratNote { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
@@ -960,7 +973,7 @@ html.dark input, html.dark button, html.dark select {
   background: var(--surface); color: var(--ink); border-color: var(--line-strong);
 }
 html.dark .tab { color: var(--muted); }
-html.dark .tab.active { color: var(--ink); border-color: var(--ink); }
+html.dark .tab.active { color: var(--blue-dark); border-color: var(--blue); }
 html.dark .sums-cands { color: #96939c; }
 html.dark .sums-blank { color: #7a7a80; }
 html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
@@ -1105,8 +1118,8 @@ html.dark .cave-twilight-toggle input:checked{background:#6a86b8;border-color:#6
 html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 
 @media (max-width: 650px) {
-  header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
-  .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; }
+  header.site-header.site-header--identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
+  .site-header.site-header--identity .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; flex-wrap: nowrap; }
   .tabs .tab { flex: none; }
   .site-actions { grid-column: 2; grid-row: 1; }
   main { padding-inline: 14px; }
@@ -1158,10 +1171,10 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 }
 </style>
 </head>
-<body>
+<body data-site-tone="blue">
 <a class="skip-link" href="#solver-workspace">Skip to solver</a>
-<header>
-  <h1 id="siteTitle">Logical Solvers</h1>
+<header class="site-header site-header--identity">
+  <div class="site-brand"><span class="site-mark" aria-hidden="true">┼</span><h1 class="site-title" id="siteTitle">Logical Solvers</h1></div>
   <nav class="tabs" aria-label="Puzzle type">
     <button class="tab active" data-app="ubahn">U-Bahn</button>
     <button class="tab" data-app="sums">Japanese Sums</button>
@@ -1169,7 +1182,6 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <button class="tab" data-app="cave">Cave</button>
   </nav>
   <div class="site-actions">
-    <a class="project-link" href="https://jehlp.net/">Projects</a>
     <button class="theme-toggle" id="themeToggle" type="button" data-theme-toggle aria-label="Use dark theme" aria-pressed="false">◐</button>
   </div>
 </header>
@@ -1200,7 +1212,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
           <svg id="boardSvg" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
       </div>
-    <div class="status" id="status">Set up your puzzle, then choose <b>Solve</b> or <b>True candidates</b>. Tip: <b>Random puzzle</b> fills in a complete, guaranteed-solvable clue set — delete clues from it to experiment.</div>
+    <div class="status" id="status">Enter clues, then <b>Solve</b>. For an example, choose <b>Options → Random puzzle</b>.</div>
     <div class="legend">
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#0F4DA8" stroke-width="7" stroke-linecap="round"/></svg></span>segment in <b>every</b> solution</span>
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#AEB6BF" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 7"/></svg></span>segment in <b>some</b> solutions</span>
@@ -1221,7 +1233,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <aside class="strategies-side" id="strategiesSide">
       <section class="help strategies" aria-labelledby="ubahn-strategies-title">
         <h2 class="strategies-heading" id="ubahn-strategies-title">Step deduction types</h2>
-        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The idea used by the last step is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <p class="stratNote">Simplest first. The last deduction is highlighted; counts reset with the board.</p>
         <ol id="stratList"></ol>
       </section>
     </aside>
@@ -1262,7 +1274,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <aside class="strategies-side">
       <section class="strategies" aria-labelledby="sums-strategies-title">
         <h2 class="strategies-heading" id="sums-strategies-title">Step deduction types</h2>
-        <div class="stratNote">The ideas <b>Take step</b> tries, simplest first.</div>
+        <div class="stratNote">Simplest first.</div>
         <ol id="sumsStrats"></ol>
       </section>
     </aside>
@@ -1320,7 +1332,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <aside class="strategies-side">
       <section class="help strategies" aria-labelledby="cave-strategies-title">
         <h2 class="strategies-heading" id="cave-strategies-title">Step deduction types</h2>
-        <p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p>
+        <p class="stratNote">Simplest first. The last deduction is highlighted; counts reset with the board.</p>
         <ol id="caveStrats"></ol>
       </section>
     </aside>
