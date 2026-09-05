@@ -29,12 +29,16 @@ for (const name of ['theme-moon.svg', 'theme-sun.svg']) {
 const faviconPath = path.join(path.dirname(sharedBasePath), 'favicons', 'logical-solver.png');
 const favicon = fs.existsSync(faviconPath) ? fs.readFileSync(faviconPath)
   : execFileSync('curl', ['-fsSL', 'https://jehlp.net/site-theme/v2/favicons/logical-solver.png']);
+const markPath = path.join(path.dirname(sharedBasePath), 'marks', 'logical-solver.png');
+const mark = fs.existsSync(markPath) ? fs.readFileSync(markPath)
+  : execFileSync('curl', ['-fsSL', 'https://jehlp.net/site-theme/v2/marks/logical-solver.png']);
 
 let html = read('index.html');
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
 html = html.replace(/((?:src|href)="[^"?]+)\?v=[^"&]+(?=")/g, '$1');
 html = html.replace('https://jehlp.net/site-theme/v2/favicons/logical-solver.png', `data:image/png;base64,${favicon.toString('base64')}`);
+html = html.replace('https://jehlp.net/site-theme/v2/marks/logical-solver.png', `data:image/png;base64,${mark.toString('base64')}`);
 html = html.replace('<link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">', () => `<style>\n${sharedBase}</style>`);
 html = html.replace(`<script src="${sharedThemeUrl}"></script>`, () => `<script>\n${sharedTheme}</script>`);
 const css = read('css/style.css');
@@ -61,7 +65,7 @@ html = html.replace(
   '<script src="js/engine.js"></script>\n<script src="js/stepper.js"></script>\n<script src="js/app.js"></script>\n<script src="js/sums-engine.js"></script>\n<script src="js/sums-stepper.js"></script>\n<script src="js/sums-app.js"></script>\n<script src="js/vendor/logic-solver.bundle.js"></script>\n<script src="js/a38-engine.js"></script>\n<script src="js/a38-stepper.js"></script>\n<script src="js/a38-app.js"></script>\n<script src="js/cave-engine.js"></script>\n<script src="js/cave-stepper.js"></script>\n<script src="js/cave-app.js"></script>',
   () => '<script>\n' + engine + '\n/* ================= stepper (human-rule deductions) ================= */\n' + stepper + '\n' + app + '\n/* ================= japanese sums ================= */\n' + sumsEngine + '\n' + sumsStepper + '\n' + sumsApp + '\n/* ================= A38 SAT ================= */\n' + logicSolver + '\n' + a38Engine + '\nwindow.A38_WORKER_SOURCE=' + JSON.stringify(a38Worker) + ';\nwindow.A38_STEP_WORKER_SOURCE=' + JSON.stringify(a38StepWorker) + ';\n' + a38Stepper + '\n' + a38App + '\n/* ================= Cave ================= */\n' + caveEngine + '\nwindow.CAVE_WORKER_SOURCE=' + JSON.stringify(caveWorker) + ';\nwindow.CAVE_STEP_WORKER_SOURCE=' + JSON.stringify(caveStepWorker) + ';\n' + caveStepper + '\n' + caveApp + '</script>'
 );
-if (/<script\b[^>]*\bsrc=|<link\b[^>]*\brel="stylesheet"|url\(["']?(?:https?:|icons\/)/i.test(html)) {
+if (/<script\b[^>]*\bsrc=|<link\b[^>]*\brel="stylesheet"|<img\b[^>]*\bsrc="https?:|url\(["']?(?:https?:|icons\/)/i.test(html)) {
   throw new Error('Single-file build still contains a runtime script, stylesheet, or remote CSS asset.');
 }
 fs.mkdirSync('dist', { recursive: true });
