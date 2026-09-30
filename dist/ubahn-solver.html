@@ -372,6 +372,20 @@ a.site-home::before {
 }
 a.site-home:hover { color: var(--ink); box-shadow: inset 0 -1px var(--line-strong); }
 a.site-home:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* Narrow pages have no spare side gutter. Give the persistent symbol its own
+   edge strip instead of placing it over the right end of a field or line. */
+@media (max-width: 42rem) {
+  .site-home-dock {
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+    min-height: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+    padding: .375rem max(.75rem, env(safe-area-inset-right, 0px)) calc(.375rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 @media (forced-colors: active) {
   a.site-home::before { background: LinkText; forced-color-adjust: none; }
 }

@@ -19,3 +19,11 @@ test('offline export embeds the Home symbol and all shared presentation', () => 
   assert.match(html, /a\.site-home::before\s*\{[^}]*data:image\/svg\+xml/);
   assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home\.svg'/);
 });
+
+
+test('offline export includes the narrow-screen Home edge strip', () => {
+  const html = read('dist/ubahn-solver.html');
+  assert.match(html, /@media \(max-width: 42rem\)\s*\{\s*\.site-home-dock\s*\{[^}]*width: 100%;[^}]*min-height: calc\(3\.5rem \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  const online = read('index.html');
+  for (const asset of ['base.css', 'theme.js']) assert.ok(online.includes(`${asset}?v=20260930-home2`));
+});
