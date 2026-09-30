@@ -25,5 +25,21 @@ test('offline export includes the narrow-screen Home edge strip', () => {
   const html = read('dist/ubahn-solver.html');
   assert.match(html, /@media \(max-width: 42rem\)\s*\{\s*\.site-home-dock\s*\{[^}]*width: 100%;[^}]*min-height: calc\(3\.5rem \+ env\(safe-area-inset-bottom, 0px\)\)/);
   const online = read('index.html');
-  for (const asset of ['base.css', 'theme.js']) assert.ok(online.includes(`${asset}?v=20260930-home2`));
+  assert.ok(online.includes('base.css?v=20260930-home2'));
+  assert.ok(online.includes('theme.js?v=20260930-home3'));
+});
+
+
+test('offline export retains shared focus clearance behind the Home dock', () => {
+  const html = read('dist/ubahn-solver.html');
+  assert.match(html, /document\.addEventListener\("focusin", keepFocusedControlClear\)/);
+  assert.match(html, /window\.scrollBy\(\{ top: shift, behavior: "instant" \}\)/);
+});
+
+
+test('local dark links leave the shared Home ink color intact', () => {
+  const css = read('css/style.css');
+  assert.match(css, /html\.dark a:not\(\.site-home\) \{ color: var\(--blue\); \}/);
+  assert.doesNotMatch(css, /html\.dark a\s*\{[^}]*color: var\(--blue\)/);
+  assert.match(read('index.html'), /css\/style\.css\?v=20260930-home3/);
 });

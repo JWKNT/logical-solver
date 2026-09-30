@@ -619,7 +619,7 @@ html.dark .sums-blank { color: #7a7a80; }
 html.dark .strategies li.variant-bar .voff { color: #7a7a80; }
 html.dark #sumsStatus, html.dark #status { background: var(--surface); border-color: var(--line-strong); }
 html.dark .legend, html.dark .sdesc { color: var(--muted-strong); }
-html.dark a { color: var(--blue); }
+html.dark a:not(.site-home) { color: var(--blue); }
 /* the formerly-glaring light elements, dimmed to sit in the theme */
 html.dark .sums-slots input { background: #37373c; border-color: #4c4c52; color: #cfccc4; }
 html.dark .sums-slots input:focus { border-color: #8a8a90; }
