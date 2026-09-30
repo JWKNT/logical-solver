@@ -178,10 +178,11 @@ function buildGrid(keepClues) {
   stepNo = 0;
   stFromEngine = false;
   const wrap = $('sumsGridWrap');
-  const slotBox = (prefix, vertical) => {
+  const slotBox = (prefix, vertical, lineNumber) => {
     let h = '<div class="sums-slots' + (vertical ? ' v' : '') + '">';
     const ml = $('sumsAlien').checked ? 12 : 3;   // alien numerals may use '.'-separated digits
-    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" maxlength="' + ml + '" spellcheck="false" autocomplete="off">';
+    const lineLabel = (vertical ? 'Column ' : 'Row ') + lineNumber;
+    for (let g = 0; g < G; g++) h += '<input id="' + prefix + '_' + g + '" aria-label="' + lineLabel + ', group ' + (g + 1) + ' sum" maxlength="' + ml + '" spellcheck="false" autocomplete="off">';
     return h + '</div>';
   };
   const rowClueWidth = 28 * G + 2;
@@ -189,10 +190,10 @@ function buildGrid(keepClues) {
   let html = '<table class="sums-grid" style="width:' + tableWidth + 'px"><colgroup><col style="width:' + rowClueWidth + 'px">';
   for (let c = 0; c < C; c++) html += '<col style="width:52px">';
   html += '</colgroup><tr><td class="sums-corner"></td>';
-  for (let c = 0; c < C; c++) html += '<td class="sums-clue-col">' + slotBox('sumsCol' + c, true) + '</td>';
+  for (let c = 0; c < C; c++) html += '<td class="sums-clue-col">' + slotBox('sumsCol' + c, true, c + 1) + '</td>';
   html += '</tr>';
   for (let r = 0; r < R; r++) {
-    html += '<tr><td class="sums-clue-row">' + slotBox('sumsRow' + r, false) + '</td>';
+    html += '<tr><td class="sums-clue-row">' + slotBox('sumsRow' + r, false, r + 1) + '</td>';
     for (let c = 0; c < C; c++) html += '<td class="sums-cell" id="sumsCell' + (r * C + c) + '"></td>';
     html += '</tr>';
   }
