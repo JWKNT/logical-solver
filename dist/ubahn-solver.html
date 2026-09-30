@@ -242,7 +242,7 @@ mark { padding-inline: .08em; background: var(--mark); color: inherit; }
 .site-header nav, .site-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .85rem; font: var(--text-ui)/1.4 var(--ui, var(--serif)); }
 .site-header nav a:not(.site-home), .site-nav a:not(.site-home) { color: var(--muted); }
 .site-header nav a:not(.site-home):hover, .site-nav a:not(.site-home):hover, .site-header nav a:not(.site-home)[aria-current], .site-nav a:not(.site-home)[aria-current] { color: var(--blue-dark); }
-/* Optional page identity: one subject mark; global return lives in the quiet edge control. */
+/* Optional page identity: one subject mark; global return stays with header utilities. */
 [data-site-tone] { --site-accent: var(--tone-blue); --site-accent-soft: color-mix(in srgb, var(--site-accent) 12%, var(--paper)); }
 [data-site-tone="plum"] { --site-accent: var(--tone-plum); }
 [data-site-tone="teal"] { --site-accent: var(--tone-teal); }
@@ -411,9 +411,14 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
 
 @media (max-width: 42rem) {
   :root { --gutter: .85rem; --section-space: 2.1rem; }
-  .site-header { align-items: flex-start; flex-direction: column; gap: .65rem; }
-  .site-header nav { width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: .5rem .7rem; }
-  .site-header nav .theme-toggle { margin-left: auto; }
+  /* Match the identity selectors so their desktop row/wrap rules cannot win.
+     Give mobile an intentional title row and a compact, full-width control row. */
+  .site-header, .site-header.site-header--identity { align-items: stretch; flex-flow: column nowrap; gap: .375rem; }
+  .site-header.site-header--identity { padding-block: .875rem .5rem; }
+  .site-header nav, .site-header.site-header--identity nav { width: 100%; margin-left: 0; flex-wrap: wrap; justify-content: flex-start; gap: .25rem .7rem; }
+  .site-header nav > a:not(.site-home) { display: inline-flex; align-items: center; min-width: 2.75rem; min-height: 2.75rem; }
+  .site-header nav > .site-utility-pair, .site-header nav > .theme-toggle { margin-left: auto; }
+  .site-header nav .site-utility-pair .theme-toggle { margin-left: 0; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
   .data-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .data-strip > div:nth-child(odd) { border-left: 0; }
@@ -1202,11 +1207,15 @@ html.dark .cave-twilight-toggle input:checked{background:#6a86b8;border-color:#6
 #caveStrats>li:not(.variant-bar)::before{content:counter(strat) '.';position:absolute;left:-26px;color:#999;font-size:var(--text-ui,.875rem)}
 html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 
-@media (max-width: 650px) {
+/* Keep the title/actions grid through the shared mobile masthead breakpoint. */
+@media (max-width: 42rem) {
   header.site-header.site-header--identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
   .site-header.site-header--identity .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; flex-wrap: nowrap; }
   .tabs .tab { flex: none; }
   .site-actions { grid-column: 2; grid-row: 1; }
+}
+
+@media (max-width: 650px) {
   main { padding-inline: 14px; }
   .toolbar { gap: 9px 10px; }
   .toolbar-more { flex: 1 0 100%; margin-left: 0; }

@@ -19,11 +19,25 @@ test('offline export embeds the abstract Home emblem and all shared presentation
   assert.match(html, /a\.site-home::before\s*\{[^}]*data:image\/svg\+xml/);
   assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home-emblem\.svg'/);
   assert.doesNotMatch(html, /--site-home-clearance|keepFocusedControlClear/);
-  for (const asset of ['base.css', 'theme.js']) assert.ok(read('index.html').includes(`${asset}?v=20260930-header-home`));
+  assert.ok(read('index.html').includes('base.css?v=20260930-mobile-header'));
+  assert.ok(read('index.html').includes('theme.js?v=20260930-header-home'));
 });
 
 test('local dark links leave the shared Home ink color intact', () => {
   const css = read('css/style.css');
   assert.match(css, /html\.dark a:not\(\.site-home\) \{ color: var\(--blue\); \}/);
   assert.doesNotMatch(css, /html\.dark a\s*\{[^}]*color: var\(--blue\)/);
+});
+
+test('the Solver header grid covers the entire shared mobile band without changing workspace breakpoints', () => {
+  const css = read('css/style.css');
+  const header = css.split('@media (max-width: 42rem) {')[1]?.split('@media (max-width: 650px) {')[0];
+  assert.ok(header, 'header has the shared 42rem breakpoint');
+  assert.match(header, /header\.site-header\.site-header--identity \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(header, /\.site-header\.site-header--identity \.tabs \{ grid-column: 1 \/ -1; grid-row: 2;[^}]*flex-wrap: nowrap;/);
+  assert.match(header, /\.site-actions \{ grid-column: 2; grid-row: 1; \}/);
+  assert.doesNotMatch(header, /main\s*\{|\.toolbar/);
+  assert.match(css, /@media \(max-width: 650px\) \{\s*main \{ padding-inline: 14px; \}/);
+  assert.ok(read('index.html').includes('css/style.css?v=20260930-mobile-header'));
+  assert.ok(read('dist/ubahn-solver.html').includes(header));
 });
