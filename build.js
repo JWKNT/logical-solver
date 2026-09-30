@@ -20,7 +20,7 @@ let sharedBase = fs.existsSync(sharedBasePath)
 
 // CSS URLs are relative to the stylesheet, but an inlined stylesheet has no
 // source directory. Embed the two seals so the single-file build stays offline.
-for (const name of ['theme-moon.svg', 'theme-sun.svg']) {
+for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg']) {
   const iconPath = path.join(path.dirname(sharedBasePath), 'icons', name);
   const svg = fs.existsSync(iconPath) ? read(iconPath)
     : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/icons/${name}`], { encoding: 'utf8' });
