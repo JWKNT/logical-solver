@@ -36,13 +36,13 @@ test('local workspace focus styling leaves the shared utility focus ring intact'
   assert.doesNotMatch(css, /(?:^|\n)\s*button:focus-visible\s*\{/);
 });
 
-test('the Solver header grid covers the entire shared mobile band without changing workspace breakpoints', () => {
+test('the Solver keeps scrolling tabs beneath the shared utility lane without changing workspace breakpoints', () => {
   const css = read('css/style.css');
   const header = css.split('@media (max-width: 42rem) {')[1]?.split('@media (max-width: 650px) {')[0];
   assert.ok(header, 'header has the shared 42rem breakpoint');
-  assert.match(header, /header\.site-header\.site-header--identity \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/);
-  assert.match(header, /\.site-header\.site-header--identity \.tabs \{ grid-column: 1 \/ -1; grid-row: 2;[^}]*flex-wrap: nowrap;/);
-  assert.match(header, /\.site-actions \{ grid-column: 2; grid-row: 1; \}/);
+  assert.doesNotMatch(header, /padding-top:|grid-template-columns:/);
+  assert.match(header, /\.site-header\.site-header--identity \.tabs \{ width: 100%;[^}]*flex-wrap: nowrap;/);
+  assert.match(header, /\.site-actions \{ height: 0; \}/);
   assert.doesNotMatch(header, /main\s*\{|\.toolbar/);
   assert.match(css, /@media \(max-width: 650px\) \{\s*main \{ padding-inline: 14px; \}/);
   assert.ok(read('index.html').includes('css/style.css?v=20261001-utilities'));
@@ -59,4 +59,14 @@ test('offline export preserves touch utility alignment', () => {
 
 test('offline subpage header normalizes fallback label tracks', () => {
   assert.match(read('dist/ubahn-solver.html'), /header a\.site-home,\s*header \[data-theme-toggle\]\.theme-toggle \{\s*grid-template-rows: minmax\(0, 1fr\);\s*grid-auto-rows: 0;/);
+});
+
+
+test('split and offline headers inherit the stable shared frame', () => {
+  const local = read('css/style.css');
+  const shared = read('dist/ubahn-solver.html');
+  assert.doesNotMatch(local, /header\.site-header(?:\.site-header--identity)?\s*\{[^}]*\b(?:width|padding-inline|padding-top):/);
+  assert.match(shared, /--site-frame-page: 74rem;/);
+  assert.match(shared, /scrollbar-gutter: stable;/);
+  assert.match(shared, /\.site-header \.site-utility-pair \{ position: absolute; top: var\(--site-frame-top\); right: 0;/);
 });

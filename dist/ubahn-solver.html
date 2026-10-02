@@ -182,6 +182,11 @@
   --page: 72rem;
   --measure: 43rem;
   --gutter: clamp(1rem, 4vw, 2.75rem);
+  --site-frame-page: 74rem;
+  --site-frame-gutter: max(2.5rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+  --site-frame-width: min(var(--site-frame-page), calc(100% - 2 * var(--site-frame-gutter)));
+  --site-frame-top: max(1.5rem, env(safe-area-inset-top, 0px));
+  --site-utility-clearance: calc(2 * var(--utility-size, 2.75rem) + var(--utility-gap, .375rem) + 1rem);
   --section-space: clamp(2rem, 5vw, 4rem);
   --tone-blue: #35567a;
   --tone-plum: #775466;
@@ -216,7 +221,7 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 body { min-width: 320px; margin: 0; background: var(--paper); color: var(--ink); font: var(--text-body)/1.62 var(--serif); font-kerning: normal; text-rendering: optimizeLegibility; }
 button, input, select, textarea { color: inherit; font: inherit; }
 button, select { cursor: pointer; }
@@ -237,7 +242,13 @@ mark { padding-inline: .08em; background: var(--mark); color: inherit; }
 .skip-link { position: fixed; top: 0; left: 1rem; transform: translateY(-150%); z-index: 1000; padding: .35rem .55rem; border: 1px solid var(--ink); background: var(--paper); font: var(--text-ui)/1.4 var(--ui, var(--serif)); }
 .skip-link:focus { top: .75rem; transform: none; }
 
-.site-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1.25rem; width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; padding: 1.1rem 0 .58rem; border-bottom: 1px solid var(--line); }
+/* One document-top frame, independent of each application's content measure.
+   Utilities stay in authored markup and scroll with the masthead. Their reserved
+   lane prevents title/navigation wrapping from changing cross-page coordinates. */
+.site-header { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; width: var(--site-frame-width); min-height: calc(var(--site-frame-top) + var(--utility-size, 2.75rem) + 1rem + 1px); margin: 0 auto; padding: var(--site-frame-top) var(--site-utility-clearance) 1rem 0; border-bottom: 1px solid var(--line); }
+.site-header .site-utility-pair { position: absolute; top: var(--site-frame-top); right: 0; margin: 0; }
+.site-header nav { position: static; min-height: var(--utility-size, 2.75rem); }
+.site-header > .site-title { display: flex; align-items: center; min-height: var(--utility-size, 2.75rem); }
 .site-title { color: var(--ink); font: 600 1.12rem/1.2 var(--display); font-variant: small-caps; letter-spacing: .025em; text-decoration: none; }
 .site-header nav, .site-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .85rem; font: var(--text-ui)/1.4 var(--ui, var(--serif)); }
 .site-header nav a:not(.site-home), .site-nav a:not(.site-home) { color: var(--muted); }
@@ -247,8 +258,8 @@ mark { padding-inline: .08em; background: var(--mark); color: inherit; }
 [data-site-tone="plum"] { --site-accent: var(--tone-plum); }
 [data-site-tone="teal"] { --site-accent: var(--tone-teal); }
 [data-site-tone="ochre"] { --site-accent: var(--tone-ochre); }
-.site-header.site-header--identity { align-items: center; flex-flow: row wrap; padding-block: clamp(1.25rem, 2.5vw, 2rem) 1rem; gap: .8rem 1.5rem; }
-.site-brand { display: flex; align-items: center; gap: .7rem; min-width: 0; max-width: 100%; }
+.site-header.site-header--identity { align-items: center; flex-flow: row wrap; gap: .8rem 1.5rem; }
+.site-brand { display: flex; align-items: center; gap: .7rem; min-width: 0; min-height: var(--utility-size, 2.75rem); max-width: 100%; }
 .site-mark { display: block; flex: none; width: 2rem; height: 2rem; object-fit: contain; }
 :root[data-theme="dark"] .site-mark,
 :root[data-theme="dark"] .site-divider > img { filter: invert(1); }
@@ -304,7 +315,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    The compass, dial and slash are quiet punctuation inside equal hit targets. */
 :root { --utility-size: 2.75rem; --utility-icon-size: 1.6rem; --utility-gap: .375rem; }
 .site-utility-pair { display: inline-flex; align-items: center; flex: none; gap: var(--utility-gap, .375rem); }
-.site-utilities { display: flex; justify-content: flex-end; padding: .75rem var(--gutter); }
+.site-utilities { display: flex; justify-content: flex-end; width: var(--site-frame-width); margin: 0 auto; padding: var(--site-frame-top) 0 1rem; }
 a.site-home,
 [data-theme-toggle].theme-toggle,
 button.site-search {
@@ -397,15 +408,24 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
 .table-scroll th { position: sticky; top: 0; z-index: 2; background: var(--paper); }
 .site-footer { width: min(var(--page), calc(100% - 2 * var(--gutter))); margin-inline: auto; padding: 1.2rem 0 2rem; color: var(--muted); font: var(--text-meta)/1.5 var(--ui, var(--serif)); }
 
+@media (max-width: 60rem) {
+  :root { --site-frame-page: 48rem; --site-frame-gutter: max(1.5rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)); }
+}
+@media (max-width: 38rem) {
+  :root { --site-frame-gutter: max(1rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)); --site-frame-top: max(.75rem, env(safe-area-inset-top, 0px)); }
+}
 @media (max-width: 42rem) {
   :root { --gutter: .85rem; --section-space: 2.1rem; }
   /* Match the identity selectors so their desktop row/wrap rules cannot win.
      Give mobile an intentional title row and a compact, full-width control row. */
   .site-header, .site-header.site-header--identity { align-items: stretch; flex-flow: column nowrap; gap: .375rem; }
-  .site-header.site-header--identity { padding-block: .875rem .5rem; }
+  .site-header, .site-header.site-header--identity { padding-inline-end: 0; padding-bottom: .5rem; }
+  .site-header > .site-brand, .site-header > .site-title { padding-inline-end: var(--site-utility-clearance); }
+  .site-header nav { min-height: 0; }
+  .site-header nav:has(> .site-utility-pair:only-child) { height: 0; }
   .site-header nav, .site-header.site-header--identity nav { width: 100%; margin-left: 0; flex-wrap: wrap; justify-content: flex-start; gap: .25rem .7rem; }
   .site-header nav > a:not(.site-home) { display: inline-flex; align-items: center; min-width: 2.75rem; min-height: 2.75rem; }
-  .site-header nav > .site-utility-pair, .site-header nav > .theme-toggle { margin-left: auto; }
+  .site-header nav > .site-utility-pair { margin: 0; }
   .site-header nav .site-utility-pair .theme-toggle { margin-left: 0; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
   .data-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -500,12 +520,6 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
 
   /* ---- header: a quiet titled rule ---- */
   header.site-header {
-      width: min(1156px, calc(100% - 44px));
-      max-width: none;
-      margin: 0 auto;
-      padding-inline: 0;
-      display: flex;
-      align-items: baseline;
       gap: 14px;
       border-bottom: var(--hair);
   }
@@ -1201,10 +1215,10 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 
 /* Keep the title/actions grid through the shared mobile masthead breakpoint. */
 @media (max-width: 42rem) {
-  header.site-header.site-header--identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px 14px; padding-top: 18px; }
-  .site-header.site-header--identity .tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; flex-wrap: nowrap; }
+  header.site-header.site-header--identity { gap: 9px 14px; }
+  .site-header.site-header--identity .tabs { width: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: thin; flex-wrap: nowrap; }
   .tabs .tab { flex: none; }
-  .site-actions { grid-column: 2; grid-row: 1; }
+  .site-actions { height: 0; }
 }
 
 @media (max-width: 650px) {
