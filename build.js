@@ -41,6 +41,7 @@ html = html.replace('https://jehlp.net/site-theme/v2/favicons/logical-solver.png
 html = html.replace('https://jehlp.net/site-theme/v2/marks/logical-solver.png', `data:image/png;base64,${mark.toString('base64')}`);
 html = html.replace('<link rel="stylesheet" href="https://jehlp.net/site-theme/v2/base.css">', () => `<style>\n${sharedBase}</style>`);
 html = html.replace(`<script src="${sharedThemeUrl}"></script>`, () => `<script>\n${sharedTheme}</script>`);
+html = html.replace('<script src="js/status-announcements.js"></script>', () => '<script>\n' + read('js/status-announcements.js') + '</script>');
 const css = read('css/style.css');
 const engine = read('js/engine.js');
 let stepper = read('js/stepper.js');

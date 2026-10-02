@@ -1298,7 +1298,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
           <svg id="boardSvg" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
       </div>
-    <div class="status" id="status">Enter clues, then <b>Solve</b>. For an example, choose <b>Options → Random puzzle</b>.</div>
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="U-Bahn solver status" data-status-source="status"></div><div class="status" id="status">Enter clues, then <b>Solve</b>. For an example, choose <b>Options → Random puzzle</b>.</div>
     <div class="legend">
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#0F4DA8" stroke-width="7" stroke-linecap="round"/></svg></span>segment in <b>every</b> solution</span>
     <span><span class="sw"><svg width="34" height="10"><line x1="4" y1="5" x2="30" y2="5" stroke="#AEB6BF" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 7"/></svg></span>segment in <b>some</b> solutions</span>
@@ -1348,7 +1348,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
     <div class="board-col">
       <div class="board-wrap"><div id="sumsGridWrap"></div></div>
       <div id="sumsLetters" hidden></div>
-      <div class="status" id="sumsStatus"></div>
+      <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Japanese Sums solver status" data-status-source="sumsStatus"></div><div class="status" id="sumsStatus"></div>
       <details class="help">
         <summary>Rules &amp; notation</summary>
         <p>Digits 1..D, at most once per row and column; shaded cells hold no digit. One clue box per group, in reading order. A single <code>0</code> = the line is entirely blank; all boxes empty = unclued.</p>
@@ -1379,7 +1379,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
       <button id="a38Cands">True candidates</button><button id="a38Prev">Previous step</button><button id="a38Auto">Full solve path</button><button id="a38Reset">Reset steps</button><button id="a38Clear" class="danger">Clear all</button>
     </div></details>
  </div>
- <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a filled disc; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
+ <div class="board-row"><div class="board-col"><div class="board-wrap"><div id="a38Canvas"><div id="a38Grid" class="a38-grid"></div><svg id="a38Svg" aria-label="Directed A38 route"></svg></div></div><div class="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="A38 solver status" data-status-source="a38Status"></div><div class="status" id="a38Status">Choose an input tool, then click cells. The start is a filled disc; pass cells are gray; number cells are excluded from the route and may hold multiple numbers.</div>
  <div class="legend"><span><b class="a38-start-demo">1</b> start</span><span><i class="a38-pass-demo"></i> gray cell</span><span><b class="a38-clue-demo">3</b> number clue</span><span><b class="a38-permit-demo"></b> pass obtained</span><span><b class="a38-arrow-demo">—</b> forced segment</span><span><b class="a38-chevron-demo">‹</b> direction</span><span>× excluded edge</span></div>
  <details class="help"><summary>Rules &amp; how to use this tool</summary><p><b>A38.</b> Draw a directed orthogonal loop through every non-number cell, beginning and ending at the filled start disc and passing through every gray pass cell. The loop cannot branch, cross, or revisit a cell.</p><p>Each number N identifies the Nth of its up to eight neighbouring route cells reached by the traveller. Identified cells grant passes; if several clues identify the same cell, it still grants only one pass. A gray cell is counted in neighbour order but can never grant a pass. The traveller starts without a pass, can carry one, and spends it on entering a gray cell.</p><p>Choose <b>Start</b>, <b>Pass</b>, or <b>Number</b> and paint the grid. Clicking a cell with its active tool again restores an ordinary Route cell. In a number cell, type digits 1–8 separated by spaces — or <b>?</b> marks for extra granting positions whose numbers are unknown — each ? is one more granting position, all distinct from each other and from the listed numbers (the solver resolves them to the lowest numbers that work). Backspace removes entries normally, and one more Backspace in an empty number cell removes the cell itself (clicking an empty number cell with the Number tool active does too).</p><p><b>Take step</b> applies exactly one immediate human deduction to persistent pencil marks. It never calls or caches the exhaustive solver. A solid segment has been proved part of the route; an arrow also proves its direction; × excludes an edge. <b>Solve</b> and <b>True candidates</b> are separate exhaustive operations.</p></details></div><aside class="strategies-side"><section class="help strategies" aria-labelledby="a38-strategies-title"><h2 class="strategies-heading" id="a38-strategies-title">Step deduction types</h2><p class="stratNote">The ideas <b>Take step</b> tries, simplest first. The last technique used is highlighted, with counters showing how often each has fired since the last reset.</p><ol id="a38Strats"></ol></section></aside></div>
 </section>
@@ -1400,7 +1400,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
   <div class="board-row">
     <div class="board-col">
       <div class="board-wrap"><div id="caveGrid" class="cave-grid" aria-label="Cave puzzle grid"></div></div>
-      <div class="status" id="caveStatus">Type a number in a cell to enter a Cave clue.</div>
+      <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Cave solver status" data-status-source="caveStatus"></div><div class="status" id="caveStatus">Type a number in a cell to enter a Cave clue.</div>
       <div class="legend">
         <span><i class="cave-demo cave-demo-black"></i> shaded / outside</span>
         <span><i class="cave-demo cave-demo-white"></i> proved unshaded / cave</span>
@@ -20222,6 +20222,56 @@ window.CAVE_STEP_WORKER_SOURCE="(function(f){if(typeof exports===\"object\"&&typ
   };
 
   updatePrev(); render(); buildStrategies();
+})();
+</script>
+<script>
+// Keep short solver updates live, without reading grids or full proof chains.
+// The existing visible status remains available for reading at any length.
+(() => {
+  'use strict';
+  if (!window.MutationObserver) return;
+
+  const compact = (text, limit) => text.length <= limit ? text
+    : text.slice(0, limit - 1).replace(/\s+\S*$/, '') + '…';
+
+  function summary(source) {
+    const text = source.textContent.replace(/\s+/g, ' ').trim();
+    const step = text.match(/^(Step \d+\s*[—-]\s*[^:]+):/);
+    if (step) {
+      // A step may include dozens of consequences. Announce its named rule and
+      // any final verdict, leaving the detailed explanation in the normal flow.
+      const verdict = Array.from(source.children)
+        .filter(child => child.matches('.good, .bad') && !child.textContent.trim().startsWith('Step '))
+        .map(child => child.textContent.trim()).join(' ');
+      return compact(step[1], 140) + '. ' + (verdict ? compact(verdict, 140) + ' ' : '') + 'Explanation below.';
+    }
+    if (text.length <= 320) return text;
+    // Long cipher results can end with a search-limit warning. Do not let the
+    // shortened summary turn a qualified result into an unqualified success.
+    const warnings = [...new Set(Array.from(source.children)
+      .filter(child => child.matches('.warn, .bad'))
+      .map(child => child.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+    const warning = compact(warnings.join(' '), 160);
+    const body = warnings.reduce((rest, warning) => rest.replace(warning, ''), text).replace(/\s+/g, ' ').trim();
+    const suffix = ' Full status below.';
+    return [warning, compact(body, 320 - warning.length - suffix.length - 1)].filter(Boolean).join(' ') + suffix;
+  }
+
+  document.querySelectorAll('[data-status-source]').forEach(live => {
+    const source = document.getElementById(live.dataset.statusSource);
+    if (!source) return;
+    let timer;
+    new MutationObserver(() => {
+      clearTimeout(timer);
+      // Coalesce rapid full-path steps and worker progress, including a status
+      // built through several DOM writes. Never announce an inactive puzzle.
+      timer = setTimeout(() => {
+        if (source.closest('[hidden]')) { live.textContent = ''; return; }
+        const text = summary(source);
+        if (live.textContent !== text) live.textContent = text;
+      }, 500);
+    }).observe(source, { childList: true, characterData: true, subtree: true });
+  });
 })();
 </script>
 <script>
