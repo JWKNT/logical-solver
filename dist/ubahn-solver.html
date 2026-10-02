@@ -404,10 +404,11 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
   .data-strip > div:nth-child(odd) { border-left: 0; }
 }
 
-/* Scope touch sizing to interface controls, never puzzle cells or plot marks. */
+/* Scope touch sizing to ordinary navigation, never the already-44px utility grid.
+   Switching Home alone to flex shifts its mask relative to the theme dial. */
 @media (pointer: coarse) {
   :root { --control-size: 2.75rem; }
-  .site-header nav a, .site-nav a, .section-index a { display: inline-flex; align-items: center; min-height: 2.75rem; }
+  .site-header nav a:not(.site-home), .site-nav a:not(.site-home), .section-index a { display: inline-flex; align-items: center; min-height: 2.75rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

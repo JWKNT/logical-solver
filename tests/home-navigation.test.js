@@ -48,3 +48,10 @@ test('the Solver header grid covers the entire shared mobile band without changi
   assert.ok(read('index.html').includes('css/style.css?v=20261001-utilities'));
   assert.ok(read('dist/ubahn-solver.html').includes(header));
 });
+
+
+test('offline export preserves touch utility alignment', () => {
+  const touch = read('dist/ubahn-solver.html').split('@media (pointer: coarse) {')[1].split('@media (prefers-reduced-motion: reduce)')[0];
+  assert.match(touch, /\.site-header nav a:not\(\.site-home\), \.site-nav a:not\(\.site-home\)/);
+  assert.doesNotMatch(touch, /\.site-header nav a\s*[,\{]|\.site-nav a\s*[,\{]/);
+});
