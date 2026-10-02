@@ -2,6 +2,7 @@
 // eliminates must be absent from every solution's value at that cell.
 const E = require('../js/sums-engine.js');
 const S = require('../js/sums-stepper.js');
+const { sumsProgressSnapshot } = require('./helpers/sums-progress.js');
 // optional args: --scenarios (skip the random battery) or --battery (skip scenarios)
 const ARGS = process.argv.slice(2);
 const RUN_SCENARIOS = !ARGS.includes('--battery');
@@ -566,15 +567,13 @@ while (RUN_BATTERY && puzzles < 24 && Date.now() - t00 < 200000) {
   st.kd = kd;
   if (shaped) Object.assign(st.variants, { blankConn: true, no22blank: true, asc: true, reach: true });
   let mv, k = 0;
-  let prevHash = null;
-  const hashState = () => { let h = 2166136261 >>> 0; for (let i = 0; i < st.cand.length; i++) { h ^= st.cand[i]; h = Math.imul(h, 16777619) >>> 0; } for (let L = 0; L < 26; L++) { h ^= st.letterCand[L]; h = Math.imul(h, 16777619) >>> 0; } return h; };
-  prevHash = hashState();
+  let previousProgress = sumsProgressSnapshot(st);
   while (k++ < 800 && (mv = S.takeSumsStep(st, { rows: clues.rows, cols: clues.cols }))) {
     steps++;
     if (!mv.contradiction) {
-      const h2 = hashState();
-      if (h2 === prevHash) { console.log('FAIL: no-op step (would loop forever) [' + mv.rule + ']: ' + mv.text.slice(0, 120)); fails++; break; }
-      prevHash = h2;
+      const progress = sumsProgressSnapshot(st);
+      if (progress === previousProgress) { console.log('FAIL: no-op step (would loop forever) [' + mv.rule + ']: ' + mv.text.slice(0, 120)); fails++; break; }
+      previousProgress = progress;
     }
     if (mv.chain) {
       trialSteps++;
