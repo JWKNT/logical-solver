@@ -13,13 +13,14 @@ test('split and offline solvers keep native Home in the existing header', () => 
   }
 });
 
-test('offline export embeds the abstract Home emblem and all shared presentation', () => {
+test('offline export embeds all shared utility symbols and presentation', () => {
   const html = read('dist/ubahn-solver.html');
   assert.doesNotMatch(html, /<script\b[^>]*\bsrc=|<link\b[^>]*\brel="stylesheet"|url\(["']?(?:https?:|icons\/)/i);
   assert.match(html, /a\.site-home::before\s*\{[^}]*data:image\/svg\+xml/);
-  assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home-emblem\.svg'/);
+  assert.match(html, /button\.site-search::before\s*\{[^}]*data:image\/svg\+xml/);
+  assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home-compass\.svg', 'search-slash\.svg'/);
   assert.doesNotMatch(html, /--site-home-clearance|keepFocusedControlClear/);
-  assert.ok(read('index.html').includes('base.css?v=20260930-mobile-header'));
+  assert.ok(read('index.html').includes('base.css?v=20261001-utilities'));
   assert.ok(read('index.html').includes('theme.js?v=20260930-header-home'));
 });
 
@@ -27,6 +28,12 @@ test('local dark links leave the shared Home ink color intact', () => {
   const css = read('css/style.css');
   assert.match(css, /html\.dark a:not\(\.site-home\) \{ color: var\(--blue\); \}/);
   assert.doesNotMatch(css, /html\.dark a\s*\{[^}]*color: var\(--blue\)/);
+});
+
+test('local workspace focus styling leaves the shared utility focus ring intact', () => {
+  const css = read('css/style.css');
+  assert.match(css, /button:not\(\[data-theme-toggle\]\):focus-visible\s*\{/);
+  assert.doesNotMatch(css, /(?:^|\n)\s*button:focus-visible\s*\{/);
 });
 
 test('the Solver header grid covers the entire shared mobile band without changing workspace breakpoints', () => {
@@ -38,6 +45,6 @@ test('the Solver header grid covers the entire shared mobile band without changi
   assert.match(header, /\.site-actions \{ grid-column: 2; grid-row: 1; \}/);
   assert.doesNotMatch(header, /main\s*\{|\.toolbar/);
   assert.match(css, /@media \(max-width: 650px\) \{\s*main \{ padding-inline: 14px; \}/);
-  assert.ok(read('index.html').includes('css/style.css?v=20260930-mobile-header'));
+  assert.ok(read('index.html').includes('css/style.css?v=20261001-utilities'));
   assert.ok(read('dist/ubahn-solver.html').includes(header));
 });

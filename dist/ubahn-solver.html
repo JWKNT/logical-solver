@@ -298,106 +298,84 @@ button { font-family: var(--ui, var(--serif)); font-size: var(--text-ui); }
 button:hover:not(:disabled) { border-color: var(--ink); background: var(--surface); }
 button[aria-pressed="true"] { border-color: var(--blue); background: var(--surface-blue); color: var(--blue-dark); }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-/* An ink-and-paper dial: no visible label or enclosing badge. Its quiet
-   diagonal follows the site's ruled ornaments; the full square is a hit target. */
-.theme-toggle { flex: none; margin-left: .2rem; }
-[data-theme-toggle].theme-toggle {
+/* Header utilities share one geometry, ink weight and interaction grammar.
+   The compass, dial and slash are quiet punctuation inside equal hit targets. */
+:root { --utility-size: 2.75rem; --utility-icon-size: 1.6rem; --utility-gap: .375rem; }
+.site-utility-pair { display: inline-flex; align-items: center; flex: none; gap: var(--utility-gap, .375rem); }
+.site-utilities { display: flex; justify-content: flex-end; padding: .75rem var(--gutter); }
+a.site-home,
+[data-theme-toggle].theme-toggle,
+button.site-search {
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
+  justify-content: center;
+  flex: none;
+  width: var(--utility-size, 2.75rem);
+  height: var(--utility-size, 2.75rem);
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
   padding: 0;
   overflow: visible;
   border: 1px solid transparent;
   border-radius: 0;
   background: transparent;
   color: var(--muted-strong);
+  opacity: 1;
   font-size: 0;
   line-height: 0;
+  text-decoration: none;
   cursor: pointer;
   box-shadow: none;
   transition: color .15s ease, border-color .15s ease;
 }
-[data-theme-toggle].theme-toggle::before {
+.site-utility-pair .theme-toggle { margin-left: 0; }
+a.site-home > span, button.site-search > span { font-size: 0; }
+a.site-home::before,
+[data-theme-toggle].theme-toggle::before,
+button.site-search::before {
   content: "";
-  width: 1.6rem;
-  height: 1.6rem;
+  grid-area: 1 / 1;
+  width: var(--utility-icon-size, 1.6rem);
+  height: var(--utility-icon-size, 1.6rem);
   background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cg%3E%0A%20%20%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227.75%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22M6.52%2017.48A7.75%207.75%200%200%201%2017.48%206.52Z%22%20fill%3D%22%23000%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22m2.75%2021.25%2018.5-18.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%22.8%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cg%3E%0A%20%20%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227.75%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22M6.52%2017.48A7.75%207.75%200%200%201%2017.48%206.52Z%22%20fill%3D%22%23000%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22m2.75%2021.25%2018.5-18.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%22.8%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A") center / contain no-repeat;
+}
+a.site-home::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cpath%20d%3D%22M12%202.5%2014.4%209.6%2021.5%2012%2014.4%2014.4%2012%2021.5%209.6%2014.4%202.5%2012%209.6%209.6Z%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.4%22%20stroke-linejoin%3D%22miter%22%2F%3E%0A%20%20%3Cpath%20d%3D%22m5.3%205.3%202.1%202.1m9.2%209.2%202.1%202.1m0-13.4-2.1%202.1m-9.2%209.2-2.1%202.1%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.2%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221.2%22%20fill%3D%22%23000%22%2F%3E%0A%3C%2Fsvg%3E%0A");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cpath%20d%3D%22M12%202.5%2014.4%209.6%2021.5%2012%2014.4%2014.4%2012%2021.5%209.6%2014.4%202.5%2012%209.6%209.6Z%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.4%22%20stroke-linejoin%3D%22miter%22%2F%3E%0A%20%20%3Cpath%20d%3D%22m5.3%205.3%202.1%202.1m9.2%209.2%202.1%202.1m0-13.4-2.1%202.1m-9.2%209.2-2.1%202.1%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.2%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221.2%22%20fill%3D%22%23000%22%2F%3E%0A%3C%2Fsvg%3E%0A");
+}
+button.site-search::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cpath%20d%3D%22M16%202.5%208%2021.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.4%22%2F%3E%0A%3C%2Fsvg%3E%0A");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cpath%20d%3D%22M16%202.5%208%2021.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.4%22%2F%3E%0A%3C%2Fsvg%3E%0A");
 }
 [data-theme-toggle][data-theme-target="light"].theme-toggle::before {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cg%20transform%3D%22rotate(180%2012%2012)%22%3E%0A%20%20%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227.75%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22M6.52%2017.48A7.75%207.75%200%200%201%2017.48%206.52Z%22%20fill%3D%22%23000%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22m2.75%2021.25%2018.5-18.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%22.8%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A");
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%0A%20%20%3Cg%20transform%3D%22rotate(180%2012%2012)%22%3E%0A%20%20%20%20%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227.75%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22M6.52%2017.48A7.75%207.75%200%200%201%2017.48%206.52Z%22%20fill%3D%22%23000%22%2F%3E%0A%20%20%20%20%3Cpath%20d%3D%22m2.75%2021.25%2018.5-18.5%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%22.8%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A");
 }
 [data-theme-toggle].theme-toggle[aria-pressed="true"] { border-color: transparent; background: transparent; color: var(--muted-strong); }
-[data-theme-toggle].theme-toggle:hover:not(:disabled) {
+a.site-home:hover,
+[data-theme-toggle].theme-toggle:hover:not(:disabled),
+button.site-search:hover:not(:disabled),
+button.site-search[aria-expanded="true"] {
   border-color: transparent;
   border-bottom-color: var(--line-strong);
   background: transparent;
   color: var(--ink);
 }
-[data-theme-toggle].theme-toggle:active:not(:disabled) { color: var(--muted); }
+a.site-home:active,
+[data-theme-toggle].theme-toggle:active:not(:disabled),
+button.site-search:active:not(:disabled) { color: var(--muted); }
+a.site-home:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 [data-theme-toggle].theme-toggle--floating { position: fixed; top: .75rem; right: 1rem; z-index: 100; background: var(--paper); }
 [data-theme-toggle].theme-toggle--floating:hover:not(:disabled),
 [data-theme-toggle].theme-toggle--floating[aria-pressed="true"] { background: var(--paper); }
 @media (forced-colors: active) {
-  [data-theme-toggle].theme-toggle::before { background: ButtonText; forced-color-adjust: none; }
-}
-
-/* A header colophon: a bold, bracketed asterisk echoes the homepage's
-   typographic studies. It stays with the existing theme control, never fixed. */
-:root { --home-accent: #a04f38; }
-:root[data-theme="dark"] { --home-accent: #d99070; }
-.site-utility-pair { display: inline-flex; align-items: center; flex: none; gap: .375rem; }
-.site-utility-pair .theme-toggle { margin-left: 0; }
-.site-utilities { display: flex; justify-content: flex-end; padding: .75rem var(--gutter); }
-a.site-home {
-  position: relative;
-  display: inline-grid;
-  place-items: center;
-  justify-content: center;
-  flex: none;
-  width: 2.75rem;
-  height: 2.75rem;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-decoration: none;
-  line-height: 0;
-}
-.site-utility-pair > a.site-home { color: var(--ink); }
-a.site-home > span { font-size: 0; }
-a.site-home::before {
-  content: "";
-  grid-area: 1 / 1;
-  width: 2rem;
-  height: 2rem;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%0A%20%20%3Cpath%20d%3D%22M8%203.5H3.5V27H8M24%205H28.5V28.5H24%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.15%22%2F%3E%0A%20%20%3Cg%20transform%3D%22rotate(14%2016%2016)%22%20fill%3D%22%23000%22%3E%0A%20%20%20%20%3Cpath%20d%3D%22M14.35%205.5h3.3l-.65%208.05%206.65-4.65%201.65%202.85L17.7%2015l7.6%203.25-1.65%202.85-6.65-4.65.65%208.05h-3.3l.65-8.05-6.65%204.65-1.65-2.85L14.3%2015l-7.6-3.25L8.35%208.9%2015%2013.55z%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%0A%20%20%3Cpath%20d%3D%22M8%203.5H3.5V27H8M24%205H28.5V28.5H24%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.15%22%2F%3E%0A%20%20%3Cg%20transform%3D%22rotate(14%2016%2016)%22%20fill%3D%22%23000%22%3E%0A%20%20%20%20%3Cpath%20d%3D%22M14.35%205.5h3.3l-.65%208.05%206.65-4.65%201.65%202.85L17.7%2015l7.6%203.25-1.65%202.85-6.65-4.65.65%208.05h-3.3l.65-8.05-6.65%204.65-1.65-2.85L14.3%2015l-7.6-3.25L8.35%208.9%2015%2013.55z%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%3C%2Fsvg%3E%0A") center / contain no-repeat;
-}
-a.site-home::after {
-  content: "";
-  position: absolute;
-  left: calc(50% + .275rem);
-  top: calc(50% + .625rem);
-  width: .2rem;
-  height: .2rem;
-  border-radius: 50%;
-  background: var(--home-accent);
-}
-a.site-home:hover, .site-utility-pair > a.site-home:hover { color: var(--home-accent); }
-a.site-home:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-@media (forced-colors: active) {
   a.site-home::before { background: LinkText; forced-color-adjust: none; }
-  a.site-home::after { background: LinkText; }
+  [data-theme-toggle].theme-toggle::before,
+  button.site-search::before { background: ButtonText; forced-color-adjust: none; }
 }
 
 details { border-top: 1px solid var(--line); }
@@ -431,6 +409,7 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  a.site-home, button.site-search,
   [data-theme-toggle].theme-toggle,
   [data-theme-toggle].theme-toggle::before { transition: none; }
 }
@@ -631,7 +610,7 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
       cursor: default;
   }
 
-  button:focus-visible {
+  button:not([data-theme-toggle]):focus-visible {
       outline: 2px solid var(--sign-blue);
       outline-offset: 1px;
   }

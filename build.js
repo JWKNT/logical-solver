@@ -19,8 +19,8 @@ let sharedBase = fs.existsSync(sharedBasePath)
   : execFileSync('curl', ['-fsSL', sharedBaseUrl], { encoding: 'utf8' });
 
 // CSS URLs are relative to the stylesheet, but an inlined stylesheet has no
-// source directory. Embed the theme seals and Home symbol so the single-file build stays offline.
-for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-emblem.svg']) {
+// source directory. Embed every shared utility symbol so the single-file build stays offline.
+for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-compass.svg', 'search-slash.svg']) {
   const iconPath = path.join(path.dirname(sharedBasePath), 'icons', name);
   const svg = fs.existsSync(iconPath) ? read(iconPath)
     : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/icons/${name}`], { encoding: 'utf8' });
