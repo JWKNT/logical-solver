@@ -343,11 +343,12 @@ button.site-search {
   box-shadow: none;
   transition: color .15s ease, border-color .15s ease;
 }
-/* Subpage headers have empty or text fallback labels. Keep every mask in one
-   full-height track; zero-height fallback tracks cannot shift its visual center.
-   The homepage utilities live outside a header and keep their approved layout. */
-header a.site-home,
-header [data-theme-toggle].theme-toggle {
+/* Fallback labels can be empty or text. Keep every mask in one full-height
+   track on every page, homepage included, so the utilities hold the same
+   position across navigation; zero-height fallback tracks cannot shift it. */
+a.site-home,
+[data-theme-toggle].theme-toggle,
+button.site-search {
   grid-template-rows: minmax(0, 1fr);
   grid-auto-rows: 0;
 }
@@ -569,7 +570,7 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
   }
 
   .toolbar-more > summary {
-      min-height: 32px;
+      min-height: var(--control-size, 2.25rem);
       padding: 5px 10px;
       border: 1px solid var(--control-border);
       color: var(--label-ink);
@@ -602,6 +603,7 @@ th { color: var(--muted-strong); font: 600 var(--text-ui)/1.4 var(--ui, var(--se
 
   input[type=number] {
       width: 54px;
+      min-height: var(--control-size, 2.25rem);
       padding: 3px 5px;
       font-size: var(--text-ui, .875rem);
       border: 1px solid var(--control-border);

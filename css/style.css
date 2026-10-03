@@ -107,7 +107,7 @@
   }
 
   .toolbar-more > summary {
-      min-height: 32px;
+      min-height: var(--control-size, 2.25rem);
       padding: 5px 10px;
       border: 1px solid var(--control-border);
       color: var(--label-ink);
@@ -140,6 +140,7 @@
 
   input[type=number] {
       width: 54px;
+      min-height: var(--control-size, 2.25rem);
       padding: 3px 5px;
       font-size: var(--text-ui, .875rem);
       border: 1px solid var(--control-border);

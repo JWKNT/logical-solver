@@ -57,8 +57,8 @@ test('offline export preserves touch utility alignment', () => {
 });
 
 
-test('offline subpage header normalizes fallback label tracks', () => {
-  assert.match(read('dist/ubahn-solver.html'), /header a\.site-home,\s*header \[data-theme-toggle\]\.theme-toggle \{\s*grid-template-rows: minmax\(0, 1fr\);\s*grid-auto-rows: 0;/);
+test('offline header uses the shared utility fallback tracks', () => {
+  assert.match(read('dist/ubahn-solver.html'), /a\.site-home,\s*\[data-theme-toggle\]\.theme-toggle,\s*button\.site-search \{\s*grid-template-rows: minmax\(0, 1fr\);\s*grid-auto-rows: 0;/);
 });
 
 
