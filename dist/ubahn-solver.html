@@ -226,6 +226,13 @@ body { min-width: 320px; margin: 0; background: var(--paper); color: var(--ink);
 button, input, select, textarea { color: inherit; font: inherit; }
 button, select { cursor: pointer; }
 a { color: var(--ink); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+
+/* Draw the homepage direction mark without a font or emoji fallback. */
+.ui-link-arrow { display: inline-block; position: relative; width: 1rem; height: 1rem; flex: none; vertical-align: -.15em; }
+.ui-link-arrow::before, .ui-link-arrow::after { content: ""; position: absolute; }
+.ui-link-arrow::before { inset: .25rem .25rem auto auto; width: .5rem; height: .5rem; border-top: 1px solid currentColor; border-right: 1px solid currentColor; }
+.ui-link-arrow::after { top: .25rem; right: .25rem; width: .7071rem; height: 1px; background: currentColor; transform: rotate(-45deg); transform-origin: right center; }
+
 a:hover { color: var(--ink); }
 [hidden] { display: none !important; }
 img { max-width: 100%; height: auto; }
