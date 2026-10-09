@@ -18,6 +18,12 @@ let sharedBase = fs.existsSync(sharedBasePath)
   ? read(sharedBasePath)
   : execFileSync('curl', ['-fsSL', sharedBaseUrl], { encoding: 'utf8' });
 
+// This solver is a working surface. Do not ship an unused reading font.
+const usesReadingFont = /var\(\s*--reading\b/.test(read('css/style.css') + read('index.html'));
+if (!usesReadingFont) {
+  sharedBase = sharedBase.replace(/@font-face\s*\{[^}]*font-family:\s*"Wrenfold Text";[^}]*\}\s*/g, '');
+}
+
 // CSS URLs are relative to the stylesheet, but an inlined stylesheet has no
 // source directory. Embed utility symbols and the font for the offline build.
 for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-folio-scroll.svg', 'search-slash.svg']) {
@@ -26,16 +32,19 @@ for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-folio-s
     : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/icons/${name}`], { encoding: 'utf8' });
   sharedBase = sharedBase.replaceAll(`icons/${name}`, `data:image/svg+xml,${encodeURIComponent(svg)}`);
 }
-const fontName = 'WrenfoldText-Regular.woff2';
-const fontPath = path.join(path.dirname(sharedBasePath), 'fonts', fontName);
-const font = fs.existsSync(fontPath) ? fs.readFileSync(fontPath)
-  : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/fonts/${fontName}`]);
-sharedBase = sharedBase.replaceAll(`fonts/${fontName}`, `data:font/woff2;base64,${font.toString('base64')}`);
-const fontNotices = {};
-for (const name of ['OFL-1.1.txt', 'Noto-Debian-copyright.txt', 'Wrenfold-README.txt']) {
-  const noticePath = path.join(path.dirname(sharedBasePath), 'fonts', name);
-  fontNotices[name] = fs.existsSync(noticePath) ? read(noticePath)
-    : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/fonts/${name}`], { encoding: 'utf8' });
+let fontNotices = null;
+if (usesReadingFont) {
+  const fontName = 'WrenfoldText-Regular.woff2';
+  const fontPath = path.join(path.dirname(sharedBasePath), 'fonts', fontName);
+  const font = fs.existsSync(fontPath) ? fs.readFileSync(fontPath)
+    : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/fonts/${fontName}`]);
+  sharedBase = sharedBase.replaceAll(`fonts/${fontName}`, `data:font/woff2;base64,${font.toString('base64')}`);
+  fontNotices = {};
+  for (const name of ['OFL-1.1.txt', 'Noto-Debian-copyright.txt', 'Wrenfold-README.txt']) {
+    const noticePath = path.join(path.dirname(sharedBasePath), 'fonts', name);
+    fontNotices[name] = fs.existsSync(noticePath) ? read(noticePath)
+      : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/fonts/${name}`], { encoding: 'utf8' });
+  }
 }
 const faviconPath = path.join(path.dirname(sharedBasePath), 'favicons', 'logical-solver.png');
 const favicon = fs.existsSync(faviconPath) ? fs.readFileSync(faviconPath)
@@ -46,7 +55,7 @@ const mark = fs.existsSync(markPath) ? fs.readFileSync(markPath)
 
 let html = read('index.html');
 // Keep redistribution notices in the offline file without adding visible UI.
-html = html.replace('</head>', () => `<script type="application/json" id="wrenfold-font-notices">${JSON.stringify(fontNotices).replaceAll('<', '\\u003c')}</script>\n</head>`);
+if (fontNotices) html = html.replace('</head>', () => `<script type="application/json" id="wrenfold-font-notices">${JSON.stringify(fontNotices).replaceAll('<', '\\u003c')}</script>\n</head>`);
 // GitHub Pages uses query strings to prevent mixed cached split-source files;
 // the self-contained build strips them before replacing the script tags.
 html = html.replace(/((?:src|href)="[^"?]+)\?v=[^"&]+(?=")/g, '$1');
