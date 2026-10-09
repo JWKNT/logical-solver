@@ -79,7 +79,8 @@
   }
 
   function createHomeControl() {
-    // The game is intentionally independent of the shared site navigation.
+    // The directory has no Home self-link. The game keeps its independent navigation.
+    if (/^\/(?:index\.html)?$/.test(window.location?.pathname || "")) return;
     if (/^\/ndb-idle(?:\/|$)/.test(window.location?.pathname || "")) return;
     let link = document.querySelector(".site-home");
     if (link?.closest(".site-utility-pair")) return;
