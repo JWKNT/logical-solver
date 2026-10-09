@@ -45,7 +45,7 @@ test('the Solver keeps scrolling tabs beneath the shared utility lane without ch
   assert.match(header, /\.site-actions \{ height: 0; \}/);
   assert.doesNotMatch(header, /main\s*\{|\.toolbar/);
   assert.match(css, /@media \(max-width: 650px\) \{\s*main \{ padding-inline: 14px; \}/);
-  assert.ok(read('index.html').includes('css/style.css?v=20261001-utilities'));
+  assert.ok(read('index.html').includes('css/style.css?v=20261009-deduction-columns'));
   assert.ok(read('dist/ubahn-solver.html').includes(header));
 });
 

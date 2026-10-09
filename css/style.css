@@ -194,7 +194,8 @@
   /* ---- board layout ---- */
   .board-row {
       display: grid;
-      grid-template-columns: minmax(360px, 760px) minmax(440px, 1fr);
+      /* Give the deduction list enough room for two readable columns. */
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 28px;
       align-items: start;
   }
@@ -591,6 +592,7 @@
 html.dark #sumsStrats > li:not(.variant-bar)::before { color: #8a8a90; }
 .strategies li.variant-bar {
   list-style: none; margin: 12px 0 4px -18px; padding-top: 8px;
+  break-after: avoid-column;
   border-top: 1px solid var(--grid-line); font-variant: normal;
   letter-spacing: 0; font-weight: 700; font-size: var(--text-ui, .875rem);
 }
@@ -772,6 +774,7 @@ html.dark #caveStrats>li:not(.variant-bar)::before{color:#8a8a90}
 
 @media (max-width: 650px) {
   main { padding-inline: 14px; }
+  .strategies ol { column-count: 1; }
   .toolbar { gap: 9px 10px; }
   .toolbar-more { flex: 1 0 100%; margin-left: 0; }
   .toolbar-more > summary { width: fit-content; }
