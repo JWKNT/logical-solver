@@ -18,7 +18,7 @@ test('offline export embeds all shared utility symbols and presentation', () => 
   assert.doesNotMatch(html, /<script\b[^>]*\bsrc=|<link\b[^>]*\brel="stylesheet"|url\(["']?(?:https?:|icons\/)/i);
   assert.match(html, /a\.site-home::before\s*\{[^}]*data:image\/svg\+xml/);
   assert.match(html, /button\.site-search::before\s*\{[^}]*data:image\/svg\+xml/);
-  assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home-folio-scroll\.svg', 'search-slash\.svg'/);
+  assert.match(read('build.js'), /'theme-dial-dark\.svg', 'theme-dial-light\.svg', 'home-doorway\.svg', 'search-slash\.svg'/);
   assert.doesNotMatch(html, /--site-home-clearance|keepFocusedControlClear/);
   assert.ok(read('index.html').includes('base.css?v=20261009-reading-folio'));
   assert.ok(read('index.html').includes('theme.js?v=20261009-reading-folio'));
@@ -71,12 +71,12 @@ test('split and offline headers inherit the stable shared frame', () => {
   assert.match(shared, /\.site-header \.site-utility-pair \{ position: absolute; top: var\(--site-frame-top\); right: 0;/);
 });
 
-test('offline export keeps the folio geometry and original tool fonts without an unused reading font', () => {
+test('offline export keeps the Home door geometry and original tool fonts without an unused reading font', () => {
   const { createHash } = require('node:crypto');
   const html = read('dist/ubahn-solver.html');
   const icon = html.match(/a\.site-home::before\s*\{[^}]*url\("data:image\/svg\+xml,([^\"]+)"\)/);
   assert.ok(icon, 'the Home icon is embedded');
-  assert.equal(createHash('sha256').update(decodeURIComponent(icon[1])).digest('hex'), 'ff757b439e901db80d320d5fd1422edb63525b0ff46e235ab2dd5c52b2dad55f');
+  assert.equal(createHash('sha256').update(decodeURIComponent(icon[1])).digest('hex'), '2baa87caf29834e155af108d7743c410e2a3b1775edf6c7671ec24918a7810db');
   assert.doesNotMatch(html, /data:font\/woff2|id="wrenfold-font-notices"|font-family: "Wrenfold Text"/);
   assert.doesNotMatch(html, /url\(["']?(?:https?:|icons\/|fonts\/)/i);
   assert.match(html, /--serif: Georgia, "Times New Roman", serif/);

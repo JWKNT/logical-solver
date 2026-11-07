@@ -26,7 +26,7 @@ if (!usesReadingFont) {
 
 // CSS URLs are relative to the stylesheet, but an inlined stylesheet has no
 // source directory. Embed utility symbols and the font for the offline build.
-for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-folio-scroll.svg', 'search-slash.svg']) {
+for (const name of ['theme-dial-dark.svg', 'theme-dial-light.svg', 'home-doorway.svg', 'search-slash.svg']) {
   const iconPath = path.join(path.dirname(sharedBasePath), 'icons', name);
   const svg = fs.existsSync(iconPath) ? read(iconPath)
     : execFileSync('curl', ['-fsSL', `https://jehlp.net/site-theme/v2/icons/${name}`], { encoding: 'utf8' });
