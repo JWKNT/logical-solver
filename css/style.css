@@ -21,6 +21,12 @@
       --c-straight: #35507a;
       --c-turn: #3a6a4a;
       --c-empty: #707070;
+      /* Shape names in text. The chips keep the colors above under their white glyphs. */
+      --c-cross-ink: var(--c-cross);
+      --c-branch-ink: var(--c-branch);
+      --c-straight-ink: var(--c-straight);
+      --c-turn-ink: var(--c-turn);
+      --c-empty-ink: var(--c-empty);
       --band: 30px;
       --hair: 1px solid var(--line, #dcdcdc);
       --control-border: var(--line-strong, #b8b8b8);
@@ -36,6 +42,14 @@
       --tint-used: #273345;
       --line-unk: #d6a53c;
       --a38-mark: #eee;
+      /* Colored text needs lighter ink on charcoal. */
+      --amber: #d6a53c;
+      --ok-green: #8fc7a1;
+      --c-cross-ink: #e39c9c;
+      --c-branch-ink: #dcb25a;
+      --c-straight-ink: #9db7e0;
+      --c-turn-ink: #93c9a5;
+      --c-empty-ink: #a8a8a8;
   }
 
   * {
@@ -490,7 +504,7 @@
 
   #cancelBtn {
       display: none;
-      background: #fff;
+      background: var(--control-bg);
       border-color: var(--amber);
       color: var(--amber);
       font-weight: 600;
