@@ -496,11 +496,6 @@
       outline: 1px solid #c9b97a;
   }
 
-  .stratNote {
-      font-size: 1rem;
-      color: var(--muted);
-      margin: 4px 0 0;
-  }
 
   #cancelBtn {
       display: none;
@@ -515,7 +510,7 @@
 .tabs .tab.active { border-bottom-color: var(--ink); color: var(--ink); font-weight: 600; }
 .tabs .tab:hover:not(.active) { background: var(--control-hover); }
 .site-actions { display: flex; align-items: center; gap: 10px; }
-.status, .help p, .stratNote { font-family: var(--serif); }
+.status, .help p { font-family: var(--serif); }
 
 /* ---- japanese sums ---- */
 #sumsGridWrap { width: max-content; margin-inline: auto; }
